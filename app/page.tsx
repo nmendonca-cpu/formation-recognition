@@ -1625,7 +1625,6 @@ function TrainingField({
   onMoveDefenseGhost,
 }: {
 
-I want to make an app or a program that will generate a random offensive formation for american football. We would want to use playbooks like Georgia and Alabama that can be found online to give us a layout for how these would look. We do not need a play necesssarily, just a formation. This would be for defensives to communicate on checks, alignment, etc for meetings and studying their playbooks
 
 
 Thought for 24s
