@@ -5,9 +5,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { CheckCircle2, Shuffle, XCircle } from "lucide-react";
+import { CheckCircle2, Clock3, Shuffle, Trophy, User, XCircle } from "lucide-react";
 
-type AppMode = "study" | "alignment" | "offense_build" | "quiz" | "editor";
+type AppMode = "study" | "alignment" | "offense_build" | "quiz" | "editor" | "account";
+type FrontMode = "4-3" | "4-4";
 type Side = "left" | "right";
 type PlaybookKey = "Foothill" | "Pro" | "Wing T";
 type Family = "Spread" | "I" | "12p" | "Wing T";
@@ -50,26 +51,57 @@ type CheckResult = {
   isCorrect: boolean;
 };
 
+type ModeScoreStats = {
+  points: number;
+  attempts: number;
+  correct: number;
+  bestTimeMs: number | null;
+};
+
+type UserStats = {
+  totalPoints: number;
+  secondsUsed: number;
+  quiz: ModeScoreStats;
+  offense_build: ModeScoreStats;
+  alignment: ModeScoreStats;
+};
+
+type UserRecord = {
+  id: string;
+  name: string;
+  teamCode: string;
+  stats: UserStats;
+};
+
+type CustomLandmarkDraft = {
+  label: string;
+  layer: "dl" | "lb" | "cb" | "db";
+  side: Side;
+  x: string;
+  y: string;
+};
+
+type AnswerOverrideMap = Record<string, { x: number; y: number }>;
+
 const MODE_OPTIONS: { value: AppMode; label: string; title: string }[] = [
   { value: "study", label: "Formation Trainer", title: "FORMATION TRAINER" },
   { value: "alignment", label: "Alignment Mode", title: "DEFENSIVE ALIGNMENT" },
   { value: "offense_build", label: "Offensive Mode", title: "OFFENSIVE FORMATION" },
   { value: "quiz", label: "Quiz Mode", title: "QUIZ MODE" },
   { value: "editor", label: "Formation Editor", title: "FORMATION EDITOR" },
+  { value: "account", label: "Account / Leaderboard", title: "ACCOUNT / LEADERBOARD" },
 ];
 
 const PLAYBOOK_OPTIONS: PlaybookKey[] = ["Foothill", "Pro", "Wing T"];
 const PERSONNEL_OPTIONS = ["Any", "11", "12", "21"] as const;
 const ALIGNMENT_BASE_CALLS = ["Doubles", "Trips", "Trey", "Troop", "Bunch", "B Trips", "B Trey", "B Doubles", "Quad", "Dog"] as const;
 const ALIGNMENT_EMPTY_BASE_CALLS = ["Doubles", "Trips", "Trey", "Troop", "Bunch"] as const;
+const CUSTOM_ALIGNMENT_LAYERS = ["dl", "lb", "cb", "db"] as const;
 const ALIGNMENT_CALLS = [
   ...ALIGNMENT_BASE_CALLS.flatMap((base) => [
     `${base} Left`, `${base} Right`, `${base} Left King`, `${base} Right King`, `${base} Left Queen`, `${base} Right Queen`,
   ]),
-  ...ALIGNMENT_EMPTY_BASE_CALLS.flatMap((base) => [
-    `${base} Empty Left King`, `${base} Empty Left Queen`,
-    `${base} Empty Right King`, `${base} Empty Right Queen`
-  ]),
+  ...ALIGNMENT_EMPTY_BASE_CALLS.flatMap((base) => [`${base} Empty Left`, `${base} Empty Right`]),
 ] as const;
 const WING_T_CALLS = [
   "Wing T Far Right", "Wing T Far Left",
@@ -77,7 +109,6 @@ const WING_T_CALLS = [
   "Wing T Unbalanced Far Right", "Wing T Unbalanced Far Left",
   "Wing T Unbalanced Near Right", "Wing T Unbalanced Near Left",
 ] as const;
-
 const PRO_CALLS = [
   "I Dot Right", "I Dot Left", "I Far Right", "I Far Left", "I Near Right", "I Near Left",
   "I Slot Right", "I Slot Left", "I Slot Far Right", "I Slot Far Left", "I Slot Near Right", "I Slot Near Left",
@@ -100,6 +131,22 @@ const CB_Y = 76;
 const DB_Y = 86;
 const DL_Y = 58;
 const FIELD_LABELS = { left: "Left", right: "Right" } as const;
+const DEFAULT_MODE_STATS: ModeScoreStats = {
+  points: 0,
+  attempts: 0,
+  correct: 0,
+  bestTimeMs: null,
+};
+
+const DEFAULT_STATS: UserStats = {
+  totalPoints: 0,
+  secondsUsed: 0,
+  quiz: { ...DEFAULT_MODE_STATS },
+  offense_build: { ...DEFAULT_MODE_STATS },
+  alignment: { ...DEFAULT_MODE_STATS },
+};
+const USER_STORAGE_KEY = "formation-recognition-user";
+const LEADERBOARD_STORAGE_KEY = "formation-recognition-leaderboard";
 
 function normalize(value: string) {
   return value.trim().toLowerCase();
@@ -114,13 +161,11 @@ function normalizeStrength(value: string) {
 
 function getQuizFormationFamily(name: string) {
   const isEmpty = name.includes("Empty");
-
   const base = name
     .split(" ")
     .filter((part) => !["Left", "Right", "King", "Queen", "Empty"].includes(part))
     .join(" ")
     .trim();
-
   return isEmpty ? `${base} Empty` : base;
 }
 
@@ -184,7 +229,19 @@ function getMidpoint(a: number, b: number) {
 }
 
 function isBackfieldEligible(p: PlayerDot) {
-  return ["RB", "F"].includes(p.id);
+  return p.y < OFF_Y - 2;
+}
+
+function isEligibleSkillPlayer(p: PlayerDot) {
+  return ![...FIXED_OL_IDS, "QB"].includes(p.id as any) && !isBackfieldEligible(p);
+}
+
+function isSplitOutWideEligible(p: PlayerDot) {
+  return isEligibleSkillPlayer(p);
+}
+
+function countsAsNonBackfieldEligible(p: PlayerDot) {
+  return isEligibleSkillPlayer(p);
 }
 
 function isWingLikePlayer(p: PlayerDot) {
@@ -195,6 +252,14 @@ function isTrueWideReceiver(p: PlayerDot) {
   if (!["X", "Z", "H"].includes(p.id)) return false;
   if (isWingLikePlayer(p)) return false;
   return !isBackfieldEligible(p);
+}
+
+function getPassCatcherPriorityScore(p: PlayerDot) {
+  if (["Y", "U"].includes(p.id)) return 1;
+  if (p.id === "RB" || p.id === "F") return 0;
+  if (isWingLikePlayer(p)) return 2;
+  if (["X", "Z", "H"].includes(p.id)) return 3;
+  return 0;
 }
 
 function getOffsetBackSide(players: PlayerDot[]): Side | null {
@@ -214,10 +279,7 @@ function computePassStrengthFromEligibles(
 
   const trueEligibles = players.filter((p) => {
     if (["LT", "LG", "C", "RG", "RT", "QB"].includes(p.id)) return false;
-    if (["RB", "F"].includes(p.id)) {
-      return isEmpty && Math.abs(p.y - OFF_Y) < 1;
-    }
-    return true;
+    return !isBackfieldEligible(p);
   });
 
   const left = trueEligibles.filter((p) => p.x < 50);
@@ -231,6 +293,12 @@ function computePassStrengthFromEligibles(
 
   if (leftTrueWr > rightTrueWr) return "left";
   if (rightTrueWr > leftTrueWr) return "right";
+
+  const leftPassPriority = left.reduce((sum, p) => sum + getPassCatcherPriorityScore(p), 0);
+  const rightPassPriority = right.reduce((sum, p) => sum + getPassCatcherPriorityScore(p), 0);
+
+  if (leftPassPriority > rightPassPriority) return "left";
+  if (rightPassPriority > leftPassPriority) return "right";
 
   const isTwoByTwo = left.length === 2 && right.length === 2;
   if (isTwoByTwo) {
@@ -283,12 +351,16 @@ function buildFoothillFormation(call: string, wide = false): FormationMeta {
       add("Z", getWide(side), OFF_Y);
       add("X", getWide(other), LOS_Y);
       break;
-    case "Troop":
-      add("Y", getFlexTe(side, wide), LOS_Y);
-      add("H", getSlot(side, wide), OFF_Y);
-      add("Z", getWide(side), OFF_Y);
+    case "Troop": {
+      const yX = getFlexTe(side, wide);
+      const zX = wide ? (side === "right" ? 96 : 4) : getWide(side);
+      const hX = getMidpoint(yX, zX);
+      add("Y", yX, LOS_Y);
+      add("H", hX, OFF_Y);
+      add("Z", zX, OFF_Y);
       add("X", getWide(other), LOS_Y);
       break;
+    }
     case "Bunch":
       if (isEmpty) {
         add("H", getAttached(side, wide), OFF_Y);
@@ -304,17 +376,21 @@ function buildFoothillFormation(call: string, wide = false): FormationMeta {
       }
       break;
     case "Doubles":
+      // Y/Z stay on the called side. X/H are opposite the called side, which becomes strong pass.
       add("Y", getAttached(side, wide), LOS_Y);
       add("Z", getWide(side), OFF_Y);
       add("H", getSlot(other, wide), OFF_Y);
       add("X", getWide(other), LOS_Y);
       break;
-    case "Dog":
+    case "Dog": {
+      // H is opposite the called side in a true wing alignment so wing-surface detection can identify it cleanly.
+      const hX = getWing(other, wide);
       add("Y", getAttached(side, wide), LOS_Y);
       add("Z", getWide(side), OFF_Y);
-      add("H", getWing(other, wide), WING_Y);
+      add("H", hX, WING_Y);
       add("X", getWide(other), LOS_Y);
       break;
+    }
     case "B Trips":
       add("Y", getAttached(side, wide), LOS_Y);
       add("H", getWing(other, wide), WING_Y);
@@ -349,7 +425,14 @@ function buildFoothillFormation(call: string, wide = false): FormationMeta {
 
   if (isEmpty && base !== "Bunch") {
     const emptySide: Side = base === "Doubles" ? side : other;
-    const slotOccupied = players.some((p) => p.id !== "QB" && p.id !== "RB" && Math.abs(p.y - OFF_Y) < 0.2 && (emptySide === "left" ? p.x < 50 : p.x > 50) && Math.abs(p.x - getSlot(emptySide, wide)) < 8);
+    const slotOccupied = players.some(
+      (p) =>
+        p.id !== "QB" &&
+        p.id !== "RB" &&
+        Math.abs(p.y - OFF_Y) < 0.2 &&
+        (emptySide === "left" ? p.x < 50 : p.x > 50) &&
+        Math.abs(p.x - getSlot(emptySide, wide)) < 8,
+    );
     add("RB", slotOccupied ? getWing(emptySide, wide) : getSlot(emptySide, wide), OFF_Y);
   }
 
@@ -380,7 +463,6 @@ function buildWingTFormation(call: string, wide = false): FormationMeta {
 
   const players: PlayerDot[] = [...baseLine(wide), { id: "QB", x: 50, y: QB_UNDER_Y }];
   const add = (id: string, x: number, y: number) => players.push({ id, x, y });
-
   const xs = getLineXs(wide);
 
   add("RB", 50, RB_DOT_Y);
@@ -490,6 +572,11 @@ const ALL_FORMATIONS: FormationMeta[] = [
   ...PRO_CALLS.map((call) => buildProFormation(call, false)),
 ];
 
+function getDefaultCustomLandmarkPosition(layer: "dl" | "lb" | "cb" | "db", side: Side) {
+  const yMap = { dl: DL_Y, lb: LB_Y, cb: CB_Y, db: DB_Y } as const;
+  return { x: side === "left" ? 25 : 75, y: yMap[layer] };
+}
+
 function getOffenseBuildLandmarks(): Landmark[] {
   const leftAttached = getAttached("left", false);
   const rightAttached = getAttached("right", false);
@@ -516,14 +603,10 @@ function getOffenseBuildLandmarks(): Landmark[] {
   ]);
 }
 
-/**
- * Alignment mode is currently defined only for the Foothill playbook.
- * This keeps recognition/quiz broad while preventing unsupported alignment landmarks
- * for Pro or Wing T until those rules are added later.
- */
 function getAlignmentLandmarks(formation: FormationMeta): Landmark[] {
+
   const offense = formation.players;
-  const skill = offense.filter((p) => ![...FIXED_OL_IDS, "QB", "RB", "F"].includes(p.id));
+  const skill = offense.filter((p) => isEligibleSkillPlayer(p));
   const points: Landmark[] = [];
   const push = (id: string, x: number, y: number, label: string, layer: LandmarkLayer) => points.push({ id, x, y, label, layer });
   const xs = ALIGNMENT_OLINE_X;
@@ -581,19 +664,21 @@ function getAlignmentLandmarks(formation: FormationMeta): Landmark[] {
     const towardCenter = side === "left" ? 2.2 : -2.2;
     const awayFromCenter = -towardCenter;
 
-    if (isTightBunchToEmolos(side)) {
-      const h = getWingSurface(formation, side);
-      const y = getInlineSurface(formation, side);
+    if (isBunchFamilyOnSide(formation, side)) {
+      const bunch = getBunchNumberedReceivers(formation, side);
+      const numberThree = bunch.numberThree;
+      const numberTwo = bunch.numberTwo;
+
       push(`dl-${side}-5t-bunch`, tackleX + (side === "left" ? -2.2 : 2.2), DL_Y, "5T", "dl");
 
-      if (h) {
-        push(`dl-${side}-6it-bunch`, h.x + towardCenter, DL_Y, "6iT", "dl");
-        push(`dl-${side}-6t-bunch`, h.x, DL_Y, "6T", "dl");
-        push(`dl-${side}-7-bunch`, h.x + awayFromCenter, DL_Y, "7", "dl");
+      if (numberThree) {
+        push(`dl-${side}-6i-bunch`, numberThree.x + towardCenter, DL_Y, "6i", "dl");
+        push(`dl-${side}-6-bunch`, numberThree.x, DL_Y, "6T", "dl");
+        push(`dl-${side}-7t-bunch`, numberThree.x + awayFromCenter, DL_Y, "7T", "dl");
       }
 
-      if (y) {
-        push(`dl-${side}-9t-bunch`, y.x + towardCenter, DL_Y, "9T", "dl");
+      if (numberTwo) {
+        push(`dl-${side}-9t-bunch`, numberTwo.x, DL_Y, "9T", "dl");
       }
       return;
     }
@@ -602,20 +687,25 @@ function getAlignmentLandmarks(formation: FormationMeta): Landmark[] {
       const surface = surfaceInfo.player;
       const insideX = surface.x + towardCenter;
       const outsideX = surface.x + awayFromCenter;
+      const attachedWing = getWingSurface(formation, side);
       push(`dl-${side}-6i`, insideX, DL_Y, "6i", "dl");
       push(`dl-${side}-6`, surface.x, DL_Y, "6", "dl");
       push(`dl-${side}-7t`, outsideX, DL_Y, "7T", "dl");
+      if (attachedWing) {
+        push(`dl-${side}-9t-wing`, attachedWing.x + awayFromCenter, DL_Y, "9T", "dl");
+      }
+      return;
     }
-    if (surfaceInfo.type === "wing") {
-      const surface = surfaceInfo.player;
-      push(`dl-${side}-6it`, surface.x + towardCenter, DL_Y, "6iT", "dl");
-      push(`dl-${side}-6t`, surface.x, DL_Y, "6T", "dl");
-      push(`dl-${side}-9t`, surface.x + awayFromCenter, DL_Y, "9T", "dl");
-    }
+
+    const surface = surfaceInfo.player;
+    push(`dl-${side}-6i-wing`, surface.x + towardCenter, DL_Y, "6i", "dl");
+    push(`dl-${side}-6t`, surface.x, DL_Y, "6T", "dl");
+    push(`dl-${side}-7t-wing`, surface.x + awayFromCenter, DL_Y, "7T", "dl");
   };
   addSurface(getFirstLevelSurface("left"), "left");
   addSurface(getFirstLevelSurface("right"), "right");
 
+  push("lb-00", xs[2], LB_Y, "00T", "lb");
   push("lb-left-10", getMidpoint(xs[1], xs[2]), LB_Y, "10T", "lb");
   push("lb-left-20", xs[1], LB_Y, "20T", "lb");
   push("lb-left-30", getMidpoint(xs[0], xs[1]), LB_Y, "30T", "lb");
@@ -630,29 +720,63 @@ function getAlignmentLandmarks(formation: FormationMeta): Landmark[] {
   const wingLeft = getWingSurface(formation, "left");
   const wingRight = getWingSurface(formation, "right");
   const inlineTeIds = new Set<string>([inlineLeft?.id, inlineRight?.id].filter(Boolean) as string[]);
+  const pairedTeWingIds = new Set<string>([
+    ...(inlineLeft && wingLeft ? [inlineLeft.id, wingLeft.id] : []),
+    ...(inlineRight && wingRight ? [inlineRight.id, wingRight.id] : []),
+  ]);
+  const outsideLeft = getOutsideReceiver(formation, "left");
+  const outsideRight = getOutsideReceiver(formation, "right");
+  const outsideWideIds = new Set<string>(
+    [outsideLeft, outsideRight]
+      .filter((p): p is PlayerDot => Boolean(p))
+      .filter((p) => !inlineTeIds.has(p.id) && !isWingLikePlayer(p) && (p.x < xs[0] || p.x > xs[4]))
+      .map((p) => p.id),
+  );
 
   const addLbTeRule = (te: PlayerDot | null, wing: PlayerDot | null, side: Side) => {
     const tackleX = side === "left" ? xs[0] : xs[4];
 
+    if (isBunchFamilyOnSide(formation, side)) {
+      const bunch = getBunchNumberedReceivers(formation, side);
+      const numberThree = bunch.numberThree;
+      const numberTwo = bunch.numberTwo;
+      const numberOne = bunch.numberOne;
+      const fiveTX = side === "left" ? xs[0] - 2.2 : xs[4] + 2.2;
+      push(`lb-${side}-50t-bunch`, fiveTX, LB_Y, "50T", "lb");
+      if (numberThree) push(`lb-${side}-num3-bunch`, numberThree.x, LB_Y, "H", "lb");
+      if (numberTwo) push(`lb-${side}-num2-bunch`, numberTwo.x, LB_Y, "H", "lb");
+      if (numberOne) push(`lb-${side}-num1-bunch`, numberOne.x, LB_Y, "H", "lb");
+      return;
+    }
+
     if (te) {
-      push(`lb-${te.id}-50t`, getMidpoint(tackleX, te.x), LB_Y, "50T", "lb");
+      const fiveTX = side === "left" ? xs[0] - 2.2 : xs[4] + 2.2;
+      push(`lb-${te.id}-50t`, fiveTX, LB_Y, "50T", "lb");
       const teOutsideX = side === "left" ? te.x - 2.8 : te.x + 2.8;
       push(`lb-${te.id}-60t`, te.x, LB_Y, "60T", "lb");
 
       if (wing) {
+        // 70T = D gap between TE and Wing
         push(`lb-${te.id}-70t`, getMidpoint(te.x, wing.x), LB_Y, "70T", "lb");
         const wingOutsideX = side === "left" ? wing.x - 2.8 : wing.x + 2.8;
         push(`lb-${wing.id}-90t`, wingOutsideX, LB_Y, "90T", "lb");
       } else {
+        // 70T = outside shoulder of TE when no wing
+        const teOutsideX = side === "left" ? te.x - 2.8 : te.x + 2.8;
         push(`lb-${te.id}-70t`, teOutsideX, LB_Y, "70T", "lb");
       }
       return;
     }
 
     if (wing) {
-      push(`lb-${wing.id}-50t`, getMidpoint(tackleX, wing.x), LB_Y, "50T", "lb");
+      const fiveTX = side === "left" ? xs[0] - 2.2 : xs[4] + 2.2;
+      const wingOutsideX = side === "left" ? wing.x - 2.8 : wing.x + 2.8;
+      push(`lb-${wing.id}-50t`, fiveTX, LB_Y, "50T", "lb");
+      push(`lb-${wing.id}-60t`, wing.x, LB_Y, "60T", "lb");
+      push(`lb-${wing.id}-70t`, wingOutsideX, LB_Y, "70T", "lb");
     } else {
-      push(`lb-${side}-50t-open`, side === "left" ? tackleX - 4.5 : tackleX + 4.5, LB_Y, "50T", "lb");
+      const fiveTX = side === "left" ? xs[0] - 2.2 : xs[4] + 2.2;
+      push(`lb-${side}-50t-open`, fiveTX, LB_Y, "50T", "lb");
     }
   };
 
@@ -663,31 +787,64 @@ function getAlignmentLandmarks(formation: FormationMeta): Landmark[] {
     const spread = 2.8 + (idx % 3) * 0.4;
     const insideX = p.x < 50 ? p.x + spread : p.x - spread;
     const outsideX = p.x < 50 ? p.x - spread : p.x + spread;
-
     const isInline = inlineTeIds.has(p.id);
     const isWing = isWingLikePlayer(p);
+    const isTightSurfacePair = pairedTeWingIds.has(p.id);
+    const bunchLeft = isBunchFamilyOnSide(formation, "left") ? getBunchPlayers(formation, "left") : [];
+    const bunchRight = isBunchFamilyOnSide(formation, "right") ? getBunchPlayers(formation, "right") : [];
+    const bunchPlayers = [...bunchLeft, ...bunchRight];
+    const bunchIndex = bunchPlayers.findIndex((bp) => bp.id === p.id);
 
-    if (!isInline && !isWing) {
+    if (!isInline && !isWing && bunchIndex === -1 && !outsideWideIds.has(p.id)) {
       push(`lb-${p.id}-i`, insideX, LB_Y, "I", "lb");
       push(`lb-${p.id}-h`, p.x, LB_Y, "H", "lb");
       push(`lb-${p.id}-o`, outsideX, LB_Y, "O", "lb");
     }
 
+    if (bunchIndex !== -1) {
+      // bunchIndex 0 = #3, 1 = #2, 2 = #1 by geometry
+      if (bunchIndex === 0) {
+        push(`cb-${p.id}-i-bunch`, insideX, CB_Y, "I", "cb");
+        push(`db-${p.id}-h-bunch`, p.x, DB_Y, "H", "db");
+      }
+      if (bunchIndex === 1) {
+        push(`cb-${p.id}-h-bunch`, p.x, CB_Y, "H", "cb");
+      }
+      if (bunchIndex === 2) {
+        push(`cb-${p.id}-o-bunch`, outsideX, CB_Y, "O", "cb");
+      }
+      return;
+    }
+
+    if (isTightSurfacePair) {
+      push(`cb-${p.id}-h`, p.x, CB_Y, "H", "cb");
+      push(`db-${p.id}-h`, p.x, DB_Y, "H", "db");
+
+      if (isInline) {
+        push(`cb-${p.id}-i`, insideX, CB_Y, "I", "cb");
+        push(`db-${p.id}-i`, insideX, DB_Y, "I", "db");
+      }
+
+      if (isWing) {
+        push(`cb-${p.id}-o`, outsideX, CB_Y, "O", "cb");
+        push(`db-${p.id}-o`, outsideX, DB_Y, "O", "db");
+      }
+
+      return;
+    }
+
     push(`cb-${p.id}-i`, insideX, CB_Y, "I", "cb");
     push(`cb-${p.id}-h`, p.x, CB_Y, "H", "cb");
     push(`cb-${p.id}-o`, outsideX, CB_Y, "O", "cb");
-    push(`db-${p.id}-i`, insideX, DB_Y, "I", "db");
-    push(`db-${p.id}-h`, p.x, DB_Y, "H", "db");
-    push(`db-${p.id}-o`, outsideX, DB_Y, "O", "db");
+    if (!outsideWideIds.has(p.id)) {
+      push(`db-${p.id}-i`, insideX, DB_Y, "I", "db");
+      push(`db-${p.id}-h`, p.x, DB_Y, "H", "db");
+      push(`db-${p.id}-o`, outsideX, DB_Y, "O", "db");
+    }
   });
 
   const apexEligibleSkill = formation.players.filter((p) => {
-    if (p.id === "QB") return false;
-    if (p.id === "RB") {
-      const isWide = p.y <= OFF_Y + 1 && (p.x < xs[0] - 2 || p.x > xs[4] + 2);
-      return isWide;
-    }
-    if ([...FIXED_OL_IDS, "F"].includes(p.id as any)) return false;
+    if (!isEligibleSkillPlayer(p)) return false;
     return p.x < xs[0] || p.x > xs[4];
   });
 
@@ -709,20 +866,21 @@ function getAlignmentLandmarks(formation: FormationMeta): Landmark[] {
     if (!inlineEmolos && isWingLikeFirstEligible) return;
 
     const emolosX = inlineEmolos ? inlineEmolos.x : tackleX;
-    const next = sideSkill.find((p) => {
-      if (inlineEmolos && p.id === inlineEmolos.id) return false;
-      return side === "left" ? p.x < emolosX - 0.1 : p.x > emolosX + 0.1;
-    }) || sideSkill.find((p) => !(inlineEmolos && p.id === inlineEmolos.id));
+    const next =
+      sideSkill.find((p) => {
+        if (inlineEmolos && p.id === inlineEmolos.id) return false;
+        return side === "left" ? p.x < emolosX - 0.1 : p.x > emolosX + 0.1;
+      }) || sideSkill.find((p) => !(inlineEmolos && p.id === inlineEmolos.id));
 
     if (!next || isWingLike(next)) return;
-    push(`lb-${side}-apex`, getMidpoint(emolosX, next.x), LB_Y, "Apex", "lb");
+    const apexX = getMidpoint(emolosX, next.x);
+    push(`lb-${side}-apex`, apexX, LB_Y, "Apex", "lb");
+    push(`db-${side}-apex`, apexX, DB_Y, "Apex", "db");
   };
   addApex("left");
   addApex("right");
 
-  const getEligibles = (side: Side) => {
-    return apexEligibleSkill.filter((p) => (side === "left" ? p.x < 50 : p.x > 50)).sort((a, b) => a.x - b.x);
-  };
+  const getEligibles = (side: Side) => apexEligibleSkill.filter((p) => (side === "left" ? p.x < 50 : p.x > 50)).sort((a, b) => a.x - b.x);
 
   const isTightGroup = (group: PlayerDot[]) => {
     if (group.length < 2) return false;
@@ -736,7 +894,6 @@ function getAlignmentLandmarks(formation: FormationMeta): Landmark[] {
   ["left", "right"].forEach((s) => {
     const side = s as Side;
     const group = getEligibles(side);
-
     if (isTightGroup(group)) return;
 
     if (group.length >= 2) {
@@ -748,9 +905,18 @@ function getAlignmentLandmarks(formation: FormationMeta): Landmark[] {
         const a = group[i];
         const b = group[i + 1];
         if (isWingLike(a) || isWingLike(b)) continue;
-        push(`lb-${side}-apex-extra-${a.id}-${b.id}`, (a.x + b.x) / 2, LB_Y, "Apex", "lb");
+        const extraApexX = (a.x + b.x) / 2;
+        push(`lb-${side}-apex-extra-${a.id}-${b.id}`, extraApexX, LB_Y, "Apex", "lb");
+        push(`db-${side}-apex-extra-${a.id}-${b.id}`, extraApexX, DB_Y, "Apex", "db");
       }
     }
+  });
+
+  (["left", "right"] as Side[]).forEach((side) => {
+    const numberOne = getOutsideReceiver(formation, side);
+    const numberTwo = getNumberTwoReceiver(formation, side);
+    if (!numberOne || !numberTwo) return;
+    push(`lb-${side}-apex-12`, getMidpoint(numberOne.x, numberTwo.x), LB_Y, "Apex", "lb");
   });
 
   push("db-left-edge", xs[0], DB_Y, "Edge", "db");
@@ -784,25 +950,49 @@ function findLandmarkByLabel(landmarks: Landmark[], layer: LandmarkLayer, label:
 
 function findEligibleOnSide(formation: FormationMeta, side: Side) {
   return formation.players
-    .filter((p) => ![...FIXED_OL_IDS, "QB", "RB", "F"].includes(p.id))
+    .filter((p) => ![...FIXED_OL_IDS, "QB"].includes(p.id as any))
     .filter((p) => (side === "left" ? p.x < 50 : p.x > 50));
 }
 
+function findTrueEligiblesOnSide(formation: FormationMeta, side: Side) {
+  return findEligibleOnSide(formation, side).filter(countsAsNonBackfieldEligible);
+}
+
+function getOrderedReceivers(formation: FormationMeta, side: Side) {
+  const players = findTrueEligiblesOnSide(formation, side);
+  return [...players].sort((a, b) => (side === "left" ? a.x - b.x : b.x - a.x));
+}
+
 function getOutsideReceiver(formation: FormationMeta, side: Side) {
-  const players = findEligibleOnSide(formation, side);
-  if (!players.length) return null;
-  return side === "left"
-    ? players.reduce((best, p) => (p.x < best.x ? p : best), players[0])
-    : players.reduce((best, p) => (p.x > best.x ? p : best), players[0]);
+  const ordered = getOrderedReceivers(formation, side);
+  return ordered[0] || null;
+}
+
+function getNumberTwoReceiver(formation: FormationMeta, side: Side) {
+  const ordered = getOrderedReceivers(formation, side);
+  return ordered.length >= 2 ? ordered[1] : null;
+}
+
+function getNumberThreeReceiver(formation: FormationMeta, side: Side) {
+  const ordered = getOrderedReceivers(formation, side);
+  return ordered.length >= 3 ? ordered[2] : null;
 }
 
 function getSlotReceiver(formation: FormationMeta, side: Side) {
-  const players = findEligibleOnSide(formation, side).filter((p) => Math.abs(p.y - OFF_Y) < 0.5);
-  if (!players.length) return null;
-  const outside = getOutsideReceiver(formation, side);
-  const attachedX = side === "left" ? ALIGNMENT_OLINE_X[0] : ALIGNMENT_OLINE_X[4];
-  const midpoint = outside ? getMidpoint(outside.x, attachedX) : attachedX;
-  return players.reduce((best, p) => (Math.abs(p.x - midpoint) < Math.abs(best.x - midpoint) ? p : best), players[0]);
+  const numberTwo = getNumberTwoReceiver(formation, side);
+  if (!numberTwo) return null;
+
+  const inline = getInlineSurface(formation, side);
+  const isInlineNumberTwo = inline?.id === numberTwo.id;
+  const isWingNumberTwo = isWingLikePlayer(numberTwo);
+
+  // A slot is defined by his relation to the OL, not by being on or off the ball.
+  // So #2 counts as a slot if he is not the inline TE surface and not a wing.
+  return !isInlineNumberTwo && !isWingNumberTwo ? numberTwo : null;
+}
+
+function getTightSurfaceSlotReceiver(formation: FormationMeta, side: Side) {
+  return getSlotReceiver(formation, side);
 }
 
 function getInlineSurface(formation: FormationMeta, side: Side) {
@@ -816,103 +1006,557 @@ function getInlineSurface(formation: FormationMeta, side: Side) {
 function getWingSurface(formation: FormationMeta, side: Side) {
   const tackleX = side === "left" ? ALIGNMENT_OLINE_X[0] : ALIGNMENT_OLINE_X[4];
   const players = findEligibleOnSide(formation, side)
-    .filter((p) => (Math.abs(p.y - WING_Y) < 0.75 || Math.abs(p.y - OFF_Y) < 0.5) && Math.abs(p.x - tackleX) <= 10)
+    .filter((p) => Math.abs(p.y - WING_Y) < 0.75 && Math.abs(p.x - tackleX) <= 10)
     .sort((a, b) => Math.abs(a.x - tackleX) - Math.abs(b.x - tackleX));
   return players[0] || null;
 }
 
-function getAlignmentAnswerKey(formation: FormationMeta, landmarks: Landmark[]): Record<string, { x: number; y: number }> {
+function getBunchPlayers(formation: FormationMeta, side: Side) {
+  const tackleX = side === "left" ? ALIGNMENT_OLINE_X[0] : ALIGNMENT_OLINE_X[4];
+  const attachedX = getAttached(side, true);
+  const sidePlayers = findEligibleOnSide(formation, side)
+    .sort((a, b) => {
+      const aScore = Math.abs(a.x - attachedX) + Math.abs(a.x - tackleX) * 0.35;
+      const bScore = Math.abs(b.x - attachedX) + Math.abs(b.x - tackleX) * 0.35;
+      return aScore - bScore;
+    })
+    .slice(0, 3)
+    .sort((a, b) => Math.abs(a.x - 50) - Math.abs(b.x - 50));
+  return sidePlayers;
+}
+
+function getBunchNumberedReceivers(formation: FormationMeta, side: Side) {
+  const bunch = getBunchPlayers(formation, side);
+  return {
+    numberThree: bunch[0] || null,
+    numberTwo: bunch[1] || null,
+    numberOne: bunch[2] || null,
+  };
+}
+
+function isBunchFamilyOnSide(formation: FormationMeta, side: Side) {
+  const name = formation.name.toLowerCase();
+  if (!name.includes("bunch")) return false;
+  const runSide = formation.runStrength;
+  return side === runSide;
+}
+
+function hasTrueWideReceiverOnSide(formation: FormationMeta, side: Side) {
+  return findEligibleOnSide(formation, side).some((p) => isTrueWideReceiver(p));
+}
+
+function getBackfieldOffsetSide(formation: FormationMeta): Side | null {
+  const back = formation.players.find((p) => ["RB", "F"].includes(p.id) && Math.abs(p.y - OFF_Y) > 1 && p.x !== 50);
+  if (!back) return null;
+  return back.x < 50 ? "left" : "right";
+}
+
+function getFullbackOffsetSide(formation: FormationMeta): Side | null {
+  const fullback = formation.players.find((p) => p.id === "F" && Math.abs(p.y - OFF_Y) > 1 && p.x !== 50);
+  if (!fullback) return null;
+  return fullback.x < 50 ? "left" : "right";
+}
+
+function isClosedSurfaceOnlySide(formation: FormationMeta, side: Side) {
+  const inline = getInlineSurface(formation, side);
+  const wing = getWingSurface(formation, side);
+  const slot = getSlotReceiver(formation, side);
+  return Boolean(inline || wing) && !hasTrueWideReceiverOnSide(formation, side) && !slot;
+}
+
+function shouldBossIlbs(formation: FormationMeta) {
+  const leftInline = getInlineSurface(formation, "left");
+  const rightInline = getInlineSurface(formation, "right");
+  const leftWing = getWingSurface(formation, "left");
+  const rightWing = getWingSurface(formation, "right");
+
+  // 🔥 NEW RULE: TE + Wing combo in 4-3 ALWAYS triggers boss
+  const hasTEWingLeft = Boolean(leftInline && leftWing);
+  const hasTEWingRight = Boolean(rightInline && rightWing);
+
+  if (hasTEWingLeft || hasTEWingRight) return true;
+
+  const leftEligibles = findTrueEligiblesOnSide(formation, "left");
+  const rightEligibles = findTrueEligiblesOnSide(formation, "right");
+  const leftCount = leftEligibles.length;
+  const rightCount = rightEligibles.length;
+
+  const isThreeByOne = (leftCount === 3 && rightCount === 1) || (leftCount === 1 && rightCount === 3);
+  const closedThreeByOne = (leftCount === 3 && isClosedSurfaceOnlySide(formation, "right")) || (rightCount === 3 && isClosedSurfaceOnlySide(formation, "left"));
+  if (isThreeByOne && !closedThreeByOne) return true;
+
+  const fullbackSide = getFullbackOffsetSide(formation);
+  const is21Personnel = formation.personnel === "21";
+  const teFbSameSide = is21Personnel && ((leftInline && fullbackSide === "left") || (rightInline && fullbackSide === "right"));
+  if (teFbSameSide) return true;
+
+  return false;
+}
+
+function shouldWillPlay50InEmpty(formation: FormationMeta, willSide: Side) {
+  if (!formation.name.includes("Empty")) return false;
+
+  const leftEligibles = findTrueEligiblesOnSide(formation, "left");
+  const rightEligibles = findTrueEligiblesOnSide(formation, "right");
+  const isThreeByTwo = (leftEligibles.length === 3 && rightEligibles.length === 2) || (leftEligibles.length === 2 && rightEligibles.length === 3);
+  if (!isThreeByTwo) return false;
+
+  return Boolean(getSlotReceiver(formation, willSide));
+}
+
+function getThreeByOneStrongSide(formation: FormationMeta): Side | null {
+  const leftCount = findTrueEligiblesOnSide(formation, "left").length;
+  const rightCount = findTrueEligiblesOnSide(formation, "right").length;
+  if (leftCount === 3 && rightCount === 1) return "left";
+  if (rightCount === 3 && leftCount === 1) return "right";
+  return null;
+}
+
+function shouldMikeApexFlexedThree(formation: FormationMeta, mikeSide: Side) {
+  const strongSide = getThreeByOneStrongSide(formation);
+  if (!strongSide || strongSide !== mikeSide) return false;
+  if (isClosedSurfaceOnlySide(formation, mikeSide)) return false;
+
+  const numberThree = getNumberThreeReceiver(formation, mikeSide);
+  if (!numberThree) return false;
+
+  const isFlexed = !isWingLikePlayer(numberThree) && Math.abs(numberThree.x - (mikeSide === "left" ? ALIGNMENT_OLINE_X[0] : ALIGNMENT_OLINE_X[4])) > 8;
+  return isFlexed;
+}
+
+function isAttachedOrWingNumberThree(formation: FormationMeta, side: Side) {
+  const numberThree = getNumberThreeReceiver(formation, side);
+  if (!numberThree) return false;
+  const inline = getInlineSurface(formation, side);
+  if (inline?.id === numberThree.id) return true;
+  if (isWingLikePlayer(numberThree)) return true;
+  return false;
+}
+
+function getAlignmentSpecialCases(formation: FormationMeta, frontMode: FrontMode = "4-3"): string[] {
+  const notes: string[] = [];
+  const passStrength = formation.passStrength;
+  const passAway: Side = passStrength === "left" ? "right" : "left";
+  const leftCount = findTrueEligiblesOnSide(formation, "left").length;
+  const rightCount = findTrueEligiblesOnSide(formation, "right").length;
+  const is22 = leftCount === 2 && rightCount === 2;
+  const is31 = (leftCount === 3 && rightCount === 1) || (leftCount === 1 && rightCount === 3);
+  const is32 = (leftCount === 3 && rightCount === 2) || (leftCount === 2 && rightCount === 3);
+  const bossIlbs = shouldBossIlbs(formation);
+  const mikeApexFlexedThree = shouldMikeApexFlexedThree(formation, passStrength);
+  const willStrengthEligibles = findTrueEligiblesOnSide(formation, passStrength).length;
+  const willWeakEligibles = findTrueEligiblesOnSide(formation, passAway).length;
+  const strongInline = getInlineSurface(formation, formation.runStrength);
+  const strongWing = getWingSurface(formation, formation.runStrength);
+  const weakInline = getInlineSurface(formation, passAway);
+  const weakWing = getWingSurface(formation, passAway);
+
+  if (formation.name.includes("Quad")) {
+    notes.push("Quad: Mike 30T.");
+  }
+
+  if (bossIlbs && !mikeApexFlexedThree) {
+    notes.push("Boss: Mike to strength, Will away.");
+  }
+
+  if (mikeApexFlexedThree) {
+    notes.push("Mike: apex flexed #3.");
+  }
+
+  const mikeStrengthEligibles = findTrueEligiblesOnSide(formation, passStrength).length;
+  const closedAndBoss43Notes = frontMode === "4-3" && Boolean((isClosedSurfaceOnlySide(formation, "left") && !isClosedSurfaceOnlySide(formation, "right")) || (isClosedSurfaceOnlySide(formation, "right") && !isClosedSurfaceOnlySide(formation, "left"))) && bossIlbs;
+  if (closedAndBoss43Notes) {
+    notes.push("Closed + boss: Mike and Will to 20T toward TE/FB.");
+  } else if (mikeStrengthEligibles === 3) {
+    notes.push("Mike: to strength. 60T if #3 attached, apex if #3 flexed.");
+  } else {
+    notes.push("Mike: to strength. 10T with run strength, 30T away.");
+  }
+
+  if (formation.name.includes("Empty") && is32) {
+    notes.push("3x2 Empty: Ni on #2 WR, Will 50T weak, Mike 60T or apex.");
+    notes.push("Empty: BS inside #2 weak.");
+  }
+
+  if (willStrengthEligibles === 3) {
+    notes.push(willWeakEligibles === 2 ? "Will: 50T weak vs 3x2." : "Will: 00T weak vs 3x1.");
+  } else {
+    notes.push("Will: apex weak slot, else open gap.");
+  }
+
+  if (is22) {
+    notes.push("2x2: ILBs in open gap.");
+    notes.push("2x2: safeties inside slot #2, outside attached #2.");
+  }
+
+  if (is31) {
+    notes.push("3x1: FS apex #2 and #3.");
+  }
+
+  if (strongWing) {
+    notes.push("Wing adjust: DE widens strong.");
+  }
+
+  if (weakWing) {
+    notes.push("Wing adjust: DE widens weak.");
+  }
+
+  if (strongInline && strongWing) {
+    notes.push("TE/Wing strong: 7T/9T.");
+  }
+
+  if (weakInline && weakWing) {
+    notes.push("TE/Wing weak: 7T/9T.");
+  }
+
+  if (formation.name.toLowerCase().includes("bunch")) {
+    notes.push("Bunch: #3 gets 6i/6/7, #2 gets 9T.");
+    notes.push("Bunch: Mike 50T, Ni on #1, FS on #3.");
+  }
+
+  return notes;
+}
+
+function getAlignmentAnswerKey(formation: FormationMeta, landmarks: Landmark[], frontMode: FrontMode = "4-3"): Record<string, { x: number; y: number }> {
   const answer: Record<string, { x: number; y: number }> = {};
   const runStrength = formation.runStrength;
   const weakSide: Side = runStrength === "left" ? "right" : "left";
   const passStrength = formation.passStrength;
   const passAway: Side = passStrength === "left" ? "right" : "left";
 
+  const getShade = (player: PlayerDot | null, layer: "cb" | "db", label: "I" | "H" | "O") => {
+    if (!player) return null;
+    const pts = landmarks
+      .filter((p) => p.layer === layer && p.label === label && Math.abs(p.x - player.x) <= 6)
+      .sort((a, b) => Math.abs(a.x - player.x) - Math.abs(b.x - player.x));
+    return pts[0] || null;
+  };
+
   const strongInline = getInlineSurface(formation, runStrength);
   const strongWing = getWingSurface(formation, runStrength);
   const weakInline = getInlineSurface(formation, weakSide);
   const weakWing = getWingSurface(formation, weakSide);
+  const multipleTes = Boolean(strongInline && weakInline);
 
   const tPoint = findLandmarkByLabel(landmarks, "dl", "3T", runStrength);
   const nPoint = findLandmarkByLabel(landmarks, "dl", "2i", weakSide);
   const sdeFive = findLandmarkByLabel(landmarks, "dl", "5T", runStrength);
-  const sdeSix = findLandmarkByLabel(landmarks, "dl", "6", runStrength);
-  const sdeNine = findLandmarkByLabel(landmarks, "dl", "7T", runStrength) || findLandmarkByLabel(landmarks, "dl", "9", runStrength);
-  const sdeSixIT = findLandmarkByLabel(landmarks, "dl", "6iT", runStrength);
+  const sdeSix = findLandmarkByLabel(landmarks, "dl", "6", runStrength) || findLandmarkByLabel(landmarks, "dl", "6T", runStrength);
+  const sdeNine = findLandmarkByLabel(landmarks, "dl", "7T", runStrength) || findLandmarkByLabel(landmarks, "dl", "9T", runStrength);
   const wdeFive = findLandmarkByLabel(landmarks, "dl", "5T", weakSide);
-  const wdeSix = findLandmarkByLabel(landmarks, "dl", "6", weakSide);
-  const wdeNine = findLandmarkByLabel(landmarks, "dl", "7T", weakSide) || findLandmarkByLabel(landmarks, "dl", "9", weakSide);
-  const wdeSixIT = findLandmarkByLabel(landmarks, "dl", "6iT", weakSide);
+  const wdeSix = findLandmarkByLabel(landmarks, "dl", "6", weakSide) || findLandmarkByLabel(landmarks, "dl", "6T", weakSide);
+  const wdeNine = findLandmarkByLabel(landmarks, "dl", "7T", weakSide) || findLandmarkByLabel(landmarks, "dl", "9T", weakSide);
 
   if (tPoint) answer.T = { x: tPoint.x, y: tPoint.y };
   if (nPoint) answer.N = { x: nPoint.x, y: nPoint.y };
+
   if (strongInline && strongWing && sdeNine) answer.SDE = { x: sdeNine.x, y: sdeNine.y };
-  else if (!strongInline && strongWing && sdeSixIT) answer.SDE = { x: sdeSixIT.x, y: sdeSixIT.y };
+  else if (!strongInline && strongWing && sdeSix) answer.SDE = { x: sdeSix.x, y: sdeSix.y };
   else if (strongInline && sdeSix) answer.SDE = { x: sdeSix.x, y: sdeSix.y };
   else if (sdeFive) answer.SDE = { x: sdeFive.x, y: sdeFive.y };
 
   if (weakInline && weakWing && wdeNine) answer.WDE = { x: wdeNine.x, y: wdeNine.y };
-  else if (!weakInline && weakWing && wdeSixIT) answer.WDE = { x: wdeSixIT.x, y: wdeSixIT.y };
+  else if (weakInline && multipleTes && wdeSix) answer.WDE = { x: wdeSix.x, y: wdeSix.y };
+  else if (!weakInline && weakWing && wdeSix) answer.WDE = { x: wdeSix.x, y: wdeSix.y };
   else if (weakWing && wdeSix) answer.WDE = { x: wdeSix.x, y: wdeSix.y };
   else if (wdeFive) answer.WDE = { x: wdeFive.x, y: wdeFive.y };
 
+  const bossIlbs = shouldBossIlbs(formation);
   const mikeSide = passStrength;
   const willSide = passAway;
-  const mikeOn3T = mikeSide === runStrength;
-  const willOn3T = willSide === runStrength;
-  const mikeLandmark = findLandmarkByLabel(landmarks, "lb", mikeOn3T ? "20T" : "40T", mikeSide);
-  const willSlot = getSlotReceiver(formation, willSide);
-  const willLandmark = willSlot ? findLandmarkByLabel(landmarks, "lb", "Apex", willSide) : findLandmarkByLabel(landmarks, "lb", willOn3T ? "20T" : "40T", willSide);
+  const mikeOnRunSide = mikeSide === runStrength;
+  const willOnRunSide = willSide === runStrength;
+
+  const leftClosed = isClosedSurfaceOnlySide(formation, "left");
+  const rightClosed = isClosedSurfaceOnlySide(formation, "right");
+  const cometSide: Side | null = leftClosed && !rightClosed ? "left" : rightClosed && !leftClosed ? "right" : null;
+  let cometTe: PlayerDot | null = null;
+  let cometWing: PlayerDot | null = null;
+  if (cometSide) {
+    cometTe = getInlineSurface(formation, cometSide);
+    cometWing = getWingSurface(formation, cometSide);
+    const cometLabel = !cometTe ? "50T" : cometTe && cometWing ? "90T" : "70T";
+    const cometSpot = findLandmarkByLabel(landmarks, "lb", cometLabel, cometSide);
+    if (cometSpot) answer.BC = { x: cometSpot.x, y: cometSpot.y };
+  }
+
+  const closedThreeByOne = cometSide === passAway && findTrueEligiblesOnSide(formation, passStrength).length === 3;
+  const nonClosedBoss43 = frontMode === "4-3" && !cometSide && bossIlbs && findTrueEligiblesOnSide(formation, passStrength).length !== 3;
+  const nonClosedBoss44 = frontMode === "4-4" && !cometSide && bossIlbs && findTrueEligiblesOnSide(formation, passStrength).length !== 3;
+  const closedAndBoss43 = frontMode === "4-3" && Boolean(cometSide) && bossIlbs;
+  const closedAndBoss44 = frontMode === "4-4" && Boolean(cometSide) && bossIlbs;
+  const closedNoBoss44 = frontMode === "4-4" && Boolean(cometSide) && !bossIlbs;
+
+  const strongBunch = isBunchFamilyOnSide(formation, mikeSide) ? getBunchNumberedReceivers(formation, mikeSide) : null;
+
+  const mikeStrengthEligibles = findTrueEligiblesOnSide(formation, mikeSide).length;
+  const mikeLandmark = (() => {
+    if (closedThreeByOne) return findLandmarkByLabel(landmarks, "lb", "50T", mikeSide);
+    if (nonClosedBoss43) return findLandmarkByLabel(landmarks, "lb", "20T", mikeSide) || findLandmarkByLabel(landmarks, "lb", mikeOnRunSide ? "10T" : "30T", mikeSide);
+    if (nonClosedBoss44) return findLandmarkByLabel(landmarks, "lb", "20T", mikeSide) || findLandmarkByLabel(landmarks, "lb", mikeOnRunSide ? "10T" : "30T", mikeSide);
+    if (closedAndBoss43) return findLandmarkByLabel(landmarks, "lb", "20T", mikeSide) || findLandmarkByLabel(landmarks, "lb", mikeOnRunSide ? "10T" : "30T", mikeSide);
+    if (closedAndBoss44) return findLandmarkByLabel(landmarks, "lb", "20T", mikeSide) || findLandmarkByLabel(landmarks, "lb", mikeOnRunSide ? "10T" : "30T", mikeSide);
+    if (closedNoBoss44) return findLandmarkByLabel(landmarks, "lb", mikeOnRunSide ? "10T" : "30T", mikeSide);
+    if (strongBunch?.numberThree) return findLandmarkByLabel(landmarks, "lb", "50T", mikeSide);
+    if (formation.name.includes("Quad")) return findLandmarkByLabel(landmarks, "lb", "30T", mikeSide);
+    if (mikeStrengthEligibles === 3) {
+      if (isAttachedOrWingNumberThree(formation, mikeSide)) return findLandmarkByLabel(landmarks, "lb", "60T", mikeSide);
+      return findLandmarkByLabel(landmarks, "lb", "Apex", mikeSide);
+    }
+    return findLandmarkByLabel(landmarks, "lb", mikeOnRunSide ? "10T" : "30T", mikeSide);
+  })();
   if (mikeLandmark) answer.M = { x: mikeLandmark.x, y: mikeLandmark.y };
+
+  const willLandmark = (() => {
+    const strengthEligibleCount = findTrueEligiblesOnSide(formation, passStrength).length;
+
+    // 🔥 FIX: Proper 4-3 Closed Boss behavior (split 20Ts)
+    if (closedThreeByOne) {
+      return findLandmarkByLabel(landmarks, "lb", "10T", passStrength) || findLandmarkByLabel(landmarks, "lb", "10T", willSide);
+    }
+
+    if (nonClosedBoss43) {
+      const will20 = findLandmarkByLabel(landmarks, "lb", "20T", willSide);
+      return will20 || findLandmarkByLabel(landmarks, "lb", willOnRunSide ? "10T" : "30T", willSide);
+    }
+
+    if (nonClosedBoss44) {
+      const will20 = findLandmarkByLabel(landmarks, "lb", "20T", willSide);
+      return will20 || findLandmarkByLabel(landmarks, "lb", willOnRunSide ? "10T" : "30T", willSide);
+    }
+
+    if (closedAndBoss43) {
+      const will20 = findLandmarkByLabel(landmarks, "lb", "20T", willSide);
+      return will20 || findLandmarkByLabel(landmarks, "lb", willOnRunSide ? "10T" : "30T", willSide);
+    }
+
+    if (frontMode === "4-4") {
+      if (closedAndBoss44) {
+        return findLandmarkByLabel(landmarks, "lb", "20T", willSide) || findLandmarkByLabel(landmarks, "lb", willOnRunSide ? "10T" : "30T", willSide);
+      }
+      if (closedNoBoss44) {
+        return findLandmarkByLabel(landmarks, "lb", willOnRunSide ? "10T" : "30T", willSide);
+      }
+      if (strengthEligibleCount === 3) {
+        return findLandmarkByLabel(landmarks, "lb", "00T");
+      }
+      if (bossIlbs) {
+        return findLandmarkByLabel(landmarks, "lb", "00T") || findLandmarkByLabel(landmarks, "lb", willOnRunSide ? "10T" : "30T", willSide);
+      }
+      return findLandmarkByLabel(landmarks, "lb", willOnRunSide ? "10T" : "30T", willSide);
+    }
+
+    const weakEligibleCount = findTrueEligiblesOnSide(formation, willSide).length;
+    const willSlot = getSlotReceiver(formation, willSide);
+
+    if (closedThreeByOne) {
+      return findLandmarkByLabel(landmarks, "lb", "10T", passStrength) || findLandmarkByLabel(landmarks, "lb", "10T", willSide);
+    }
+
+    if (bossIlbs) {
+      if (strengthEligibleCount === 3 && weakEligibleCount !== 2) return findLandmarkByLabel(landmarks, "lb", "00T");
+      return findLandmarkByLabel(landmarks, "lb", "50T", willSide) || findLandmarkByLabel(landmarks, "lb", willOnRunSide ? "10T" : "30T", willSide);
+    }
+
+    if (strengthEligibleCount === 3) {
+      if (weakEligibleCount === 2) return findLandmarkByLabel(landmarks, "lb", "50T", willSide);
+      return findLandmarkByLabel(landmarks, "lb", "00T");
+    }
+
+    if (willSlot) return findLandmarkByLabel(landmarks, "lb", "Apex", willSide);
+
+    return findLandmarkByLabel(landmarks, "lb", willOnRunSide ? "10T" : "30T", willSide);
+  })();
   if (willLandmark) answer.W = { x: willLandmark.x, y: willLandmark.y };
 
-  const nickelSlot = getSlotReceiver(formation, passStrength);
-  if (nickelSlot) {
-    const ni = landmarks.filter((p) => p.layer === "lb" && p.label === "H" && Math.abs(p.x - nickelSlot.x) <= 5).sort((a, b) => Math.abs(a.x - nickelSlot.x) - Math.abs(b.x - nickelSlot.x))[0];
-    if (ni) answer.Ni = { x: ni.x, y: ni.y };
-  } else {
-    const emolos = getInlineSurface(formation, passStrength) || getWingSurface(formation, passStrength);
-    if (emolos) answer.Ni = { x: emolos.x, y: LB_Y };
-  }
+  const applyOverhangRule = (side: Side, targetId: "Ni" | "BS") => {
+    const sideBunch = isBunchFamilyOnSide(formation, side) ? getBunchNumberedReceivers(formation, side) : null;
+    const sideSlot = getSlotReceiver(formation, side);
+    const sideNumberTwo = getNumberTwoReceiver(formation, side);
+    const sideOutside = getOutsideReceiver(formation, side);
+    const sideEligibleCount = findTrueEligiblesOnSide(formation, side).length;
 
-  const fcTarget = getOutsideReceiver(formation, passStrength);
-  const bcTarget = getOutsideReceiver(formation, passAway);
-  if (fcTarget) {
-    const fc = landmarks.filter((p) => p.layer === "cb" && p.label === "H" && Math.abs(p.x - fcTarget.x) <= 5).sort((a, b) => Math.abs(a.x - fcTarget.x) - Math.abs(b.x - fcTarget.x))[0];
-    if (fc) answer.FC = { x: fc.x, y: fc.y };
-  }
-  if (bcTarget) {
-    const bc = landmarks.filter((p) => p.layer === "cb" && p.label === "H" && Math.abs(p.x - bcTarget.x) <= 5).sort((a, b) => Math.abs(a.x - bcTarget.x) - Math.abs(b.x - bcTarget.x))[0];
-    if (bc) answer.BC = { x: bc.x, y: bc.y };
-  }
+    if (sideBunch?.numberOne) {
+      answer[targetId] = { x: sideBunch.numberOne.x, y: LB_Y };
+      return;
+    }
 
+    if (cometSide && cometSide === side) {
+      const strongEligibleCount = findTrueEligiblesOnSide(formation, passStrength).length;
+
+      // 4-4 weak overhang rule: if the closed side has no TE, treat the tackle like the TE
+      // and align BS in the next open gap on that closed side.
+      if (targetId === "BS" && frontMode === "4-4" && side === passAway && !cometTe) {
+        const bsTackleGap = findLandmarkByLabel(landmarks, "lb", "30T", side);
+        if (bsTackleGap) answer[targetId] = { x: bsTackleGap.x, y: bsTackleGap.y };
+        return;
+      }
+
+      const singleSurfaceCometBump =
+        targetId === "BS" &&
+        frontMode === "4-4" &&
+        side === passAway &&
+        strongEligibleCount === 3 &&
+        !(cometTe && cometWing) &&
+        (Boolean(cometTe) || Boolean(cometWing));
+
+      const bumpLabel = singleSurfaceCometBump ? "30T" : cometTe && cometWing ? "50T" : "40T";
+      const bump = findLandmarkByLabel(landmarks, "lb", bumpLabel, side);
+      if (bump) answer[targetId] = { x: bump.x, y: bump.y };
+      return;
+    }
+
+    if ((sideEligibleCount === 2 || sideEligibleCount === 3) && sideNumberTwo) {
+      if (sideSlot) {
+        answer[targetId] = { x: sideNumberTwo.x, y: LB_Y };
+      } else {
+        const outsideX = sideOutside?.x ?? sideNumberTwo.x;
+        const targetApexX = getMidpoint(outsideX, sideNumberTwo.x);
+        const apex = landmarks
+          .filter((p) => p.layer === "lb" && p.label === "Apex")
+          .sort((a, b) => Math.abs(a.x - targetApexX) - Math.abs(b.x - targetApexX))[0] || findLandmarkByLabel(landmarks, "lb", "Apex", side);
+        if (apex) answer[targetId] = { x: apex.x, y: apex.y };
+      }
+      return;
+    }
+
+    const apex = findLandmarkByLabel(landmarks, "lb", "Apex", side);
+    if (apex) answer[targetId] = { x: apex.x, y: apex.y };
+  };
+
+  applyOverhangRule(passStrength, "Ni");
+
+  const leftElig = findTrueEligiblesOnSide(formation, "left").length;
+  const rightElig = findTrueEligiblesOnSide(formation, "right").length;
+  const is22 = leftElig === 2 && rightElig === 2;
+  const is31 = (leftElig === 3 && rightElig === 1) || (leftElig === 1 && rightElig === 3);
+  const is32 = (leftElig === 3 && rightElig === 2) || (leftElig === 2 && rightElig === 3);
+  const fsNumberTwo = getNumberTwoReceiver(formation, passStrength);
+  const fsNumberThree = getNumberThreeReceiver(formation, passStrength);
+  const bsNumberTwo = getNumberTwoReceiver(formation, passAway);
   const fsSlot = getSlotReceiver(formation, passStrength);
   const bsSlot = getSlotReceiver(formation, passAway);
+  const fsApex = findLandmarkByLabel(landmarks, "db", "Apex", passStrength);
+  const bsApex = findLandmarkByLabel(landmarks, "db", "Apex", passAway);
   const fsInline = getInlineSurface(formation, passStrength);
   const bsInline = getInlineSurface(formation, passAway);
-  const getDbShade = (target: PlayerDot, shade: "I" | "H" | "O") =>
-    landmarks.filter((p) => p.layer === "db" && p.label === shade && Math.abs(p.x - target.x) <= 5).sort((a, b) => Math.abs(a.x - target.x) - Math.abs(b.x - target.x))[0];
+  const fcTarget = getOutsideReceiver(formation, passStrength);
+  const bcTarget = getOutsideReceiver(formation, passAway);
+  const fsStrengthEligibleCount = findTrueEligiblesOnSide(formation, passStrength).length;
 
-  if (fsSlot) {
-    const fs = getDbShade(fsSlot, "I");
-    if (fs) answer.FS = { x: fs.x, y: fs.y };
-  } else if (fsInline && fcTarget) {
-    const fs = getDbShade(fsInline, "O");
-    if (fs) answer.FS = { x: fs.x, y: fs.y };
-  } else {
-    const edge = findLandmarkByLabel(landmarks, "db", "Edge", passStrength);
-    if (edge) answer.FS = { x: edge.x, y: edge.y };
+  const xReceiver = formation.players.find((p) => p.id === "X") || null;
+  if (formation.playbook === "Wing T" && xReceiver) {
+    const fc = getShade(xReceiver, "cb", "H");
+    if (fc) answer.FC = { x: fc.x, y: fc.y };
+  } else if (strongBunch?.numberOne) {
+    const fc = getShade(strongBunch.numberOne, "cb", "O");
+    if (fc) answer.FC = { x: fc.x, y: fc.y };
+  } else if (fcTarget) {
+    const fc = getShade(fcTarget, "cb", "H");
+    if (fc) answer.FC = { x: fc.x, y: fc.y };
   }
 
-  if (bsSlot) {
-    const bs = getDbShade(bsSlot, "I");
-    if (bs) answer.BS = { x: bs.x, y: bs.y };
-  } else if (bsInline && bcTarget) {
-    const bs = getDbShade(bsInline, "O");
-    if (bs) answer.BS = { x: bs.x, y: bs.y };
+  if (frontMode === "4-4") {
+    if (strongBunch?.numberThree) {
+      const fs = getShade(strongBunch.numberThree, "db", "H");
+      if (fs) answer.FS = { x: fs.x, y: fs.y };
+    } else if (formation.name.includes("Quad")) {
+      const post = findLandmarkByLabel(landmarks, "db", "MOF");
+      if (post) answer.FS = { x: post.x, y: post.y };
+    } else if (is22) {
+      if (!cometSide) {
+        const post = findLandmarkByLabel(landmarks, "db", "MOF");
+        if (post) answer.FS = { x: post.x, y: post.y };
+      } else {
+        const closedTe = getInlineSurface(formation, cometSide);
+        const closedWing = getWingSurface(formation, cometSide);
+        if (closedTe && closedWing) {
+          const post = findLandmarkByLabel(landmarks, "db", "MOF");
+          if (post) answer.FS = { x: post.x, y: post.y };
+        } else {
+          const closedFirstEligible = getNumberThreeReceiver(formation, cometSide) || getNumberTwoReceiver(formation, cometSide) || getInlineSurface(formation, cometSide) || getWingSurface(formation, cometSide);
+          const fs = getShade(closedFirstEligible, "db", "I");
+          if (fs) answer.FS = { x: fs.x, y: fs.y };
+        }
+      }
+    } else if (fsStrengthEligibleCount === 3 && fsNumberThree) {
+      if (cometSide && cometSide === passAway) {
+        const post = findLandmarkByLabel(landmarks, "db", "MOF");
+        if (post) answer.FS = { x: post.x, y: post.y };
+      } else {
+        const fs = getShade(fsNumberThree, "db", "I");
+        if (fs) answer.FS = { x: fs.x, y: fs.y };
+      }
+    } else {
+      const post = findLandmarkByLabel(landmarks, "db", "MOF");
+      if (post) answer.FS = { x: post.x, y: post.y };
+    }
+
+    if (!answer.BC && bcTarget) {
+      const bc = getShade(bcTarget, "cb", "H");
+      if (bc) answer.BC = { x: bc.x, y: bc.y };
+    }
+
+    applyOverhangRule(passAway, "BS");
   } else {
-    const edge = findLandmarkByLabel(landmarks, "db", "Edge", passAway);
-    if (edge) answer.BS = { x: edge.x, y: edge.y };
+    if (cometSide && cometSide === passStrength) {
+      const cometFirstEligible = getNumberTwoReceiver(formation, cometSide) || getOutsideReceiver(formation, cometSide) || getInlineSurface(formation, cometSide) || getWingSurface(formation, cometSide);
+      const fs = getShade(cometFirstEligible, "db", "I");
+      if (fs) answer.FS = { x: fs.x, y: fs.y };
+    } else if (strongBunch?.numberThree) {
+      const fs = getShade(strongBunch.numberThree, "db", "H");
+      if (fs) answer.FS = { x: fs.x, y: fs.y };
+    } else if (is22) {
+      if (fsSlot) {
+        const fs = getShade(fsSlot, "db", "I");
+        if (fs) answer.FS = { x: fs.x, y: fs.y };
+      } else if (fsNumberTwo) {
+        const fs = getShade(fsNumberTwo, "db", "O");
+        if (fs) answer.FS = { x: fs.x, y: fs.y };
+      }
+    } else if (fsStrengthEligibleCount === 3 && fsNumberThree && !isAttachedOrWingNumberThree(formation, passStrength)) {
+      const fs = getShade(fsNumberThree, "db", "I");
+      if (fs) answer.FS = { x: fs.x, y: fs.y };
+    } else if (fsApex && (is31 || is32)) {
+      answer.FS = { x: fsApex.x, y: fsApex.y };
+    } else if (fsInline && fcTarget) {
+      const fs = getShade(fsInline, "db", "O");
+      if (fs) answer.FS = { x: fs.x, y: fs.y };
+    } else {
+      const edge = findLandmarkByLabel(landmarks, "db", "Edge", passStrength);
+      if (edge) answer.FS = { x: edge.x, y: edge.y };
+    }
+
+    if (!answer.BC && bcTarget) {
+      const bc = getShade(bcTarget, "cb", "H");
+      if (bc) answer.BC = { x: bc.x, y: bc.y };
+    }
+
+    if (cometSide && cometSide === passAway) {
+      const cometFirstEligible = getNumberTwoReceiver(formation, cometSide) || getOutsideReceiver(formation, cometSide) || getInlineSurface(formation, cometSide) || getWingSurface(formation, cometSide);
+      const bs = getShade(cometFirstEligible, "db", "I");
+      if (bs) answer.BS = { x: bs.x, y: bs.y };
+    } else if (formation.name.includes("Empty") && is32) {
+      const bs = getShade(bsNumberTwo, "db", "I");
+      if (bs) answer.BS = { x: bs.x, y: bs.y };
+    } else if (is22) {
+      if (bsSlot) {
+        const bs = getShade(bsSlot, "db", "I");
+        if (bs) answer.BS = { x: bs.x, y: bs.y };
+      } else if (bsNumberTwo) {
+        const bs = getShade(bsNumberTwo, "db", "O");
+        if (bs) answer.BS = { x: bs.x, y: bs.y };
+      }
+    } else if (is31) {
+      const edge = findLandmarkByLabel(landmarks, "db", "Edge", passAway);
+      if (edge) answer.BS = { x: edge.x, y: edge.y };
+    } else if (bsInline && bcTarget) {
+      const bs = getShade(bsInline, "db", "O");
+      if (bs) answer.BS = { x: bs.x, y: bs.y };
+    } else {
+      const edge = findLandmarkByLabel(landmarks, "db", "Edge", passAway);
+      if (edge) answer.BS = { x: edge.x, y: edge.y };
+    }
   }
 
   return answer;
@@ -942,7 +1586,12 @@ function nearestLandmark(x: number, y: number, points: Landmark[]) {
   }, points[0]);
 }
 
-function Circle({ player, color = "bg-orange-600", text = "text-white", border = "border-white/30" }: { player: PlayerDot; color?: string; text?: string; border?: string }) {
+function Circle({ player, color = "bg-orange-600", text = "text-white", border = "border-white/30" }: {
+  player: PlayerDot;
+  color?: string;
+  text?: string;
+  border?: string;
+}) {
   return (
     <div
       className={`absolute flex h-10 w-10 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border text-[10px] font-bold shadow ${color} ${text} ${border}`}
@@ -954,21 +1603,26 @@ function Circle({ player, color = "bg-orange-600", text = "text-white", border =
 }
 
 function TrainingField({
+  enhancedLandmarks = false,
   offensePlayers,
   offenseLandmarks = [],
   defensePlayers = [],
   defenseLandmarks = [],
   offenseGhosts = [],
   defenseGhosts = [],
+  editableDefenseGhosts = false,
   incorrectOffenseIds = [],
   incorrectDefenseIds = [],
   overlayLabel,
   flipOffense = false,
   editableOffense = false,
   editableDefense = false,
+  offenseGhostOffset = 0,
+  dimOffenseOnAnswers = false,
   lockedOffenseIds = FIXED_OL_IDS as unknown as string[],
   onMoveOffense,
   onMoveDefense,
+  onMoveDefenseGhost,
 }: {
   offensePlayers: PlayerDot[];
   offenseLandmarks?: Landmark[];
@@ -976,18 +1630,22 @@ function TrainingField({
   defenseLandmarks?: Landmark[];
   offenseGhosts?: PlayerDot[];
   defenseGhosts?: PlayerDot[];
+  editableDefenseGhosts?: boolean;
   incorrectOffenseIds?: string[];
   incorrectDefenseIds?: string[];
   overlayLabel?: string;
   flipOffense?: boolean;
   editableOffense?: boolean;
   editableDefense?: boolean;
+  offenseGhostOffset?: number;
+  dimOffenseOnAnswers?: boolean;
   lockedOffenseIds?: string[];
   onMoveOffense?: (id: string, x: number, y: number) => void;
   onMoveDefense?: (id: string, x: number, y: number) => void;
+  onMoveDefenseGhost?: (id: string, x: number, y: number) => void;
 }) {
-  const [drag, setDrag] = useState<{ id: string; type: "offense" | "defense" } | null>(null);
-  const maybeFlipY = (y: number, enabled: boolean) => enabled ? 100 - y : y;
+  const [drag, setDrag] = useState<{ id: string; type: "offense" | "defense" | "defense_ghost" } | null>(null);
+  const maybeFlipY = (y: number, enabled: boolean) => (enabled ? 100 - y : y);
 
   const getPointer = (e: React.PointerEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -1002,6 +1660,7 @@ function TrainingField({
     const { x, y } = getPointer(e);
     if (drag.type === "offense" && onMoveOffense) onMoveOffense(drag.id, x, y);
     if (drag.type === "defense" && onMoveDefense) onMoveDefense(drag.id, x, y);
+    if (drag.type === "defense_ghost" && onMoveDefenseGhost) onMoveDefenseGhost(drag.id, x, y);
   };
 
   const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -1015,11 +1674,20 @@ function TrainingField({
       const snap = nearestLandmark(x, y, defenseLandmarks);
       onMoveDefense(drag.id, snap.x, snap.y);
     }
+    if (drag.type === "defense_ghost" && onMoveDefenseGhost) {
+      const snap = nearestLandmark(x, y, defenseLandmarks);
+      onMoveDefenseGhost(drag.id, snap.x, snap.y);
+    }
     setDrag(null);
   };
 
   return (
-    <div className="relative aspect-[16/9] w-full overflow-hidden rounded-2xl border bg-emerald-700" onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerLeave={() => setDrag(null)}>
+    <div
+      className="relative aspect-[16/9] w-full overflow-hidden rounded-2xl border bg-emerald-700"
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerLeave={() => setDrag(null)}
+    >
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.06),transparent_55%)]" />
       <div className="absolute left-0 right-0 border-t-2 border-dashed border-white/70" style={{ top: `${flipOffense ? 100 - 52 : 52}%` }} />
       {getLineXs(editableDefense).map((x, idx) => (
@@ -1031,40 +1699,88 @@ function TrainingField({
           <div className="h-2 w-2 rounded-full border border-pink-100/80 bg-pink-200/50" />
         </div>
       ))}
-      {defenseLandmarks.map((p) => (
-        <div key={p.id} className="absolute -translate-x-1/2 -translate-y-1/2" style={{ left: `${p.x}%`, top: `${p.y}%` }}>
-          <div className="h-2 w-2 rounded-full border border-sky-100/80 bg-sky-200/50" />
-          {p.label ? <div className="absolute left-1/2 top-2 -translate-x-1/2 whitespace-nowrap text-[9px] font-semibold text-sky-50/90">{p.label}</div> : null}
-        </div>
-      ))}
+      {defenseLandmarks.map((p) => {
+        const showingAnswers = defenseGhosts.length > 0;
+        const layerStyles = enhancedLandmarks
+          ? {
+              dl: "bg-red-300/40 border-red-100/50",
+              lb: "bg-amber-200/40 border-amber-50/50",
+              cb: "bg-blue-300/40 border-blue-100/50",
+              db: "bg-violet-300/40 border-violet-100/50",
+            }
+          : {
+              dl: "bg-sky-200/30 border-sky-100/50",
+              lb: "bg-sky-200/30 border-sky-100/50",
+              cb: "bg-sky-200/30 border-sky-100/50",
+              db: "bg-sky-200/30 border-sky-100/50",
+            };
+        const size = enhancedLandmarks ? "h-2.5 w-2.5" : "h-2 w-2";
+        const labelClass = enhancedLandmarks
+          ? "text-[9px] font-semibold text-white/80"
+          : "text-[9px] font-semibold text-sky-50/80";
+
+        return (
+          <div key={p.id} className="absolute -translate-x-1/2 -translate-y-1/2" style={{ left: `${p.x}%`, top: `${p.y}%` }}>
+            <div className={`rounded-full border ${size} ${layerStyles[p.layer]}`} />
+            {p.label ? <div className={`absolute left-1/2 top-2 -translate-x-1/2 whitespace-nowrap ${labelClass}`}>{p.label}</div> : null}
+          </div>
+        );
+      })}
 
       {offenseGhosts.map((p) => (
-        <div key={`og-${p.id}`} className="absolute -translate-x-1/2 -translate-y-1/2" style={{ left: `${p.x}%`, top: `${maybeFlipY(p.y, flipOffense)}%` }}>
-          <div className="flex h-10 w-10 items-center justify-center rounded-full border-2 border-red-300 border-dashed bg-red-200/10 text-[10px] font-bold text-red-100">{p.id}</div>
+        <div key={`og-${p.id}`} className="absolute -translate-x-1/2 -translate-y-1/2" style={{ left: `${clamp(p.x + offenseGhostOffset, 2, 98)}%`, top: `${maybeFlipY(p.y, flipOffense)}%` }}>
+          <div className="flex h-10 w-10 items-center justify-center rounded-full border-2 border-red-300 border-dashed bg-white/80 text-[10px] font-bold text-slate-900">{p.id}</div>
         </div>
       ))}
       {defenseGhosts.map((p) => (
-        <div key={`dg-${p.id}`} className="absolute -translate-x-1/2 -translate-y-1/2" style={{ left: `${p.x}%`, top: `${p.y}%` }}>
-          <div className="flex h-10 w-10 items-center justify-center rounded-full border-2 border-sky-200 border-dashed bg-sky-200/10 text-[10px] font-bold text-sky-100">{p.id}</div>
+        <div
+          key={`dg-${p.id}`}
+          className="absolute -translate-x-1/2 -translate-y-1/2"
+          style={{ left: `${p.x}%`, top: `${p.y}%` }}
+          onPointerDown={() => {
+            if (!editableDefenseGhosts) return;
+            setDrag({ id: p.id, type: "defense_ghost" });
+          }}
+        >
+          <div className="flex h-10 w-10 items-center justify-center rounded-full border-2 border-sky-200 border-dashed bg-sky-200/10 text-[10px] font-bold text-black">{p.id}</div>
         </div>
       ))}
       {offensePlayers.map((p) => (
-        <div key={p.id} onPointerDown={() => {
-          if (!editableOffense) return;
-          if (lockedOffenseIds.includes(p.id)) return;
-          setDrag({ id: p.id, type: "offense" });
-        }}>
-          <Circle player={{ ...p, y: maybeFlipY(p.y, flipOffense) }} color={incorrectOffenseIds.includes(p.id) ? "bg-red-500" : undefined} border={incorrectOffenseIds.includes(p.id) ? "border-red-300" : undefined} />
+        <div
+          style={{ opacity: dimOffenseOnAnswers ? 0.35 : 1 }}
+          key={p.id}
+          onPointerDown={() => {
+            if (!editableOffense) return;
+            if (lockedOffenseIds.includes(p.id)) return;
+            setDrag({ id: p.id, type: "offense" });
+          }}
+        >
+          <Circle
+            player={{ ...p, y: maybeFlipY(p.y, flipOffense) }}
+            color={incorrectOffenseIds.includes(p.id) ? "bg-red-500" : undefined}
+            border={incorrectOffenseIds.includes(p.id) ? "border-red-300" : undefined}
+          />
         </div>
       ))}
-      {defensePlayers.map((p) => (
-        <div key={p.id} onPointerDown={() => {
-          if (!editableDefense) return;
-          setDrag({ id: p.id, type: "defense" });
-        }}>
-          <Circle player={p} color={incorrectDefenseIds.includes(p.id) ? "bg-red-500" : "bg-sky-600"} border={incorrectDefenseIds.includes(p.id) ? "border-red-300" : "border-sky-200/40"} />
-        </div>
-      ))}
+      {defensePlayers.map((p) => {
+        const showingAnswers = defenseGhosts.length > 0;
+        return (
+          <div
+            key={p.id}
+            onPointerDown={() => {
+              if (!editableDefense) return;
+              setDrag({ id: p.id, type: "defense" });
+            }}
+          >
+            <Circle
+              player={p}
+              color={incorrectDefenseIds.includes(p.id) ? "bg-red-500" : "bg-sky-600"}
+              text={showingAnswers ? "text-black" : "text-white"}
+              border={incorrectDefenseIds.includes(p.id) ? "border-red-300" : "border-sky-200/40"}
+            />
+          </div>
+        );
+      })}
 
       {overlayLabel ? <div className="absolute bottom-4 left-4 rounded-lg bg-black/20 px-3 py-1 text-xs font-medium text-white/90">{overlayLabel}</div> : null}
     </div>
@@ -1077,15 +1793,34 @@ function TokenTray({ title, ids, onAdd }: { title: string; ids: string[]; onAdd:
       <div className="mb-3 text-sm font-semibold text-slate-700">{title}</div>
       <div className="flex flex-wrap gap-2">
         {ids.map((id) => (
-          <Button key={id} variant="outline" className="rounded-xl" onClick={() => onAdd(id)}>{id}</Button>
+          <Button key={id} variant="outline" className="rounded-xl" onClick={() => onAdd(id)}>
+            {id}
+          </Button>
         ))}
       </div>
     </div>
   );
 }
 
-export default function Page() {
+function formatDuration(totalSeconds: number) {
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
+export default function FormationRecognitionWorkingApp() {
+  const [enhancedLandmarks, setEnhancedLandmarks] = useState(true);
+  const [frontMode, setFrontMode] = useState<FrontMode>("4-3");
   const [mode, setMode] = useState<AppMode>("study");
+  const [loginName, setLoginName] = useState("");
+  const [teamCodeInput, setTeamCodeInput] = useState("Foothill");
+  const [currentUser, setCurrentUser] = useState<UserRecord | null>(null);
+  const [leaderboard, setLeaderboard] = useState<UserRecord[]>([]);
+  const [scoredAttemptKey, setScoredAttemptKey] = useState<string | null>(null);
+  const [attemptStartedAt, setAttemptStartedAt] = useState<number>(Date.now());
   const [selectedPlaybooks, setSelectedPlaybooks] = useState<PlaybookKey[]>(["Foothill", "Pro", "Wing T"]);
   const [personnelFilter, setPersonnelFilter] = useState<string>("Any");
   const [index, setIndex] = useState(0);
@@ -1098,6 +1833,16 @@ export default function Page() {
   const [showAlignmentCheck, setShowAlignmentCheck] = useState(false);
   const [showOffenseCheck, setShowOffenseCheck] = useState(false);
   const [editorOverrides, setEditorOverrides] = useState<Record<string, FormationMeta>>({});
+  const [customAlignmentLandmarks, setCustomAlignmentLandmarks] = useState<Record<string, Landmark[]>>({});
+  
+  const [editingAlignmentAnswers, setEditingAlignmentAnswers] = useState(false);
+  const [customLandmarkDraft, setCustomLandmarkDraft] = useState<CustomLandmarkDraft>({
+    label: "",
+    layer: "lb",
+    side: "right",
+    x: "75",
+    y: String(LB_Y),
+  });
   const [editorDraft, setEditorDraft] = useState<{ name: string; personnel: string; runStrength: Side; passStrength: Side; backfield: string }>({
     name: "",
     personnel: "11",
@@ -1109,9 +1854,7 @@ export default function Page() {
   const effectivePlaybooks: PlaybookKey[] = mode === "offense_build" ? ["Foothill"] : selectedPlaybooks;
 
   const pool = useMemo(() => {
-    return ALL_FORMATIONS.filter(
-      (f) => effectivePlaybooks.includes(f.playbook) && (personnelFilter === "Any" || f.personnel === personnelFilter),
-    );
+    return ALL_FORMATIONS.filter((f) => effectivePlaybooks.includes(f.playbook) && (personnelFilter === "Any" || f.personnel === personnelFilter));
   }, [effectivePlaybooks, personnelFilter]);
   const current = pool[index % Math.max(pool.length, 1)] ?? ALL_FORMATIONS[0];
   const formationKey = `${current.playbook}::${current.name}`;
@@ -1130,7 +1873,9 @@ export default function Page() {
     return override ? { ...base, ...override, players: override.players ?? base.players } : base;
   }, [current, formationKey, mode, editorOverrides]);
 
-  const alignmentLandmarks = useMemo(() => displayFormation.playbook === "Foothill" ? getAlignmentLandmarks(displayFormation) : [], [displayFormation]);
+  const alignmentLandmarks = useMemo(() => {
+    return getAlignmentLandmarks(displayFormation);
+  }, [displayFormation]);
   const offenseLandmarks = useMemo(() => getOffenseBuildLandmarks(), []);
 
   const alignmentPlayers = alignmentPlacements[formationKey] ?? [];
@@ -1144,7 +1889,10 @@ export default function Page() {
     setQuizReadyForNext(false);
     setShowAlignmentCheck(false);
     setShowOffenseCheck(false);
+    setEditingAlignmentAnswers(false);
     setQuizAnswers({ formation: "", runStrength: "", passStrength: "" });
+    setScoredAttemptKey(null);
+    setAttemptStartedAt(Date.now());
   }, [current.name, mode]);
 
   useEffect(() => {
@@ -1205,6 +1953,45 @@ export default function Page() {
     }));
   };
 
+  const addCustomAlignmentLandmark = () => {
+    const label = customLandmarkDraft.label.trim();
+    if (!label) return;
+    const x = clamp(Number(customLandmarkDraft.x || 0), 2, 98);
+    const y = clamp(Number(customLandmarkDraft.y || 0), 2, 98);
+    if (Number.isNaN(x) || Number.isNaN(y)) return;
+
+    const nextLandmark: Landmark = {
+      id: `custom-${formationKey}-${Date.now()}`,
+      x,
+      y,
+      label,
+      layer: customLandmarkDraft.layer,
+    };
+
+    setCustomAlignmentLandmarks((prev) => ({
+      ...prev,
+      [formationKey]: [...(prev[formationKey] ?? []), nextLandmark],
+    }));
+  };
+
+  
+
+  
+
+  const removeCustomAlignmentLandmark = (id: string) => {
+    setCustomAlignmentLandmarks((prev) => ({
+      ...prev,
+      [formationKey]: (prev[formationKey] ?? []).filter((p) => p.id !== id),
+    }));
+  };
+
+  const resetCustomAlignmentLandmarks = () => {
+    setCustomAlignmentLandmarks((prev) => ({
+      ...prev,
+      [formationKey]: [],
+    }));
+  };
+
   const saveEditorChanges = () => {
     setEditorOverrides((prev) => ({
       ...prev,
@@ -1254,11 +2041,140 @@ export default function Page() {
 
   const offenseAnswerKey = useMemo(() => getOffenseAnswerKeyFromFormation(displayFormation), [displayFormation]);
   const offenseCheck = useMemo(() => getCheckResult(offenseBuildPlayers, offenseAnswerKey, 0.75), [offenseBuildPlayers, offenseAnswerKey]);
-  const alignmentAnswerKey = useMemo(
-    () => (displayFormation.playbook === "Foothill" ? getAlignmentAnswerKey(displayFormation, alignmentLandmarks) : {}),
-    [displayFormation, alignmentLandmarks],
-  );
+  const alignmentAnswerKey = useMemo(() => {
+    return getAlignmentAnswerKey(displayFormation, alignmentLandmarks, frontMode);
+  }, [displayFormation, alignmentLandmarks, frontMode]);
   const alignmentCheck = useMemo(() => getCheckResult(alignmentPlayers, alignmentAnswerKey, 1.0), [alignmentPlayers, alignmentAnswerKey]);
+  const alignmentSpecialCases = useMemo(() => getAlignmentSpecialCases(displayFormation, frontMode), [displayFormation, frontMode]);
+
+  useEffect(() => {
+    try {
+      const savedUser = window.localStorage.getItem(USER_STORAGE_KEY);
+      const savedLeaderboard = window.localStorage.getItem(LEADERBOARD_STORAGE_KEY);
+      if (savedUser) setCurrentUser(JSON.parse(savedUser));
+      if (savedLeaderboard) setLeaderboard(JSON.parse(savedLeaderboard));
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    window.localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(currentUser));
+    setLeaderboard((prev) => {
+      const next = [...prev.filter((entry) => entry.id !== currentUser.id), currentUser].sort((a, b) => b.stats.totalPoints - a.stats.totalPoints);
+      window.localStorage.setItem(LEADERBOARD_STORAGE_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, [currentUser]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    const interval = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      setCurrentUser((prev) => (prev ? { ...prev, stats: { ...prev.stats, secondsUsed: prev.stats.secondsUsed + 1 } } : prev));
+    }, 1000);
+    return () => window.clearInterval(interval);
+  }, [currentUser?.id]);
+
+  const loginUser = () => {
+    const cleanName = loginName.trim();
+    const cleanTeamCode = teamCodeInput.trim() || "Foothill";
+    if (!cleanName) return;
+    const existing = leaderboard.find((entry) => entry.name.toLowerCase() === cleanName.toLowerCase() && entry.teamCode.toLowerCase() === cleanTeamCode.toLowerCase());
+    const nextUser: UserRecord = existing ?? {
+      id: `${cleanTeamCode.toLowerCase()}::${cleanName.toLowerCase()}`,
+      name: cleanName,
+      teamCode: cleanTeamCode,
+      stats: { ...DEFAULT_STATS, quiz: { ...DEFAULT_MODE_STATS }, offense_build: { ...DEFAULT_MODE_STATS }, alignment: { ...DEFAULT_MODE_STATS } },
+    };
+    setCurrentUser(nextUser);
+  };
+
+  const getSpeedBonus = (activeMode: "quiz" | "offense_build" | "alignment", elapsedMs: number) => {
+    const seconds = elapsedMs / 1000;
+    if (activeMode === "quiz") {
+      if (seconds <= 6) return 30;
+      if (seconds <= 10) return 20;
+      if (seconds <= 15) return 10;
+      return 0;
+    }
+    if (activeMode === "offense_build") {
+      if (seconds <= 12) return 30;
+      if (seconds <= 20) return 20;
+      if (seconds <= 30) return 10;
+      return 0;
+    }
+    if (seconds <= 12) return 30;
+    if (seconds <= 20) return 20;
+    if (seconds <= 30) return 10;
+    return 0;
+  };
+
+  const scoreAttempt = (activeMode: "quiz" | "offense_build" | "alignment", accuracy: number, isCorrect: boolean) => {
+    if (!currentUser) return;
+    const attemptKey = `${activeMode}::${formationKey}`;
+    if (scoredAttemptKey === attemptKey) return;
+
+    const elapsedMs = Math.max(250, Date.now() - attemptStartedAt);
+    const accuracyPoints = Math.round(accuracy * 100);
+    const speedBonus = activeMode === "alignment"
+      ? 0
+      : isCorrect
+        ? getSpeedBonus(activeMode, elapsedMs)
+        : 0;
+    const totalAward = accuracyPoints + speedBonus;
+
+    setScoredAttemptKey(attemptKey);
+    setCurrentUser((prev) => {
+      if (!prev) return prev;
+      const currentModeStats = prev.stats[activeMode];
+      return {
+        ...prev,
+        stats: {
+          ...prev.stats,
+          totalPoints: prev.stats.totalPoints + totalAward,
+          [activeMode]: {
+            ...currentModeStats,
+            points: currentModeStats.points + totalAward,
+            attempts: currentModeStats.attempts + 1,
+            correct: currentModeStats.correct + (isCorrect ? 1 : 0),
+            bestTimeMs: isCorrect
+              ? currentModeStats.bestTimeMs === null
+                ? elapsedMs
+                : Math.min(currentModeStats.bestTimeMs, elapsedMs)
+              : currentModeStats.bestTimeMs,
+          },
+        },
+      };
+    });
+  };
+
+  useEffect(() => {
+    if (showQuizFeedback) {
+      scoreAttempt("quiz", quizScore / 3, quizScore === 3);
+    }
+  }, [showQuizFeedback, quizScore, formationKey]);
+
+  useEffect(() => {
+    if (showOffenseCheck) {
+      const total = Object.keys(offenseAnswerKey).length || 1;
+      const wrong = offenseCheck.incorrectIds.length;
+      const placedCount = offenseBuildPlayers.length;
+      const missing = Math.max(0, total - placedCount);
+      const accuracy = Math.max(0, (total - wrong - missing) / total);
+      scoreAttempt("offense_build", accuracy, offenseCheck.isCorrect);
+    }
+  }, [showOffenseCheck, offenseCheck.isCorrect, offenseCheck.incorrectIds.length, formationKey, offenseBuildPlayers.length]);
+
+  useEffect(() => {
+    if (showAlignmentCheck) {
+      const total = Object.keys(alignmentAnswerKey).length || 1;
+      const wrong = alignmentCheck.incorrectIds.length;
+      const placedCount = alignmentPlayers.length;
+      const missing = Math.max(0, total - placedCount);
+      const accuracy = Math.max(0, (total - wrong - missing) / total);
+      scoreAttempt("alignment", accuracy, alignmentCheck.isCorrect);
+    }
+  }, [showAlignmentCheck, alignmentCheck.isCorrect, alignmentCheck.incorrectIds.length, formationKey, alignmentPlayers.length]);
 
   return (
     <div className="min-h-screen bg-slate-100 p-4 md:p-6">
@@ -1268,10 +2184,23 @@ export default function Page() {
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <CardTitle className="text-3xl font-extrabold tracking-tight text-slate-900 md:text-4xl">{getModeTitle(mode)}</CardTitle>
               <div className="flex flex-wrap items-center gap-2">
+                {currentUser ? (
+                  <Button variant="outline" className="rounded-xl" onClick={() => setCurrentUser(null)}>
+                    Log Out
+                  </Button>
+                ) : null}
                 <div className="min-w-[180px]">
                   <Select value={mode} onValueChange={(value: AppMode) => { setMode(value); setIndex(0); }}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>{MODE_OPTIONS.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {MODE_OPTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
                   </Select>
                 </div>
                 <div className="min-w-[220px]">
@@ -1302,7 +2231,7 @@ export default function Page() {
                               onChange={(e) => {
                                 setSelectedPlaybooks((prev) => {
                                   const next = e.target.checked ? [...prev, option] : prev.filter((p) => p !== option);
-                                  return next.length ? Array.from(new Set(next)) as PlaybookKey[] : ["Foothill"];
+                                  return next.length ? (Array.from(new Set(next)) as PlaybookKey[]) : ["Foothill"];
                                 });
                                 setIndex(0);
                               }}
@@ -1317,15 +2246,26 @@ export default function Page() {
                 {mode === "offense_build" ? null : (
                   <div className="min-w-[120px]">
                     <Select value={personnelFilter} onValueChange={(value: string) => { setPersonnelFilter(value); setIndex(0); }}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>{PERSONNEL_OPTIONS.map((option) => <SelectItem key={option} value={option}>{option === "Any" ? "Any" : `${option}P`}</SelectItem>)}</SelectContent>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {PERSONNEL_OPTIONS.map((option) => (
+                          <SelectItem key={option} value={option}>
+                            {option === "Any" ? "Any" : `${option}P`}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
                     </Select>
                   </div>
                 )}
-                <Button className="rounded-xl" onClick={nextCall}><Shuffle className="mr-2 h-4 w-4" />Randomize</Button>
+                <Button className="rounded-xl" onClick={nextCall}>
+                  <Shuffle className="mr-2 h-4 w-4" />
+                  Randomize
+                </Button>
               </div>
             </div>
-            {mode !== "quiz" && (
+            {mode !== "quiz" && mode !== "account" && (
               <div className="rounded-xl border bg-white p-4 text-3xl font-extrabold tracking-tight text-slate-900 md:text-4xl">
                 {displayFormation.name}
                 <div className="mt-1 text-sm font-semibold uppercase tracking-[0.14em] text-slate-500">{displayFormation.playbook}</div>
@@ -1334,14 +2274,103 @@ export default function Page() {
           </CardHeader>
 
           <CardContent className="space-y-4">
-            {mode === "study" ? (
+            {mode === "account" ? (
+              <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+                <Card className="rounded-2xl shadow-sm">
+                  <CardContent className="p-4">
+                    {currentUser ? (
+                      <div className="grid gap-3 md:grid-cols-3">
+                        <div className="rounded-xl border bg-white p-4">
+                          <div className="mb-1 flex items-center gap-2 text-xs uppercase tracking-wide text-slate-500"><User className="h-4 w-4" /> User</div>
+                          <div className="text-lg font-semibold text-slate-900">{currentUser.name}</div>
+                          <div className="text-sm text-slate-500">Team: {currentUser.teamCode}</div>
+                        </div>
+                        <div className="rounded-xl border bg-white p-4">
+                          <div className="mb-1 flex items-center gap-2 text-xs uppercase tracking-wide text-slate-500"><Trophy className="h-4 w-4" /> Total Points</div>
+                          <div className="text-lg font-semibold text-slate-900">{currentUser.stats.totalPoints}</div>
+                          <div className="text-sm text-slate-500">Quiz {currentUser.stats.quiz.points} • Offense {currentUser.stats.offense_build.points} • Align {currentUser.stats.alignment.points}</div>
+                        </div>
+                        <div className="rounded-xl border bg-white p-4">
+                          <div className="mb-1 flex items-center gap-2 text-xs uppercase tracking-wide text-slate-500"><Clock3 className="h-4 w-4" /> Usage Time</div>
+                          <div className="text-lg font-semibold text-slate-900">{formatDuration(currentUser.stats.secondsUsed)}</div>
+                          <div className="text-sm text-slate-500">Tracked while app is open</div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto]">
+                        <Input placeholder="Your name" value={loginName} onChange={(e) => setLoginName(e.target.value)} />
+                        <Input placeholder="Team code" value={teamCodeInput} onChange={(e) => setTeamCodeInput(e.target.value)} />
+                        <Button className="rounded-xl" onClick={loginUser}>Log In / Create</Button>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+                <Card className="rounded-2xl shadow-sm">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-lg font-bold text-slate-900">Mode Leaderboards</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    {(["quiz", "offense_build", "alignment"] as const).map((boardMode) => {
+                      const title = boardMode === "quiz" ? "Quiz" : boardMode === "offense_build" ? "Offensive" : "Alignment";
+                      const boardEntries = (currentUser
+                        ? leaderboard.filter((entry) => entry.teamCode.toLowerCase() === currentUser.teamCode.toLowerCase())
+                        : leaderboard
+                      )
+                        .sort((a, b) => b.stats[boardMode].points - a.stats[boardMode].points)
+                        .slice(0, 5);
+
+                      return (
+                        <div key={boardMode} className="space-y-2">
+                          <div className="text-sm font-semibold text-slate-900">{title}</div>
+                          {boardEntries.length ? boardEntries.map((entry, idx) => (
+                            <div key={`${boardMode}-${entry.id}`} className="flex items-center justify-between rounded-xl border bg-white px-3 py-2 text-sm">
+                              <div>
+                                <div className="font-semibold text-slate-900">#{idx + 1} {entry.name}</div>
+                                <div className="text-slate-500">{entry.stats[boardMode].correct}/{entry.stats[boardMode].attempts} correct</div>
+                              </div>
+                              <div className="text-right">
+                                <div className="font-semibold text-slate-900">{entry.stats[boardMode].points} pts</div>
+                                <div className="text-slate-500">{entry.stats[boardMode].bestTimeMs ? `${(entry.stats[boardMode].bestTimeMs / 1000).toFixed(1)}s best` : "—"}</div>
+                              </div>
+                            </div>
+                          )) : <div className="text-sm text-slate-500">No scores yet.</div>}
+                        </div>
+                      );
+                    })}
+                  </CardContent>
+                </Card>
+              </div>
+            ) : mode === "study" ? (
               <>
-                <TrainingField offensePlayers={displayFormation.players} overlayLabel={`${displayFormation.playbook} • ${displayFormation.family} • ${displayFormation.personnel}P • Run ${FIELD_LABELS[displayFormation.runStrength]} • Pass ${FIELD_LABELS[displayFormation.passStrength]}`} />
+                <TrainingField
+                  offensePlayers={displayFormation.players}
+                  overlayLabel={`${displayFormation.playbook} • ${displayFormation.family} • ${displayFormation.personnel}P • Run ${FIELD_LABELS[displayFormation.runStrength]} • Pass ${FIELD_LABELS[displayFormation.passStrength]}`}
+                />
                 <div className="grid gap-3 md:grid-cols-4">
-                  <Card className="rounded-xl"><CardContent className="p-4"><div className="text-xs uppercase tracking-wide text-slate-500">Playbook</div><div className="mt-1 text-lg font-semibold">{displayFormation.playbook}</div></CardContent></Card>
-                  <Card className="rounded-xl"><CardContent className="p-4"><div className="text-xs uppercase tracking-wide text-slate-500">Family</div><div className="mt-1 text-lg font-semibold">{getQuizFormationFamily(displayFormation.name)}</div></CardContent></Card>
-                  <Card className="rounded-xl"><CardContent className="p-4"><div className="text-xs uppercase tracking-wide text-slate-500">Run Strength</div><div className="mt-1 text-lg font-semibold">{FIELD_LABELS[displayFormation.runStrength]}</div></CardContent></Card>
-                  <Card className="rounded-xl"><CardContent className="p-4"><div className="text-xs uppercase tracking-wide text-slate-500">Pass Strength</div><div className="mt-1 text-lg font-semibold">{FIELD_LABELS[displayFormation.passStrength]}</div></CardContent></Card>
+                  <Card className="rounded-xl">
+                    <CardContent className="p-4">
+                      <div className="text-xs uppercase tracking-wide text-slate-500">Playbook</div>
+                      <div className="mt-1 text-lg font-semibold">{displayFormation.playbook}</div>
+                    </CardContent>
+                  </Card>
+                  <Card className="rounded-xl">
+                    <CardContent className="p-4">
+                      <div className="text-xs uppercase tracking-wide text-slate-500">Family</div>
+                      <div className="mt-1 text-lg font-semibold">{getQuizFormationFamily(displayFormation.name)}</div>
+                    </CardContent>
+                  </Card>
+                  <Card className="rounded-xl">
+                    <CardContent className="p-4">
+                      <div className="text-xs uppercase tracking-wide text-slate-500">Run Strength</div>
+                      <div className="mt-1 text-lg font-semibold">{FIELD_LABELS[displayFormation.runStrength]}</div>
+                    </CardContent>
+                  </Card>
+                  <Card className="rounded-xl">
+                    <CardContent className="p-4">
+                      <div className="text-xs uppercase tracking-wide text-slate-500">Pass Strength</div>
+                      <div className="mt-1 text-lg font-semibold">{FIELD_LABELS[displayFormation.passStrength]}</div>
+                    </CardContent>
+                  </Card>
                 </div>
               </>
             ) : mode === "quiz" ? (
@@ -1385,13 +2414,23 @@ export default function Page() {
                   </div>
                 </div>
                 <div className="space-y-3 rounded-2xl border bg-white p-4">
-                  <Button className="h-12 w-full rounded-xl text-base" onClick={submitQuiz}>Check Answers</Button>
-                  <Button variant="outline" className="h-12 w-full rounded-xl text-base" onClick={() => { setShowQuizAnswers(true); setShowQuizFeedback(true); setQuizReadyForNext(false); }}>Show Answers</Button>
+                  <Button className="h-12 w-full rounded-xl text-base" onClick={submitQuiz}>
+                    Check Answers
+                  </Button>
+                  <Button variant="outline" className="h-12 w-full rounded-xl text-base" onClick={() => { setShowQuizAnswers(true); setShowQuizFeedback(true); setQuizReadyForNext(false); }}>
+                    Show Answers
+                  </Button>
                   {showQuizAnswers ? (
                     <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-                      <div><span className="font-semibold">Formation:</span> {correctQuizAnswers.formation}</div>
-                      <div><span className="font-semibold">Run Strength:</span> {correctQuizAnswers.runStrength}</div>
-                      <div><span className="font-semibold">Pass Strength:</span> {correctQuizAnswers.passStrength}</div>
+                      <div>
+                        <span className="font-semibold">Formation:</span> {correctQuizAnswers.formation}
+                      </div>
+                      <div>
+                        <span className="font-semibold">Run Strength:</span> {correctQuizAnswers.runStrength}
+                      </div>
+                      <div>
+                        <span className="font-semibold">Pass Strength:</span> {correctQuizAnswers.passStrength}
+                      </div>
                     </div>
                   ) : null}
                   {showQuizFeedback ? (
@@ -1417,22 +2456,59 @@ export default function Page() {
               </div>
             ) : mode === "alignment" ? (
               <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
-                <TrainingField offensePlayers={displayFormation.players} defensePlayers={alignmentPlayers} defenseLandmarks={alignmentLandmarks} editableDefense onMoveDefense={moveDefender} incorrectDefenseIds={showAlignmentCheck ? alignmentCheck.incorrectIds : []} defenseGhosts={showAlignmentCheck ? alignmentCheck.ghosts : []} overlayLabel="Drag defenders to the defensive landmarks." />
+                <div className="space-y-2">
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <div className="min-w-[110px]">
+                      <Select value={frontMode} onValueChange={(value: FrontMode) => setFrontMode(value)}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="4-3">4-3</SelectItem>
+                          <SelectItem value="4-4">4-4</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <Button variant="outline" className="rounded-xl" onClick={() => setEnhancedLandmarks((p) => !p)}>
+                      Toggle Landmark Visibility
+                    </Button>
+                  </div>
+                  <TrainingField
+                    offensePlayers={displayFormation.players}
+                    defensePlayers={alignmentPlayers}
+                    defenseLandmarks={alignmentLandmarks}
+                    enhancedLandmarks={enhancedLandmarks}
+                    editableDefense
+                    incorrectDefenseIds={showAlignmentCheck ? alignmentCheck.incorrectIds : []}
+                    defenseGhosts={showAlignmentCheck ? alignmentCheck.ghosts : []}
+                    overlayLabel="Drag defenders to the defensive landmarks."
+                    onMoveDefense={moveDefender}
+                  />
+                </div>
                 <div className="space-y-4">
                   <TokenTray title="Defender Tray" ids={remainingDefenders as unknown as string[]} onAdd={addDefender} />
                   <div className="space-y-3 rounded-2xl border bg-white p-4 text-sm text-slate-600">
-                    <div>Alignment mode is currently built for the Foothill playbook.</div>
-                    <div>Drag defenders from the tray onto the DL, LB, CB, and DB landmarks.</div>
+                    <div>Drag defenders to the defensive landmarks. Front: {frontMode}</div>
                     <div className="grid grid-cols-2 gap-2">
                       <Button className="rounded-xl" onClick={() => setShowAlignmentCheck(true)}>Check</Button>
                       <Button variant="outline" className="rounded-xl" onClick={() => setShowAlignmentCheck(false)}>Hide Answers</Button>
                     </div>
                     {showAlignmentCheck ? (
-                      <div className="space-y-2">
+                      <div className="space-y-3">
                         <div>Wrong defenders are highlighted in red. Dashed circles show answer-key spots.</div>
                         {alignmentCheck.isCorrect ? (
                           <div className="flex items-center gap-2 rounded-xl border border-emerald-300 bg-emerald-100 p-3 text-sm font-semibold text-emerald-700">
                             <CheckCircle2 className="h-5 w-5" /> Correct Alignment
+                          </div>
+                        ) : null}
+                        {alignmentSpecialCases.length ? (
+                          <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+                            <div className="mb-2 font-semibold">Special-case feedback</div>
+                            <div className="space-y-2">
+                              {alignmentSpecialCases.map((note, idx) => (
+                                <div key={idx}>• {note}</div>
+                              ))}
+                            </div>
                           </div>
                         ) : null}
                       </div>
@@ -1442,7 +2518,13 @@ export default function Page() {
               </div>
             ) : mode === "editor" ? (
               <div className="grid gap-4 lg:grid-cols-[1fr_360px]">
-                <TrainingField offensePlayers={displayFormation.players} editableOffense lockedOffenseIds={[]} onMoveOffense={moveEditorPlayer} overlayLabel="Drag any player to edit the formation. Use Save to keep your changes." />
+                <TrainingField
+                  offensePlayers={displayFormation.players}
+                  editableOffense
+                  lockedOffenseIds={[]}
+                  onMoveOffense={moveEditorPlayer}
+                  overlayLabel="Drag any player to edit the formation. Use Save to keep your changes."
+                />
                 <div className="space-y-4">
                   <div className="rounded-2xl border bg-white p-4">
                     <div className="mb-3 text-sm font-semibold text-slate-700">Formation Info</div>
@@ -1459,7 +2541,9 @@ export default function Page() {
                         <div>
                           <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Run Strength</div>
                           <Select value={editorDraft.runStrength} onValueChange={(value: Side) => setEditorDraft((prev) => ({ ...prev, runStrength: value }))}>
-                            <SelectTrigger><SelectValue /></SelectTrigger>
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
                             <SelectContent>
                               <SelectItem value="left">Left</SelectItem>
                               <SelectItem value="right">Right</SelectItem>
@@ -1469,7 +2553,9 @@ export default function Page() {
                         <div>
                           <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Pass Strength</div>
                           <Select value={editorDraft.passStrength} onValueChange={(value: Side) => setEditorDraft((prev) => ({ ...prev, passStrength: value }))}>
-                            <SelectTrigger><SelectValue /></SelectTrigger>
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
                             <SelectContent>
                               <SelectItem value="left">Left</SelectItem>
                               <SelectItem value="right">Right</SelectItem>
@@ -1494,7 +2580,18 @@ export default function Page() {
               </div>
             ) : (
               <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
-                <TrainingField offensePlayers={[...baseLine(false), ...offenseBuildPlayers]} offenseLandmarks={offenseLandmarks} editableOffense flipOffense onMoveOffense={moveOffense} incorrectOffenseIds={showOffenseCheck ? offenseCheck.incorrectIds : []} offenseGhosts={showOffenseCheck ? offenseCheck.ghosts : []} overlayLabel="Drag QB, RB, X, Y, H, Z to the offensive landmarks." />
+                <TrainingField
+                  offensePlayers={[...baseLine(false), ...offenseBuildPlayers]}
+                  offenseLandmarks={offenseLandmarks}
+                  offenseGhostOffset={showOffenseCheck ? 1.6 : 0}
+                  dimOffenseOnAnswers={showOffenseCheck}
+                  editableOffense
+                  flipOffense
+                  onMoveOffense={moveOffense}
+                  incorrectOffenseIds={showOffenseCheck ? offenseCheck.incorrectIds : []}
+                  offenseGhosts={showOffenseCheck ? offenseCheck.ghosts : []}
+                  overlayLabel="Drag QB, RB, X, Y, H, Z to the offensive landmarks."
+                />
                 <div className="space-y-4">
                   <TokenTray title="Offense Tray" ids={remainingOffense as unknown as string[]} onAdd={addOffense} />
                   <div className="space-y-3 rounded-2xl border bg-white p-4 text-sm text-slate-600">
