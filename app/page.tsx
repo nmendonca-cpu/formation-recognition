@@ -1,11 +1,13 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { CheckCircle2, Clock3, Shuffle, Trophy, User, XCircle } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
 
 type AppMode = "study" | "alignment" | "offense_build" | "quiz" | "editor" | "account";
 type FrontMode = "4-3" | "4-4";
@@ -68,10 +70,20 @@ type UserStats = {
 
 type UserRecord = {
   id: string;
+  email: string;
+  name: string;
+  teamCode: string;
+  isAdmin: boolean;
+  stats: UserStats;
+};
+
+type LeaderboardEntry = {
+  id: string;
   name: string;
   teamCode: string;
   stats: UserStats;
 };
+
 
 type CustomLandmarkDraft = {
   label: string;
@@ -145,8 +157,10 @@ const DEFAULT_STATS: UserStats = {
   offense_build: { ...DEFAULT_MODE_STATS },
   alignment: { ...DEFAULT_MODE_STATS },
 };
-const USER_STORAGE_KEY = "formation-recognition-user";
-const LEADERBOARD_STORAGE_KEY = "formation-recognition-leaderboard";
+
+const ADMIN_EMAILS = [
+  "nmendonca@pleasantonusd.net",
+];
 
 function normalize(value: string) {
   return value.trim().toLowerCase();
@@ -1813,13 +1827,13 @@ function formatDuration(totalSeconds: number) {
 }
 
 export default function FormationRecognitionWorkingApp() {
+  const router = useRouter();
+  const currentSecondsRef = useRef(0);
   const [enhancedLandmarks, setEnhancedLandmarks] = useState(true);
   const [frontMode, setFrontMode] = useState<FrontMode>("4-3");
   const [mode, setMode] = useState<AppMode>("study");
-  const [loginName, setLoginName] = useState("");
-  const [teamCodeInput, setTeamCodeInput] = useState("Foothill");
   const [currentUser, setCurrentUser] = useState<UserRecord | null>(null);
-  const [leaderboard, setLeaderboard] = useState<UserRecord[]>([]);
+  const [leaderboardEntries, setLeaderboardEntries] = useState<LeaderboardEntry[]>([]);
   const [scoredAttemptKey, setScoredAttemptKey] = useState<string | null>(null);
   const [attemptStartedAt, setAttemptStartedAt] = useState<number>(Date.now());
   const [selectedPlaybooks, setSelectedPlaybooks] = useState<PlaybookKey[]>(["Foothill", "Pro", "Wing T"]);
@@ -1851,6 +1865,200 @@ export default function FormationRecognitionWorkingApp() {
     passStrength: "right",
     backfield: "Under Center",
   });
+  const [authChecked, setAuthChecked] = useState(false);
+
+  const emptyStats = (): UserStats => ({
+    ...DEFAULT_STATS,
+    quiz: { ...DEFAULT_MODE_STATS },
+    offense_build: { ...DEFAULT_MODE_STATS },
+    alignment: { ...DEFAULT_MODE_STATS },
+  });
+
+   useEffect(() => {
+  const checkAuth = async () => {
+    const supabase = createClient();
+    const { data, error } = await supabase.auth.getUser();
+
+    if (error || !data.user) {
+      setCurrentUser(null);
+      router.push("/login");
+      return;
+    }
+
+    const user = data.user;
+
+    const { data: profileData } = await supabase
+  .from("profiles")
+  .select("display_name, school, seconds_used")
+  .eq("id", user.id)
+  .single();
+
+const { data: scoreRows } = await supabase
+  .from("mode_scores")
+  .select("mode, points, attempts, correct, best_time_ms")
+  .eq("user_id", user.id);
+
+
+    const displayName =
+      profileData?.display_name ||
+      user.email?.split("@")[0] ||
+      "User";
+
+    const school =
+      profileData?.school ||
+      "Foothill";
+
+    setCurrentUser((prev) => {
+      const baseStats: UserStats = {
+  ...DEFAULT_STATS,
+  quiz: { ...DEFAULT_MODE_STATS },
+  offense_build: { ...DEFAULT_MODE_STATS },
+  alignment: { ...DEFAULT_MODE_STATS },
+};
+
+if (Array.isArray(scoreRows)) {
+  for (const row of scoreRows) {
+    if (row.mode === "quiz" || row.mode === "offense_build" || row.mode === "alignment") {
+      baseStats[row.mode] = {
+        points: row.points ?? 0,
+        attempts: row.attempts ?? 0,
+        correct: row.correct ?? 0,
+        bestTimeMs: row.best_time_ms ?? null,
+      };
+    }
+  }
+}
+
+baseStats.secondsUsed = profileData?.seconds_used ?? 0;
+
+baseStats.totalPoints =
+  baseStats.quiz.points +
+  baseStats.offense_build.points +
+  baseStats.alignment.points;
+
+const existingStats =
+  prev?.id === user.id
+    ? {
+        ...baseStats,
+      }
+    : baseStats;
+
+
+      return {
+        id: user.id,
+        email: user.email || "",
+        name: displayName,
+        teamCode: school,
+        isAdmin: ADMIN_EMAILS.includes(user.email || ""),
+        stats: existingStats,
+      };
+    });
+
+    setAuthChecked(true);
+  };
+
+  checkAuth();
+}, [router]);
+
+  useEffect(() => {
+    const loadLeaderboard = async () => {
+      if (!currentUser?.teamCode) {
+        setLeaderboardEntries([]);
+        return;
+      }
+
+      const supabase = createClient();
+      const { data: teamProfiles, error: profilesError } = await supabase
+        .from("profiles")
+        .select("id, display_name, school, seconds_used")
+        .eq("school", currentUser.teamCode);
+
+      if (profilesError) {
+        console.error("Failed to load leaderboard profiles", profilesError);
+        return;
+      }
+
+      const profiles = teamProfiles ?? [];
+      if (!profiles.length) {
+        setLeaderboardEntries([]);
+        return;
+      }
+
+      const userIds = profiles.map((profile) => profile.id);
+      const { data: scoreRows, error: scoresError } = await supabase
+        .from("mode_scores")
+        .select("user_id, mode, points, attempts, correct, best_time_ms")
+        .in("user_id", userIds);
+
+      if (scoresError) {
+        console.error("Failed to load leaderboard scores", scoresError);
+        return;
+      }
+
+      const statsByUser = new Map<string, UserStats>();
+
+      for (const profile of profiles) {
+        const stats = emptyStats();
+        stats.secondsUsed = profile.seconds_used ?? 0;
+        statsByUser.set(profile.id, stats);
+      }
+
+      for (const row of scoreRows ?? []) {
+        if (row.mode !== "quiz" && row.mode !== "offense_build" && row.mode !== "alignment") {
+          continue;
+        }
+
+        const stats = statsByUser.get(row.user_id);
+        if (!stats) continue;
+
+        stats[row.mode] = {
+          points: row.points ?? 0,
+          attempts: row.attempts ?? 0,
+          correct: row.correct ?? 0,
+          bestTimeMs: row.best_time_ms ?? null,
+        };
+      }
+
+      const nextEntries = profiles.map((profile) => {
+        const stats = statsByUser.get(profile.id) ?? emptyStats();
+        stats.totalPoints =
+          stats.quiz.points +
+          stats.offense_build.points +
+          stats.alignment.points;
+
+        return {
+          id: profile.id,
+          name: profile.display_name || "User",
+          teamCode: profile.school || currentUser.teamCode,
+          stats,
+        };
+      });
+
+      setLeaderboardEntries(nextEntries);
+    };
+
+    void loadLeaderboard();
+  }, [currentUser?.teamCode]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+
+    setLeaderboardEntries((prev) => {
+      const existing = prev.find((entry) => entry.id === currentUser.id);
+      const nextEntry: LeaderboardEntry = {
+        id: currentUser.id,
+        name: currentUser.name,
+        teamCode: currentUser.teamCode,
+        stats: currentUser.stats,
+      };
+
+      if (!existing) {
+        return [...prev, nextEntry];
+      }
+
+      return prev.map((entry) => (entry.id === currentUser.id ? nextEntry : entry));
+    });
+  }, [currentUser]);
 
   const effectivePlaybooks: PlaybookKey[] = mode === "offense_build" ? ["Foothill"] : selectedPlaybooks;
 
@@ -1883,6 +2091,43 @@ export default function FormationRecognitionWorkingApp() {
   const offenseBuildPlayers = offensePlacements[formationKey] ?? [];
   const remainingDefenders = DEFENDER_TOKENS.filter((id) => !alignmentPlayers.some((p) => p.id === id));
   const remainingOffense = OFFENSE_TOKENS.filter((id) => !offenseBuildPlayers.some((p) => p.id === id));
+  const leaderboardModeMeta = [
+    { key: "quiz", title: "Quiz" },
+    { key: "offense_build", title: "Offensive" },
+    { key: "alignment", title: "Alignment" },
+  ] as const;
+  const leaderboardBoards = useMemo(() => {
+    return leaderboardModeMeta.map(({ key, title }) => ({
+      key,
+      title,
+      entries: [...leaderboardEntries]
+        .sort((a, b) => {
+          const pointDiff = b.stats[key].points - a.stats[key].points;
+          if (pointDiff !== 0) return pointDiff;
+
+          const bestA = a.stats[key].bestTimeMs ?? Number.POSITIVE_INFINITY;
+          const bestB = b.stats[key].bestTimeMs ?? Number.POSITIVE_INFINITY;
+          if (bestA !== bestB) return bestA - bestB;
+
+          return a.name.localeCompare(b.name);
+        })
+        .slice(0, 5),
+    }));
+  }, [leaderboardEntries]);
+
+  const getRandomPoolIndex = (length: number, currentIndex?: number) => {
+    if (length <= 1) return 0;
+
+    let nextIndex = Math.floor(Math.random() * length);
+    if (typeof currentIndex === "number") {
+      const normalizedCurrent = ((currentIndex % length) + length) % length;
+      while (nextIndex === normalizedCurrent) {
+        nextIndex = Math.floor(Math.random() * length);
+      }
+    }
+
+    return nextIndex;
+  };
 
   useEffect(() => {
     setShowQuizFeedback(false);
@@ -1895,6 +2140,11 @@ export default function FormationRecognitionWorkingApp() {
     setScoredAttemptKey(null);
     setAttemptStartedAt(Date.now());
   }, [current.name, mode]);
+
+  useEffect(() => {
+    if (!pool.length) return;
+    setIndex((prev) => getRandomPoolIndex(pool.length, prev));
+  }, [mode]);
 
   useEffect(() => {
     setEditorDraft({
@@ -2048,47 +2298,57 @@ export default function FormationRecognitionWorkingApp() {
   const alignmentCheck = useMemo(() => getCheckResult(alignmentPlayers, alignmentAnswerKey, 1.0), [alignmentPlayers, alignmentAnswerKey]);
   const alignmentSpecialCases = useMemo(() => getAlignmentSpecialCases(displayFormation, frontMode), [displayFormation, frontMode]);
 
+
   useEffect(() => {
-    try {
-      const savedUser = window.localStorage.getItem(USER_STORAGE_KEY);
-      const savedLeaderboard = window.localStorage.getItem(LEADERBOARD_STORAGE_KEY);
-      if (savedUser) setCurrentUser(JSON.parse(savedUser));
-      if (savedLeaderboard) setLeaderboard(JSON.parse(savedLeaderboard));
-    } catch {}
-  }, []);
+    currentSecondsRef.current = currentUser?.stats.secondsUsed ?? 0;
+  }, [currentUser?.stats.secondsUsed]);
 
   useEffect(() => {
     if (!currentUser) return;
-    window.localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(currentUser));
-    setLeaderboard((prev) => {
-      const next = [...prev.filter((entry) => entry.id !== currentUser.id), currentUser].sort((a, b) => b.stats.totalPoints - a.stats.totalPoints);
-      window.localStorage.setItem(LEADERBOARD_STORAGE_KEY, JSON.stringify(next));
-      return next;
-    });
-  }, [currentUser]);
 
-  useEffect(() => {
-    if (!currentUser) return;
-    const interval = window.setInterval(() => {
+    const tickInterval = window.setInterval(() => {
       if (document.visibilityState !== "visible") return;
-      setCurrentUser((prev) => (prev ? { ...prev, stats: { ...prev.stats, secondsUsed: prev.stats.secondsUsed + 1 } } : prev));
+      setCurrentUser((prev) => {
+        if (!prev) return prev;
+        const nextSecondsUsed = prev.stats.secondsUsed + 1;
+        currentSecondsRef.current = nextSecondsUsed;
+        void persistSecondsUsed(prev.id, nextSecondsUsed);
+        return {
+          ...prev,
+          stats: {
+            ...prev.stats,
+            secondsUsed: nextSecondsUsed,
+          },
+        };
+      });
     }, 1000);
-    return () => window.clearInterval(interval);
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        void persistSecondsUsed(currentUser.id, currentSecondsRef.current);
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      window.clearInterval(tickInterval);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      void persistSecondsUsed(currentUser.id, currentSecondsRef.current);
+    };
   }, [currentUser?.id]);
 
-  const loginUser = () => {
-    const cleanName = loginName.trim();
-    const cleanTeamCode = teamCodeInput.trim() || "Foothill";
-    if (!cleanName) return;
-    const existing = leaderboard.find((entry) => entry.name.toLowerCase() === cleanName.toLowerCase() && entry.teamCode.toLowerCase() === cleanTeamCode.toLowerCase());
-    const nextUser: UserRecord = existing ?? {
-      id: `${cleanTeamCode.toLowerCase()}::${cleanName.toLowerCase()}`,
-      name: cleanName,
-      teamCode: cleanTeamCode,
-      stats: { ...DEFAULT_STATS, quiz: { ...DEFAULT_MODE_STATS }, offense_build: { ...DEFAULT_MODE_STATS }, alignment: { ...DEFAULT_MODE_STATS } },
-    };
-    setCurrentUser(nextUser);
-  };
+  const handleLogout = async () => {
+  const supabase = createClient();
+
+  if (currentUser?.id) {
+    await persistSecondsUsed(currentUser.id, currentSecondsRef.current);
+  }
+  await supabase.auth.signOut();
+
+  setCurrentUser(null);
+  router.push("/login");
+};
 
   const getSpeedBonus = (activeMode: "quiz" | "offense_build" | "alignment", elapsedMs: number) => {
     const seconds = elapsedMs / 1000;
@@ -2110,6 +2370,43 @@ export default function FormationRecognitionWorkingApp() {
     return 0;
   };
 
+  const persistModeScore = async (
+    userId: string,
+    activeMode: "quiz" | "offense_build" | "alignment",
+    nextModeStats: ModeScoreStats,
+  ) => {
+    const supabase = createClient();
+    const { error } = await supabase.from("mode_scores").upsert(
+      {
+        user_id: userId,
+        mode: activeMode,
+        points: nextModeStats.points,
+        attempts: nextModeStats.attempts,
+        correct: nextModeStats.correct,
+        best_time_ms: nextModeStats.bestTimeMs,
+      },
+      {
+        onConflict: "user_id,mode",
+      },
+    );
+
+    if (error) {
+      console.error("Failed to save mode score", error);
+    }
+  };
+
+  const persistSecondsUsed = async (userId: string, secondsUsed: number) => {
+    const supabase = createClient();
+    const { error } = await supabase
+      .from("profiles")
+      .update({ seconds_used: secondsUsed })
+      .eq("id", userId);
+
+    if (error) {
+      console.error("Failed to save total seconds used", error);
+    }
+  };
+
   const scoreAttempt = (activeMode: "quiz" | "offense_build" | "alignment", accuracy: number, isCorrect: boolean) => {
     if (!currentUser) return;
     const attemptKey = `${activeMode}::${formationKey}`;
@@ -2123,30 +2420,33 @@ export default function FormationRecognitionWorkingApp() {
         ? getSpeedBonus(activeMode, elapsedMs)
         : 0;
     const totalAward = accuracyPoints + speedBonus;
+    const currentModeStats = currentUser.stats[activeMode];
+    const nextModeStats: ModeScoreStats = {
+      ...currentModeStats,
+      points: currentModeStats.points + totalAward,
+      attempts: currentModeStats.attempts + 1,
+      correct: currentModeStats.correct + (isCorrect ? 1 : 0),
+      bestTimeMs: isCorrect
+        ? currentModeStats.bestTimeMs === null
+          ? elapsedMs
+          : Math.min(currentModeStats.bestTimeMs, elapsedMs)
+        : currentModeStats.bestTimeMs,
+    };
 
     setScoredAttemptKey(attemptKey);
     setCurrentUser((prev) => {
       if (!prev) return prev;
-      const currentModeStats = prev.stats[activeMode];
       return {
         ...prev,
         stats: {
           ...prev.stats,
           totalPoints: prev.stats.totalPoints + totalAward,
-          [activeMode]: {
-            ...currentModeStats,
-            points: currentModeStats.points + totalAward,
-            attempts: currentModeStats.attempts + 1,
-            correct: currentModeStats.correct + (isCorrect ? 1 : 0),
-            bestTimeMs: isCorrect
-              ? currentModeStats.bestTimeMs === null
-                ? elapsedMs
-                : Math.min(currentModeStats.bestTimeMs, elapsedMs)
-              : currentModeStats.bestTimeMs,
-          },
+          [activeMode]: nextModeStats,
         },
       };
     });
+
+    void persistModeScore(currentUser.id, activeMode, nextModeStats);
   };
 
   useEffect(() => {
@@ -2177,6 +2477,16 @@ export default function FormationRecognitionWorkingApp() {
     }
   }, [showAlignmentCheck, alignmentCheck.isCorrect, alignmentCheck.incorrectIds.length, formationKey, alignmentPlayers.length]);
 
+  if (!authChecked) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-100">
+        <div className="rounded-xl border bg-white px-6 py-4 text-sm text-slate-600 shadow-sm">
+          Loading...
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-100 p-4 md:p-6">
       <div className="mx-auto max-w-7xl space-y-6">
@@ -2185,13 +2495,14 @@ export default function FormationRecognitionWorkingApp() {
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <CardTitle className="text-3xl font-extrabold tracking-tight text-slate-900 md:text-4xl">{getModeTitle(mode)}</CardTitle>
               <div className="flex flex-wrap items-center gap-2">
-                {currentUser ? (
-                  <Button variant="outline" className="rounded-xl" onClick={() => setCurrentUser(null)}>
-                    Log Out
-                  </Button>
-                ) : null}
+                                {authChecked ? (
+  <Button variant="outline" className="rounded-xl" onClick={handleLogout}>
+    Log Out
+  </Button>
+) : null}
+
                 <div className="min-w-[180px]">
-                  <Select value={mode} onValueChange={(value: AppMode) => { setMode(value); setIndex(0); }}>
+                  <Select value={mode} onValueChange={(value: AppMode) => { setMode(value); }}>
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
@@ -2275,72 +2586,91 @@ export default function FormationRecognitionWorkingApp() {
           </CardHeader>
 
           <CardContent className="space-y-4">
-            {mode === "account" ? (
-              <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
-                <Card className="rounded-2xl shadow-sm">
-                  <CardContent className="p-4">
-                    {currentUser ? (
-                      <div className="grid gap-3 md:grid-cols-3">
-                        <div className="rounded-xl border bg-white p-4">
-                          <div className="mb-1 flex items-center gap-2 text-xs uppercase tracking-wide text-slate-500"><User className="h-4 w-4" /> User</div>
-                          <div className="text-lg font-semibold text-slate-900">{currentUser.name}</div>
-                          <div className="text-sm text-slate-500">Team: {currentUser.teamCode}</div>
-                        </div>
-                        <div className="rounded-xl border bg-white p-4">
-                          <div className="mb-1 flex items-center gap-2 text-xs uppercase tracking-wide text-slate-500"><Trophy className="h-4 w-4" /> Total Points</div>
-                          <div className="text-lg font-semibold text-slate-900">{currentUser.stats.totalPoints}</div>
-                          <div className="text-sm text-slate-500">Quiz {currentUser.stats.quiz.points} • Offense {currentUser.stats.offense_build.points} • Align {currentUser.stats.alignment.points}</div>
-                        </div>
-                        <div className="rounded-xl border bg-white p-4">
-                          <div className="mb-1 flex items-center gap-2 text-xs uppercase tracking-wide text-slate-500"><Clock3 className="h-4 w-4" /> Usage Time</div>
-                          <div className="text-lg font-semibold text-slate-900">{formatDuration(currentUser.stats.secondsUsed)}</div>
-                          <div className="text-sm text-slate-500">Tracked while app is open</div>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto]">
-                        <Input placeholder="Your name" value={loginName} onChange={(e) => setLoginName(e.target.value)} />
-                        <Input placeholder="Team code" value={teamCodeInput} onChange={(e) => setTeamCodeInput(e.target.value)} />
-                        <Button className="rounded-xl" onClick={loginUser}>Log In / Create</Button>
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-                <Card className="rounded-2xl shadow-sm">
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-lg font-bold text-slate-900">Mode Leaderboards</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    {(["quiz", "offense_build", "alignment"] as const).map((boardMode) => {
-                      const title = boardMode === "quiz" ? "Quiz" : boardMode === "offense_build" ? "Offensive" : "Alignment";
-                      const boardEntries = (currentUser
-                        ? leaderboard.filter((entry) => entry.teamCode.toLowerCase() === currentUser.teamCode.toLowerCase())
-                        : leaderboard
-                      )
-                        .sort((a, b) => b.stats[boardMode].points - a.stats[boardMode].points)
-                        .slice(0, 5);
-
-                      return (
-                        <div key={boardMode} className="space-y-2">
-                          <div className="text-sm font-semibold text-slate-900">{title}</div>
-                          {boardEntries.length ? boardEntries.map((entry, idx) => (
-                            <div key={`${boardMode}-${entry.id}`} className="flex items-center justify-between rounded-xl border bg-white px-3 py-2 text-sm">
-                              <div>
-                                <div className="font-semibold text-slate-900">#{idx + 1} {entry.name}</div>
-                                <div className="text-slate-500">{entry.stats[boardMode].correct}/{entry.stats[boardMode].attempts} correct</div>
-                              </div>
-                              <div className="text-right">
-                                <div className="font-semibold text-slate-900">{entry.stats[boardMode].points} pts</div>
-                                <div className="text-slate-500">{entry.stats[boardMode].bestTimeMs ? `${(entry.stats[boardMode].bestTimeMs / 1000).toFixed(1)}s best` : "—"}</div>
-                              </div>
-                            </div>
-                          )) : <div className="text-sm text-slate-500">No scores yet.</div>}
-                        </div>
-                      );
-                    })}
-                  </CardContent>
-                </Card>
+           {mode === "account" ? (
+  <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+    <Card className="rounded-2xl shadow-sm">
+      <CardContent className="p-4">
+        {currentUser ? (
+          <div className="grid gap-3 md:grid-cols-3">
+            <div className="rounded-xl border bg-white p-4">
+              <div className="mb-1 flex items-center gap-2 text-xs uppercase tracking-wide text-slate-500">
+                <User className="h-4 w-4" />
+                User
               </div>
+              <div className="text-lg font-semibold text-slate-900">{currentUser.name}</div>
+              <div className="text-sm text-slate-500">Team: {currentUser.teamCode}</div>
+            </div>
+
+            <div className="rounded-xl border bg-white p-4">
+              <div className="mb-1 flex items-center gap-2 text-xs uppercase tracking-wide text-slate-500">
+                <Trophy className="h-4 w-4" />
+                Points
+              </div>
+              <div className="text-lg font-semibold text-slate-900">{currentUser.stats.totalPoints}</div>
+              <div className="text-sm text-slate-500">
+                Quiz {currentUser.stats.quiz.points} • Offense {currentUser.stats.offense_build.points} • Align {currentUser.stats.alignment.points}
+              </div>
+            </div>
+
+            <div className="rounded-xl border bg-white p-4">
+              <div className="mb-1 flex items-center gap-2 text-xs uppercase tracking-wide text-slate-500">
+                <Clock3 className="h-4 w-4" />
+                Time Used
+              </div>
+              <div className="text-lg font-semibold text-slate-900">
+                {formatDuration(currentUser.stats.secondsUsed)}
+              </div>
+              <div className="text-sm text-slate-500">Tracked while app is open</div>
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-xl border bg-white p-4 text-sm text-slate-600">
+            No user profile loaded.
+          </div>
+        )}
+      </CardContent>
+    </Card>
+
+    <Card className="rounded-2xl shadow-sm">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-lg font-bold text-slate-900">Mode Leaderboards</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {leaderboardBoards.map((board) => (
+          <div key={board.key} className="space-y-2">
+            <div className="text-sm font-semibold text-slate-900">{board.title}</div>
+            {board.entries.length ? (
+              board.entries.map((entry, idx) => (
+                <div key={`${board.key}-${entry.id}`} className="flex items-center justify-between rounded-xl border bg-white px-3 py-2 text-sm">
+                  <div>
+                    <div className="font-semibold text-slate-900">
+                      #{idx + 1} {entry.name}
+                    </div>
+                    <div className="text-slate-500">
+                      {entry.stats[board.key].correct}/{entry.stats[board.key].attempts} correct
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="font-semibold text-slate-900">{entry.stats[board.key].points} pts</div>
+                    <div className="text-slate-500">
+                      {entry.stats[board.key].bestTimeMs
+                        ? `${(entry.stats[board.key].bestTimeMs / 1000).toFixed(1)}s best`
+                        : "—"}
+                    </div>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="rounded-xl border bg-white p-4 text-sm text-slate-600">
+                No scores yet for this team.
+              </div>
+            )}
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  </div>
+
             ) : mode === "study" ? (
               <>
                 <TrainingField
@@ -2517,68 +2847,114 @@ export default function FormationRecognitionWorkingApp() {
                   </div>
                 </div>
               </div>
-            ) : mode === "editor" ? (
-              <div className="grid gap-4 lg:grid-cols-[1fr_360px]">
-                <TrainingField
-                  offensePlayers={displayFormation.players}
-                  editableOffense
-                  lockedOffenseIds={[]}
-                  onMoveOffense={moveEditorPlayer}
-                  overlayLabel="Drag any player to edit the formation. Use Save to keep your changes."
-                />
-                <div className="space-y-4">
-                  <div className="rounded-2xl border bg-white p-4">
-                    <div className="mb-3 text-sm font-semibold text-slate-700">Formation Info</div>
-                    <div className="space-y-3">
-                      <div>
-                        <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Name</div>
-                        <Input value={editorDraft.name} onChange={(e) => setEditorDraft((prev) => ({ ...prev, name: e.target.value }))} />
-                      </div>
-                      <div>
-                        <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Personnel</div>
-                        <Input value={editorDraft.personnel} onChange={(e) => setEditorDraft((prev) => ({ ...prev, personnel: e.target.value }))} />
-                      </div>
-                      <div className="grid grid-cols-2 gap-3">
+                          ) : mode === "editor" ? (
+              currentUser?.isAdmin ? (
+                <div className="grid gap-4 lg:grid-cols-[1fr_360px]">
+                  <TrainingField
+                    offensePlayers={displayFormation.players}
+                    editableOffense
+                    lockedOffenseIds={[]}
+                    onMoveOffense={moveEditorPlayer}
+                    overlayLabel="Drag any player to edit the formation. Use Save to keep your changes."
+                  />
+                  <div className="space-y-4">
+                    <div className="rounded-2xl border bg-white p-4">
+                      <div className="mb-3 text-sm font-semibold text-slate-700">Formation Info</div>
+                      <div className="space-y-3">
                         <div>
-                          <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Run Strength</div>
-                          <Select value={editorDraft.runStrength} onValueChange={(value: Side) => setEditorDraft((prev) => ({ ...prev, runStrength: value }))}>
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="left">Left</SelectItem>
-                              <SelectItem value="right">Right</SelectItem>
-                            </SelectContent>
-                          </Select>
+                          <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Name</div>
+                          <Input
+                            value={editorDraft.name}
+                            onChange={(e) =>
+                              setEditorDraft((prev) => ({ ...prev, name: e.target.value }))
+                            }
+                          />
                         </div>
+
                         <div>
-                          <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Pass Strength</div>
-                          <Select value={editorDraft.passStrength} onValueChange={(value: Side) => setEditorDraft((prev) => ({ ...prev, passStrength: value }))}>
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="left">Left</SelectItem>
-                              <SelectItem value="right">Right</SelectItem>
-                            </SelectContent>
-                          </Select>
+                          <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Personnel</div>
+                          <Input
+                            value={editorDraft.personnel}
+                            onChange={(e) =>
+                              setEditorDraft((prev) => ({ ...prev, personnel: e.target.value }))
+                            }
+                          />
                         </div>
-                      </div>
-                      <div>
-                        <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Backfield</div>
-                        <Input value={editorDraft.backfield} onChange={(e) => setEditorDraft((prev) => ({ ...prev, backfield: e.target.value }))} />
+
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Run Strength</div>
+                            <Select
+                              value={editorDraft.runStrength}
+                              onValueChange={(value: Side) =>
+                                setEditorDraft((prev) => ({ ...prev, runStrength: value }))
+                              }
+                            >
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="left">Left</SelectItem>
+                                <SelectItem value="right">Right</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+
+                          <div>
+                            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Pass Strength</div>
+                            <Select
+                              value={editorDraft.passStrength}
+                              onValueChange={(value: Side) =>
+                                setEditorDraft((prev) => ({ ...prev, passStrength: value }))
+                              }
+                            >
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="left">Left</SelectItem>
+                                <SelectItem value="right">Right</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+
+                        <div>
+                          <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Backfield</div>
+                          <Input
+                            value={editorDraft.backfield}
+                            onChange={(e) =>
+                              setEditorDraft((prev) => ({ ...prev, backfield: e.target.value }))
+                            }
+                          />
+                        </div>
                       </div>
                     </div>
-                  </div>
-                  <div className="rounded-2xl border bg-white p-4 text-sm text-slate-600">
-                    <div className="grid grid-cols-2 gap-2">
-                      <Button className="rounded-xl" onClick={saveEditorChanges}>Save</Button>
-                      <Button variant="outline" className="rounded-xl" onClick={resetEditorChanges}>Reset</Button>
+
+                    <div className="rounded-2xl border bg-white p-4 text-sm text-slate-600">
+                      <div className="grid grid-cols-2 gap-2">
+                        <Button className="rounded-xl" onClick={saveEditorChanges}>
+                          Save
+                        </Button>
+                        <Button variant="outline" className="rounded-xl" onClick={resetEditorChanges}>
+                          Reset
+                        </Button>
+                      </div>
+                      <div className="mt-3">
+                        This editor updates the current formation&apos;s saved name, personnel, strengths, backfield, and player locations.
+                      </div>
                     </div>
-                    <div className="mt-3">This editor updates the current formation&apos;s saved name, personnel, strengths, backfield, and player locations.</div>
                   </div>
                 </div>
-              </div>
+              ) : (
+                <div className="rounded-2xl border bg-white p-6 text-center text-slate-700">
+                  <div className="text-lg font-semibold">Admin Access Required</div>
+                  <div className="mt-2 text-sm text-slate-500">
+                    You do not have permission to edit formations.
+                  </div>
+                </div>
+              )
+
             ) : (
               <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
                 <TrainingField
