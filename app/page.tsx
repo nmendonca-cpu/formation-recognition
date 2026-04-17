@@ -84,6 +84,11 @@ type LeaderboardEntry = {
   stats: UserStats;
 };
 
+type ScoreSummary = {
+  awarded: number;
+  total: number;
+};
+
 
 type CustomLandmarkDraft = {
   label: string;
@@ -1834,6 +1839,7 @@ export default function FormationRecognitionWorkingApp() {
   const [mode, setMode] = useState<AppMode>("study");
   const [currentUser, setCurrentUser] = useState<UserRecord | null>(null);
   const [leaderboardEntries, setLeaderboardEntries] = useState<LeaderboardEntry[]>([]);
+  const [lastScoreSummary, setLastScoreSummary] = useState<Partial<Record<"quiz" | "offense_build" | "alignment", ScoreSummary>>>({});
   const [scoredAttemptKey, setScoredAttemptKey] = useState<string | null>(null);
   const [attemptStartedAt, setAttemptStartedAt] = useState<number>(Date.now());
   const [selectedPlaybooks, setSelectedPlaybooks] = useState<PlaybookKey[]>(["Foothill", "Pro", "Wing T"]);
@@ -2135,6 +2141,7 @@ const existingStats =
     setQuizReadyForNext(false);
     setShowAlignmentCheck(false);
     setShowOffenseCheck(false);
+    setLastScoreSummary({});
     setEditingAlignmentAnswers(false);
     setQuizAnswers({ formation: "", runStrength: "", passStrength: "" });
     setScoredAttemptKey(null);
@@ -2434,6 +2441,13 @@ const existingStats =
     };
 
     setScoredAttemptKey(attemptKey);
+    setLastScoreSummary((prev) => ({
+      ...prev,
+      [activeMode]: {
+        awarded: totalAward,
+        total: nextModeStats.points,
+      },
+    }));
     setCurrentUser((prev) => {
       if (!prev) return prev;
       return {
@@ -2767,6 +2781,14 @@ const existingStats =
                   {showQuizFeedback ? (
                     <>
                       <div className="text-sm font-semibold text-slate-700">Score: {quizScore} / 3</div>
+                      {lastScoreSummary.quiz ? (
+                        <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
+                          <span className="font-semibold">Points earned:</span> {lastScoreSummary.quiz.awarded}
+                          <div>
+                            <span className="font-semibold">Quiz total:</span> {lastScoreSummary.quiz.total}
+                          </div>
+                        </div>
+                      ) : null}
                       <div className="space-y-2 text-sm">
                         <div className="flex items-center justify-between rounded-lg border p-3"><span>Formation</span>{quizResult.formation ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <XCircle className="h-4 w-4 text-red-600" />}</div>
                         <div className="flex items-center justify-between rounded-lg border p-3"><span>Run Strength</span>{quizResult.runStrength ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <XCircle className="h-4 w-4 text-red-600" />}</div>
@@ -2827,6 +2849,14 @@ const existingStats =
                     {showAlignmentCheck ? (
                       <div className="space-y-3">
                         <div>Wrong defenders are highlighted in red. Dashed circles show answer-key spots.</div>
+                        {lastScoreSummary.alignment ? (
+                          <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
+                            <span className="font-semibold">Points earned:</span> {lastScoreSummary.alignment.awarded}
+                            <div>
+                              <span className="font-semibold">Alignment total:</span> {lastScoreSummary.alignment.total}
+                            </div>
+                          </div>
+                        ) : null}
                         {alignmentCheck.isCorrect ? (
                           <div className="flex items-center gap-2 rounded-xl border border-emerald-300 bg-emerald-100 p-3 text-sm font-semibold text-emerald-700">
                             <CheckCircle2 className="h-5 w-5" /> Correct Alignment
@@ -2980,6 +3010,14 @@ const existingStats =
                     {showOffenseCheck ? (
                       <div className="space-y-2">
                         <div>Wrong players are highlighted in red. Dashed circles show the correct spots.</div>
+                        {lastScoreSummary.offense_build ? (
+                          <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
+                            <span className="font-semibold">Points earned:</span> {lastScoreSummary.offense_build.awarded}
+                            <div>
+                              <span className="font-semibold">Offensive total:</span> {lastScoreSummary.offense_build.total}
+                            </div>
+                          </div>
+                        ) : null}
                         {offenseCheck.isCorrect ? (
                           <div className="flex items-center gap-2 rounded-xl border border-emerald-300 bg-emerald-100 p-3 text-sm font-semibold text-emerald-700">
                             <CheckCircle2 className="h-5 w-5" /> Correct Formation
