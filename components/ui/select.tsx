@@ -6,6 +6,8 @@ import { Check, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const Select = RadixSelect.Root;
+const SelectGroup = RadixSelect.Group;
+const SelectSeparator = RadixSelect.Separator;
 const SelectValue = RadixSelect.Value;
 
 const SelectTrigger = React.forwardRef<
@@ -48,6 +50,33 @@ const SelectContent = React.forwardRef<
 ));
 SelectContent.displayName = RadixSelect.Content.displayName;
 
+const SelectLabel = React.forwardRef<
+  React.ElementRef<typeof RadixSelect.Label>,
+  React.ComponentPropsWithoutRef<typeof RadixSelect.Label>
+>(({ className, ...props }, ref) => (
+    <RadixSelect.Label
+      ref={ref}
+      className={cn(
+        "sticky top-0 z-10 bg-slate-50/95 px-2 py-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500 backdrop-blur supports-[backdrop-filter]:bg-slate-50/85",
+        className,
+      )}
+      {...props}
+    />
+));
+SelectLabel.displayName = RadixSelect.Label.displayName;
+
+const SelectDivider = React.forwardRef<
+  React.ElementRef<typeof RadixSelect.Separator>,
+  React.ComponentPropsWithoutRef<typeof RadixSelect.Separator>
+>(({ className, ...props }, ref) => (
+  <RadixSelect.Separator
+    ref={ref}
+    className={cn("-mx-1 my-1 h-px bg-slate-200", className)}
+    {...props}
+  />
+));
+SelectDivider.displayName = RadixSelect.Separator.displayName;
+
 const SelectItem = React.forwardRef<
   React.ElementRef<typeof RadixSelect.Item>,
   React.ComponentPropsWithoutRef<typeof RadixSelect.Item>
@@ -73,7 +102,11 @@ SelectItem.displayName = RadixSelect.Item.displayName;
 export {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectDivider,
+  SelectLabel,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 };

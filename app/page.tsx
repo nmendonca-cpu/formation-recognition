@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectDivider, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { CheckCircle2, Clock3, Shuffle, Trophy, User, XCircle } from "lucide-react";
@@ -11,6 +11,7 @@ import { createClient } from "@/lib/supabase/client";
 
 type AppMode = "study" | "alignment" | "offense_build" | "quiz" | "editor" | "account";
 type FrontMode = "4-3" | "4-4";
+type AlignmentViewMode = "study" | "quiz";
 type Side = "left" | "right";
 type PlaybookKey = "Foothill" | "Pro" | "Wing T";
 type Family = "Spread" | "I" | "12p" | "Wing T";
@@ -108,6 +109,7 @@ const MODE_OPTIONS: { value: AppMode; label: string; title: string }[] = [
   { value: "editor", label: "Formation Editor", title: "FORMATION EDITOR" },
   { value: "account", label: "Account / Leaderboard", title: "ACCOUNT / LEADERBOARD" },
 ];
+const VIEW_STATE_STORAGE_KEY = "formation-recognition-view-state";
 
 const PLAYBOOK_OPTIONS: PlaybookKey[] = ["Foothill", "Pro", "Wing T"];
 const PERSONNEL_OPTIONS = ["Any", "11", "12", "21"] as const;
@@ -165,6 +167,7 @@ const DEFAULT_STATS: UserStats = {
 
 const ADMIN_EMAILS = [
   "nmendonca@pleasantonusd.net",
+  "mendoncanick@gmail.com",
 ];
 
 function normalize(value: string) {
@@ -231,6 +234,10 @@ function getWing(side: Side, wide = false) {
   return getAttached(side, wide) + (side === "right" ? olSpacing * 0.25 : -olSpacing * 0.25);
 }
 
+function getBunchWing(side: Side, wide = false) {
+  return getAttached(side, wide);
+}
+
 function getBunchMiddle(side: Side, wide = false) {
   return getAttached(side, wide) + (side === "right" ? 3 : -3);
 }
@@ -241,6 +248,10 @@ function getBunchOutside(side: Side, wide = false) {
 
 function getSlot(side: Side, wide = false) {
   return (getAttached(side, wide) + getWide(side)) / 2;
+}
+
+function getHash(side: Side, wide = false) {
+  return getSlot(side, wide);
 }
 
 function getMidpoint(a: number, b: number) {
@@ -382,13 +393,13 @@ function buildFoothillFormation(call: string, wide = false): FormationMeta {
     }
     case "Bunch":
       if (isEmpty) {
-        add("H", getAttached(side, wide), OFF_Y);
+        add("H", getBunchWing(side, wide), OFF_Y);
         add("Y", getBunchMiddle(side, wide), LOS_Y);
         add("Z", getBunchOutside(side, wide), OFF_Y);
         add("X", getWide(other), LOS_Y);
         add("RB", getSlot(other, wide), OFF_Y);
       } else {
-        add("H", getAttached(side, wide), OFF_Y);
+        add("H", getBunchWing(side, wide), OFF_Y);
         add("Y", getBunchMiddle(side, wide), LOS_Y);
         add("Z", getBunchOutside(side, wide), OFF_Y);
         add("X", getWide(other), LOS_Y);
@@ -677,8 +688,6 @@ function getAlignmentLandmarks(formation: FormationMeta): Landmark[] {
   };
 
   const addSurface = (surfaceInfo: { player: PlayerDot; type: "inline" | "wing" } | null, side: Side) => {
-    if (!surfaceInfo) return;
-
     const tackleX = side === "left" ? xs[0] : xs[4];
     const towardCenter = side === "left" ? 2.2 : -2.2;
     const awayFromCenter = -towardCenter;
@@ -697,10 +706,12 @@ function getAlignmentLandmarks(formation: FormationMeta): Landmark[] {
       }
 
       if (numberTwo) {
-        push(`dl-${side}-9t-bunch`, numberTwo.x, DL_Y, "9T", "dl");
+        push(`dl-${side}-9t-bunch`, numberTwo.x + awayFromCenter, DL_Y, "9T", "dl");
       }
       return;
     }
+
+    if (!surfaceInfo) return;
 
     if (surfaceInfo.type === "inline") {
       const surface = surfaceInfo.player;
@@ -754,6 +765,7 @@ function getAlignmentLandmarks(formation: FormationMeta): Landmark[] {
 
   const addLbTeRule = (te: PlayerDot | null, wing: PlayerDot | null, side: Side) => {
     const tackleX = side === "left" ? xs[0] : xs[4];
+    const outsideTightStep = 3.4;
 
     if (isBunchFamilyOnSide(formation, side)) {
       const bunch = getBunchNumberedReceivers(formation, side);
@@ -771,17 +783,17 @@ function getAlignmentLandmarks(formation: FormationMeta): Landmark[] {
     if (te) {
       const fiveTX = side === "left" ? xs[0] - 2.2 : xs[4] + 2.2;
       push(`lb-${te.id}-50t`, fiveTX, LB_Y, "50T", "lb");
-      const teOutsideX = side === "left" ? te.x - 2.8 : te.x + 2.8;
       push(`lb-${te.id}-60t`, te.x, LB_Y, "60T", "lb");
 
       if (wing) {
-        // 70T = D gap between TE and Wing
-        push(`lb-${te.id}-70t`, getMidpoint(te.x, wing.x), LB_Y, "70T", "lb");
-        const wingOutsideX = side === "left" ? wing.x - 2.8 : wing.x + 2.8;
+        // 70T tracks the same outside alignment family as a 7T so it sits directly behind that edge landmark.
+        const teOutsideX = side === "left" ? te.x - 2.2 : te.x + 2.2;
+        push(`lb-${te.id}-70t`, teOutsideX, LB_Y, "70T", "lb");
+        const wingOutsideX = side === "left" ? wing.x - outsideTightStep : wing.x + outsideTightStep;
         push(`lb-${wing.id}-90t`, wingOutsideX, LB_Y, "90T", "lb");
       } else {
         // 70T = outside shoulder of TE when no wing
-        const teOutsideX = side === "left" ? te.x - 2.8 : te.x + 2.8;
+        const teOutsideX = side === "left" ? te.x - outsideTightStep : te.x + outsideTightStep;
         push(`lb-${te.id}-70t`, teOutsideX, LB_Y, "70T", "lb");
       }
       return;
@@ -789,7 +801,7 @@ function getAlignmentLandmarks(formation: FormationMeta): Landmark[] {
 
     if (wing) {
       const fiveTX = side === "left" ? xs[0] - 2.2 : xs[4] + 2.2;
-      const wingOutsideX = side === "left" ? wing.x - 2.8 : wing.x + 2.8;
+      const wingOutsideX = side === "left" ? wing.x - outsideTightStep : wing.x + outsideTightStep;
       push(`lb-${wing.id}-50t`, fiveTX, LB_Y, "50T", "lb");
       push(`lb-${wing.id}-60t`, wing.x, LB_Y, "60T", "lb");
       push(`lb-${wing.id}-70t`, wingOutsideX, LB_Y, "70T", "lb");
@@ -802,8 +814,10 @@ function getAlignmentLandmarks(formation: FormationMeta): Landmark[] {
   addLbTeRule(inlineLeft, inlineLeft && wingLeft ? wingLeft : null, "left");
   addLbTeRule(inlineRight, inlineRight && wingRight ? wingRight : null, "right");
 
+  const isLbApexPlayer = (p: PlayerDot) => !inlineTeIds.has(p.id) && !isWingLikePlayer(p);
+
   skill.forEach((p, idx) => {
-    const spread = 2.8 + (idx % 3) * 0.4;
+    const spread = 1.9 + (idx % 3) * 0.25;
     const insideX = p.x < 50 ? p.x + spread : p.x - spread;
     const outsideX = p.x < 50 ? p.x - spread : p.x + spread;
     const isInline = inlineTeIds.has(p.id);
@@ -868,6 +882,7 @@ function getAlignmentLandmarks(formation: FormationMeta): Landmark[] {
   });
 
   const addApex = (side: Side) => {
+    const bunchOnSide = isBunchFamilyOnSide(formation, side);
     const tackleX = side === "left" ? xs[0] : xs[4];
     const sideSkill = apexEligibleSkill
       .filter((p) => (side === "left" ? p.x < 50 : p.x > 50))
@@ -893,7 +908,9 @@ function getAlignmentLandmarks(formation: FormationMeta): Landmark[] {
 
     if (!next || isWingLike(next)) return;
     const apexX = getMidpoint(emolosX, next.x);
-    push(`lb-${side}-apex`, apexX, LB_Y, "Apex", "lb");
+    if (!bunchOnSide && isLbApexPlayer(next)) {
+      push(`lb-${side}-apex`, apexX, LB_Y, "Apex", "lb");
+    }
     push(`db-${side}-apex`, apexX, DB_Y, "Apex", "db");
   };
   addApex("left");
@@ -912,6 +929,7 @@ function getAlignmentLandmarks(formation: FormationMeta): Landmark[] {
 
   ["left", "right"].forEach((s) => {
     const side = s as Side;
+    const bunchOnSide = isBunchFamilyOnSide(formation, side);
     const group = getEligibles(side);
     if (isTightGroup(group)) return;
 
@@ -925,17 +943,22 @@ function getAlignmentLandmarks(formation: FormationMeta): Landmark[] {
         const b = group[i + 1];
         if (isWingLike(a) || isWingLike(b)) continue;
         const extraApexX = (a.x + b.x) / 2;
-        push(`lb-${side}-apex-extra-${a.id}-${b.id}`, extraApexX, LB_Y, "Apex", "lb");
+        if (!bunchOnSide && isLbApexPlayer(a) && isLbApexPlayer(b)) {
+          push(`lb-${side}-apex-extra-${a.id}-${b.id}`, extraApexX, LB_Y, "Apex", "lb");
+        }
         push(`db-${side}-apex-extra-${a.id}-${b.id}`, extraApexX, DB_Y, "Apex", "db");
       }
     }
   });
 
   (["left", "right"] as Side[]).forEach((side) => {
+    const bunchOnSide = isBunchFamilyOnSide(formation, side);
     const numberOne = getOutsideReceiver(formation, side);
     const numberTwo = getNumberTwoReceiver(formation, side);
     if (!numberOne || !numberTwo) return;
-    push(`lb-${side}-apex-12`, getMidpoint(numberOne.x, numberTwo.x), LB_Y, "Apex", "lb");
+    if (!bunchOnSide && isLbApexPlayer(numberOne) && isLbApexPlayer(numberTwo)) {
+      push(`lb-${side}-apex-12`, getMidpoint(numberOne.x, numberTwo.x), LB_Y, "Apex", "lb");
+    }
   });
 
   push("db-left-edge", xs[0], DB_Y, "Edge", "db");
@@ -955,6 +978,16 @@ function getOffenseAnswerKeyFromFormation(formation: FormationMeta): Record<stri
       answer[p.id] = { x: p.x, y: p.y };
     });
   return answer;
+}
+
+function getDefensePlayersFromAnswerKey(answerKey: Record<string, { x: number; y: number }>): PlayerDot[] {
+  return DEFENDER_TOKENS
+    .filter((id) => Boolean(answerKey[id]))
+    .map((id) => ({
+      id,
+      x: answerKey[id].x,
+      y: answerKey[id].y,
+    }));
 }
 
 function findLandmarkByLabel(landmarks: Landmark[], layer: LandmarkLayer, label: string, side?: Side) {
@@ -1230,7 +1263,7 @@ function getAlignmentSpecialCases(formation: FormationMeta, frontMode: FrontMode
 
   if (formation.name.toLowerCase().includes("bunch")) {
     notes.push("Bunch: #3 gets 6i/6/7, #2 gets 9T.");
-    notes.push("Bunch: Mike 50T, Ni on #1, FS on #3.");
+    notes.push("Bunch: Mike 50T, Ni on #1, FS on Edge.");
   }
 
   return notes;
@@ -1477,8 +1510,8 @@ function getAlignmentAnswerKey(formation: FormationMeta, landmarks: Landmark[], 
 
   if (frontMode === "4-4") {
     if (strongBunch?.numberThree) {
-      const fs = getShade(strongBunch.numberThree, "db", "H");
-      if (fs) answer.FS = { x: fs.x, y: fs.y };
+      const edge = findLandmarkByLabel(landmarks, "db", "Edge", passStrength);
+      if (edge) answer.FS = { x: edge.x, y: edge.y };
     } else if (formation.name.includes("Quad")) {
       const post = findLandmarkByLabel(landmarks, "db", "MOF");
       if (post) answer.FS = { x: post.x, y: post.y };
@@ -1666,6 +1699,10 @@ function TrainingField({
 }) {
   const [drag, setDrag] = useState<{ id: string; type: "offense" | "defense" | "defense_ghost" } | null>(null);
   const maybeFlipY = (y: number, enabled: boolean) => (enabled ? 100 - y : y);
+  const fieldWide = editableDefense;
+  const hashXs = [getHash("left", fieldWide), getHash("right", fieldWide)];
+  const losY = flipOffense ? 100 - LOS_Y : LOS_Y;
+  const hashMarkRows = [13, 28, 43, 61, 76, 91];
 
   const getPointer = (e: React.PointerEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -1709,7 +1746,30 @@ function TrainingField({
       onPointerLeave={() => setDrag(null)}
     >
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.06),transparent_55%)]" />
-      <div className="absolute left-0 right-0 border-t-2 border-dashed border-white/70" style={{ top: `${flipOffense ? 100 - 52 : 52}%` }} />
+      <div
+        className="absolute left-4 -translate-y-1/2 text-[34px] font-black italic tracking-tight text-white/60"
+        style={{ top: `${losY}%` }}
+      >
+        #
+      </div>
+      <div
+        className="absolute right-4 -translate-y-1/2 text-[34px] font-black italic tracking-tight text-white/60"
+        style={{ top: `${losY}%` }}
+      >
+        #
+      </div>
+      {hashXs.map((x, idx) => (
+        <React.Fragment key={`hash-${idx}`}>
+          {hashMarkRows.map((row) => (
+            <div
+              key={`hash-${idx}-${row}`}
+              className="absolute left-1/2 h-[6px] w-[24px] -translate-x-1/2 -translate-y-1/2 rounded-[1px] bg-white/60"
+              style={{ left: `${x}%`, top: `${row}%` }}
+            />
+          ))}
+        </React.Fragment>
+      ))}
+      <div className="absolute left-0 right-0 border-t-2 border-dashed border-white/70" style={{ top: `${losY}%` }} />
       {getLineXs(editableDefense).map((x, idx) => (
         <div key={idx} className="absolute bottom-[10%] top-[10%] w-px bg-sky-200/25" style={{ left: `${x}%` }} />
       ))}
@@ -1723,16 +1783,16 @@ function TrainingField({
         const showingAnswers = defenseGhosts.length > 0;
         const layerStyles = enhancedLandmarks
           ? {
-              dl: "bg-red-300/40 border-red-100/50",
-              lb: "bg-amber-200/40 border-amber-50/50",
-              cb: "bg-blue-300/40 border-blue-100/50",
-              db: "bg-violet-300/40 border-violet-100/50",
+              dl: "bg-red-300/50 border-red-100/60",
+              lb: "bg-amber-200/50 border-amber-50/60",
+              cb: "bg-blue-300/50 border-blue-100/60",
+              db: "bg-violet-300/50 border-violet-100/60",
             }
           : {
-              dl: "bg-sky-200/30 border-sky-100/50",
-              lb: "bg-sky-200/30 border-sky-100/50",
-              cb: "bg-sky-200/30 border-sky-100/50",
-              db: "bg-sky-200/30 border-sky-100/50",
+              dl: "bg-sky-200/40 border-sky-100/60",
+              lb: "bg-sky-200/40 border-sky-100/60",
+              cb: "bg-sky-200/40 border-sky-100/60",
+              db: "bg-sky-200/40 border-sky-100/60",
             };
         const size = enhancedLandmarks ? "h-2.5 w-2.5" : "h-2 w-2";
         const labelClass = enhancedLandmarks
@@ -1834,8 +1894,12 @@ function formatDuration(totalSeconds: number) {
 export default function FormationRecognitionWorkingApp() {
   const router = useRouter();
   const currentSecondsRef = useRef(0);
+  const didHydrateViewStateRef = useRef(false);
+  const skipNextModeRandomizeRef = useRef(false);
+  const pendingAlignmentStudyFormationRef = useRef<string | null>(null);
   const [enhancedLandmarks, setEnhancedLandmarks] = useState(true);
   const [frontMode, setFrontMode] = useState<FrontMode>("4-3");
+  const [alignmentViewMode, setAlignmentViewMode] = useState<AlignmentViewMode>("study");
   const [mode, setMode] = useState<AppMode>("study");
   const [currentUser, setCurrentUser] = useState<UserRecord | null>(null);
   const [leaderboardEntries, setLeaderboardEntries] = useState<LeaderboardEntry[]>([]);
@@ -1879,6 +1943,90 @@ export default function FormationRecognitionWorkingApp() {
     offense_build: { ...DEFAULT_MODE_STATS },
     alignment: { ...DEFAULT_MODE_STATS },
   });
+
+  useEffect(() => {
+    try {
+      const rawViewState = window.localStorage.getItem(VIEW_STATE_STORAGE_KEY);
+      if (!rawViewState) {
+        didHydrateViewStateRef.current = true;
+        return;
+      }
+
+      const savedViewState = JSON.parse(rawViewState) as {
+        mode?: AppMode;
+        alignmentViewMode?: AlignmentViewMode;
+        frontMode?: FrontMode;
+        selectedPlaybooks?: PlaybookKey[];
+        personnelFilter?: string;
+        index?: number;
+        enhancedLandmarks?: boolean;
+        alignmentStudyFormation?: string;
+      };
+
+      if (savedViewState.mode && MODE_OPTIONS.some((option) => option.value === savedViewState.mode)) {
+        setMode(savedViewState.mode);
+        skipNextModeRandomizeRef.current = true;
+      }
+
+      if (
+        savedViewState.alignmentViewMode &&
+        ["study", "quiz"].includes(savedViewState.alignmentViewMode)
+      ) {
+        setAlignmentViewMode(savedViewState.alignmentViewMode);
+      }
+
+      if (savedViewState.frontMode && ["4-3", "4-4"].includes(savedViewState.frontMode)) {
+        setFrontMode(savedViewState.frontMode);
+      }
+
+      if (
+        Array.isArray(savedViewState.selectedPlaybooks) &&
+        savedViewState.selectedPlaybooks.every((playbook) => PLAYBOOK_OPTIONS.includes(playbook))
+      ) {
+        setSelectedPlaybooks(savedViewState.selectedPlaybooks);
+      }
+
+      if (
+        typeof savedViewState.personnelFilter === "string" &&
+        (savedViewState.personnelFilter === "Any" || PERSONNEL_OPTIONS.includes(savedViewState.personnelFilter as (typeof PERSONNEL_OPTIONS)[number]))
+      ) {
+        setPersonnelFilter(savedViewState.personnelFilter);
+      }
+
+      if (typeof savedViewState.index === "number" && Number.isFinite(savedViewState.index)) {
+        setIndex(Math.max(0, Math.floor(savedViewState.index)));
+      }
+
+      if (typeof savedViewState.enhancedLandmarks === "boolean") {
+        setEnhancedLandmarks(savedViewState.enhancedLandmarks);
+      }
+
+      if (typeof savedViewState.alignmentStudyFormation === "string" && savedViewState.alignmentStudyFormation) {
+        pendingAlignmentStudyFormationRef.current = savedViewState.alignmentStudyFormation;
+      }
+    } catch {}
+
+    didHydrateViewStateRef.current = true;
+  }, []);
+
+  useEffect(() => {
+    if (!didHydrateViewStateRef.current) return;
+
+    try {
+      window.localStorage.setItem(
+        VIEW_STATE_STORAGE_KEY,
+        JSON.stringify({
+          mode,
+          alignmentViewMode,
+          frontMode,
+          selectedPlaybooks,
+          personnelFilter,
+          index,
+          enhancedLandmarks,
+        }),
+      );
+    } catch {}
+  }, [mode, alignmentViewMode, frontMode, selectedPlaybooks, personnelFilter, index, enhancedLandmarks]);
 
    useEffect(() => {
   const checkAuth = async () => {
@@ -2073,6 +2221,7 @@ const existingStats =
   }, [effectivePlaybooks, personnelFilter]);
   const current = pool[index % Math.max(pool.length, 1)] ?? ALL_FORMATIONS[0];
   const formationKey = `${current.playbook}::${current.name}`;
+  const currentFormationIdentity = `${current.playbook}::${current.name}::${current.personnel}`;
   const displayFormation = useMemo(() => {
     let base;
 
@@ -2120,6 +2269,56 @@ const existingStats =
         .slice(0, 5),
     }));
   }, [leaderboardEntries]);
+  const formationSelectGroups = useMemo(() => {
+    const personnelOrder = Array.from({ length: 12 }, (_, idx) => String(idx + 10));
+    const nameCounts = new Map<string, number>();
+
+    pool.forEach((formation) => {
+      const key = `${formation.personnel}::${formation.name}`;
+      nameCounts.set(key, (nameCounts.get(key) ?? 0) + 1);
+    });
+
+    return personnelOrder
+      .map((personnel) => {
+        const options = pool
+          .map((formation, idx) => ({
+            value: `${formation.playbook}::${formation.name}::${formation.personnel}::${idx}`,
+            label:
+              (nameCounts.get(`${formation.personnel}::${formation.name}`) ?? 0) > 1
+                ? `${formation.name} · ${formation.playbook}`
+                : formation.name,
+            index: idx,
+            personnel: formation.personnel,
+          }))
+          .filter((option) => option.personnel === personnel)
+          .sort((a, b) => a.label.localeCompare(b.label));
+
+        return {
+          personnel,
+          options,
+        };
+      })
+      .filter((group) => group.options.length > 0);
+  }, [pool]);
+
+  useEffect(() => {
+    if (!didHydrateViewStateRef.current) return;
+
+    try {
+      const rawViewState = window.localStorage.getItem(VIEW_STATE_STORAGE_KEY);
+      const savedViewState = rawViewState ? JSON.parse(rawViewState) : {};
+      window.localStorage.setItem(
+        VIEW_STATE_STORAGE_KEY,
+        JSON.stringify({
+          ...savedViewState,
+          alignmentStudyFormation:
+            mode === "alignment" && alignmentViewMode === "study"
+              ? currentFormationIdentity
+              : savedViewState?.alignmentStudyFormation ?? null,
+        }),
+      );
+    } catch {}
+  }, [mode, alignmentViewMode, currentFormationIdentity]);
 
   const getRandomPoolIndex = (length: number, currentIndex?: number) => {
     if (length <= 1) return 0;
@@ -2150,8 +2349,44 @@ const existingStats =
 
   useEffect(() => {
     if (!pool.length) return;
+    if (skipNextModeRandomizeRef.current) {
+      skipNextModeRandomizeRef.current = false;
+      return;
+    }
     setIndex((prev) => getRandomPoolIndex(pool.length, prev));
   }, [mode]);
+
+  useEffect(() => {
+    if (!pool.length) return;
+    setIndex((prev) => {
+      const normalized = ((prev % pool.length) + pool.length) % pool.length;
+      return normalized;
+    });
+  }, [pool.length]);
+
+  useEffect(() => {
+    if (
+      !didHydrateViewStateRef.current ||
+      mode !== "alignment" ||
+      alignmentViewMode !== "study" ||
+      !pool.length ||
+      !pendingAlignmentStudyFormationRef.current
+    ) {
+      return;
+    }
+
+    const savedFormation = pendingAlignmentStudyFormationRef.current;
+    const savedIndex = pool.findIndex(
+      (formation) =>
+        `${formation.playbook}::${formation.name}::${formation.personnel}` === savedFormation,
+    );
+
+    pendingAlignmentStudyFormationRef.current = null;
+
+    if (savedIndex >= 0) {
+      setIndex(savedIndex);
+    }
+  }, [mode, alignmentViewMode, pool]);
 
   useEffect(() => {
     setEditorDraft({
@@ -2302,6 +2537,7 @@ const existingStats =
   const alignmentAnswerKey = useMemo(() => {
     return getAlignmentAnswerKey(displayFormation, alignmentLandmarks, frontMode);
   }, [displayFormation, alignmentLandmarks, frontMode]);
+  const alignmentStudyPlayers = useMemo(() => getDefensePlayersFromAnswerKey(alignmentAnswerKey), [alignmentAnswerKey]);
   const alignmentCheck = useMemo(() => getCheckResult(alignmentPlayers, alignmentAnswerKey, 1.0), [alignmentPlayers, alignmentAnswerKey]);
   const alignmentSpecialCases = useMemo(() => getAlignmentSpecialCases(displayFormation, frontMode), [displayFormation, frontMode]);
 
@@ -2481,7 +2717,7 @@ const existingStats =
   }, [showOffenseCheck, offenseCheck.isCorrect, offenseCheck.incorrectIds.length, formationKey, offenseBuildPlayers.length]);
 
   useEffect(() => {
-    if (showAlignmentCheck) {
+    if (mode === "alignment" && alignmentViewMode === "quiz" && showAlignmentCheck) {
       const total = Object.keys(alignmentAnswerKey).length || 1;
       const wrong = alignmentCheck.incorrectIds.length;
       const placedCount = alignmentPlayers.length;
@@ -2489,7 +2725,7 @@ const existingStats =
       const accuracy = Math.max(0, (total - wrong - missing) / total);
       scoreAttempt("alignment", accuracy, alignmentCheck.isCorrect);
     }
-  }, [showAlignmentCheck, alignmentCheck.isCorrect, alignmentCheck.incorrectIds.length, formationKey, alignmentPlayers.length]);
+  }, [mode, alignmentViewMode, showAlignmentCheck, alignmentCheck.isCorrect, alignmentCheck.incorrectIds.length, formationKey, alignmentPlayers.length]);
 
   if (!authChecked) {
     return (
@@ -2520,7 +2756,7 @@ const existingStats =
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent className="max-h-80 overflow-y-auto">
                       {MODE_OPTIONS.map((option) => (
                         <SelectItem key={option.value} value={option.value}>
                           {option.label}
@@ -2575,7 +2811,7 @@ const existingStats =
                       <SelectTrigger>
                         <SelectValue />
                       </SelectTrigger>
-                      <SelectContent>
+                      <SelectContent className="max-h-80 overflow-y-auto">
                         {PERSONNEL_OPTIONS.map((option) => (
                           <SelectItem key={option} value={option}>
                             {option === "Any" ? "Any" : `${option}P`}
@@ -2811,12 +3047,23 @@ const existingStats =
               <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
                 <div className="space-y-2">
                   <div className="flex flex-wrap justify-end gap-2">
+                    <div className="min-w-[140px]">
+                      <Select value={alignmentViewMode} onValueChange={(value: AlignmentViewMode) => { setAlignmentViewMode(value); setShowAlignmentCheck(false); }}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="max-h-80 overflow-y-auto">
+                          <SelectItem value="study">Study</SelectItem>
+                          <SelectItem value="quiz">Quiz</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
                     <div className="min-w-[110px]">
                       <Select value={frontMode} onValueChange={(value: FrontMode) => setFrontMode(value)}>
                         <SelectTrigger>
                           <SelectValue />
                         </SelectTrigger>
-                        <SelectContent>
+                        <SelectContent className="max-h-80 overflow-y-auto">
                           <SelectItem value="4-3">4-3</SelectItem>
                           <SelectItem value="4-4">4-4</SelectItem>
                         </SelectContent>
@@ -2828,53 +3075,107 @@ const existingStats =
                   </div>
                   <TrainingField
                     offensePlayers={displayFormation.players}
-                    defensePlayers={alignmentPlayers}
+                    defensePlayers={alignmentViewMode === "study" ? alignmentStudyPlayers : alignmentPlayers}
                     defenseLandmarks={alignmentLandmarks}
                     enhancedLandmarks={enhancedLandmarks}
-                    editableDefense
-                    incorrectDefenseIds={showAlignmentCheck ? alignmentCheck.incorrectIds : []}
-                    defenseGhosts={showAlignmentCheck ? alignmentCheck.ghosts : []}
-                    overlayLabel="Drag defenders to the defensive landmarks."
-                    onMoveDefense={moveDefender}
+                    editableDefense={alignmentViewMode === "quiz"}
+                    incorrectDefenseIds={alignmentViewMode === "quiz" && showAlignmentCheck ? alignmentCheck.incorrectIds : []}
+                    defenseGhosts={alignmentViewMode === "quiz" && showAlignmentCheck ? alignmentCheck.ghosts : []}
+                    overlayLabel={alignmentViewMode === "study" ? "Study the defensive alignments for this formation." : "Drag defenders to the defensive landmarks."}
+                    onMoveDefense={alignmentViewMode === "quiz" ? moveDefender : undefined}
                   />
                 </div>
                 <div className="space-y-4">
-                  <TokenTray title="Defender Tray" ids={remainingDefenders as unknown as string[]} onAdd={addDefender} />
-                  <div className="space-y-3 rounded-2xl border bg-white p-4 text-sm text-slate-600">
-                    <div>Drag defenders to the defensive landmarks. Front: {frontMode}</div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <Button className="rounded-xl" onClick={() => setShowAlignmentCheck(true)}>Check</Button>
-                      <Button variant="outline" className="rounded-xl" onClick={() => setShowAlignmentCheck(false)}>Hide Answers</Button>
-                    </div>
-                    {showAlignmentCheck ? (
-                      <div className="space-y-3">
-                        <div>Wrong defenders are highlighted in red. Dashed circles show answer-key spots.</div>
-                        {lastScoreSummary.alignment ? (
-                          <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
-                            <span className="font-semibold">Points earned:</span> {lastScoreSummary.alignment.awarded}
-                            <div>
-                              <span className="font-semibold">Alignment total:</span> {lastScoreSummary.alignment.total}
-                            </div>
-                          </div>
-                        ) : null}
-                        {alignmentCheck.isCorrect ? (
-                          <div className="flex items-center gap-2 rounded-xl border border-emerald-300 bg-emerald-100 p-3 text-sm font-semibold text-emerald-700">
-                            <CheckCircle2 className="h-5 w-5" /> Correct Alignment
-                          </div>
-                        ) : null}
-                        {alignmentSpecialCases.length ? (
-                          <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
-                            <div className="mb-2 font-semibold">Special-case feedback</div>
-                            <div className="space-y-2">
-                              {alignmentSpecialCases.map((note, idx) => (
-                                <div key={idx}>• {note}</div>
-                              ))}
-                            </div>
+                  {alignmentViewMode === "quiz" ? (
+                    <>
+                      <TokenTray title="Defender Tray" ids={remainingDefenders as unknown as string[]} onAdd={addDefender} />
+                      <div className="space-y-3 rounded-2xl border bg-white p-4 text-sm text-slate-600">
+                        <div>Drag defenders to the defensive landmarks. Front: {frontMode}</div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <Button className="rounded-xl" onClick={() => setShowAlignmentCheck(true)}>Check</Button>
+                          <Button variant="outline" className="rounded-xl" onClick={() => setShowAlignmentCheck(false)}>Hide Answers</Button>
+                        </div>
+                        {showAlignmentCheck ? (
+                          <div className="space-y-3">
+                            <div>Wrong defenders are highlighted in red. Dashed circles show answer-key spots.</div>
+                            {lastScoreSummary.alignment ? (
+                              <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
+                                <span className="font-semibold">Points earned:</span> {lastScoreSummary.alignment.awarded}
+                                <div>
+                                  <span className="font-semibold">Alignment total:</span> {lastScoreSummary.alignment.total}
+                                </div>
+                              </div>
+                            ) : null}
+                            {alignmentCheck.isCorrect ? (
+                              <div className="flex items-center gap-2 rounded-xl border border-emerald-300 bg-emerald-100 p-3 text-sm font-semibold text-emerald-700">
+                                <CheckCircle2 className="h-5 w-5" /> Correct Alignment
+                              </div>
+                            ) : null}
+                            {alignmentSpecialCases.length ? (
+                              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+                                <div className="mb-2 font-semibold">Special-case feedback</div>
+                                <div className="space-y-2">
+                                  {alignmentSpecialCases.map((note, idx) => (
+                                    <div key={idx}>• {note}</div>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : null}
                           </div>
                         ) : null}
                       </div>
-                    ) : null}
-                  </div>
+                    </>
+                  ) : (
+                    <div className="space-y-3 rounded-2xl border bg-white p-4 text-sm text-slate-600">
+                      <div>
+                        <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Formation</div>
+                        <Select
+                          value={`${current.playbook}::${current.name}::${current.personnel}::${index % Math.max(pool.length, 1)}`}
+                          onValueChange={(value) => {
+                            const selected = formationSelectGroups
+                              .flatMap((group) => group.options)
+                              .find((option) => option.value === value);
+                            if (selected) setIndex(selected.index);
+                          }}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent className="max-h-80 overflow-y-auto">
+                            {formationSelectGroups.map((group) => (
+                              <React.Fragment key={group.personnel}>
+                                <SelectGroup>
+                                  <SelectLabel>{group.personnel}P</SelectLabel>
+                                  {group.options.map((option) => (
+                                    <SelectItem key={option.value} value={option.value}>
+                                      {option.label}
+                                    </SelectItem>
+                                  ))}
+                                </SelectGroup>
+                                {group.personnel !== formationSelectGroups[formationSelectGroups.length - 1]?.personnel ? (
+                                  <SelectDivider />
+                                ) : null}
+                              </React.Fragment>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div>Study the answer-key alignment for this formation. Front: {frontMode}</div>
+                      <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
+                        The blue defenders are already placed on their correct alignments for study mode.
+                      </div>
+                      {alignmentSpecialCases.length ? (
+                        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+                          <div className="mb-2 font-semibold">Special-case feedback</div>
+                          <div className="space-y-2">
+                            {alignmentSpecialCases.map((note, idx) => (
+                              <div key={idx}>• {note}</div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
                 </div>
               </div>
                           ) : mode === "editor" ? (
@@ -2923,7 +3224,7 @@ const existingStats =
                               <SelectTrigger>
                                 <SelectValue />
                               </SelectTrigger>
-                              <SelectContent>
+                              <SelectContent className="max-h-80 overflow-y-auto">
                                 <SelectItem value="left">Left</SelectItem>
                                 <SelectItem value="right">Right</SelectItem>
                               </SelectContent>
@@ -2941,7 +3242,7 @@ const existingStats =
                               <SelectTrigger>
                                 <SelectValue />
                               </SelectTrigger>
-                              <SelectContent>
+                              <SelectContent className="max-h-80 overflow-y-auto">
                                 <SelectItem value="left">Left</SelectItem>
                                 <SelectItem value="right">Right</SelectItem>
                               </SelectContent>
