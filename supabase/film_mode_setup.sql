@@ -7,11 +7,16 @@ create table if not exists public.film_clips (
   submode text not null default 'read_key',
   run_pass text not null check (run_pass in ('run', 'pass')),
   direction text not null check (direction in ('left', 'right')),
+  pass_type text check (pass_type in ('drop_back', 'boot')),
   run_scheme text check (run_scheme in ('gap', 'zone', 'man')),
-  puller_count integer,
-  puller_positions text[],
+  gap_puller_count integer,
+  gap_one_puller_concept text,
+  gap_two_puller_concept text,
+  man_concept text,
   study_url text not null,
   quiz_url text,
+  quiz_start_seconds double precision,
+  quiz_end_seconds double precision,
   study_storage_path text,
   quiz_storage_path text,
   study_file_name text,
@@ -22,9 +27,14 @@ create table if not exists public.film_clips (
 
 alter table public.film_clips add column if not exists source_type text;
 alter table public.film_clips add column if not exists clip_bucket text;
+alter table public.film_clips add column if not exists pass_type text;
 alter table public.film_clips add column if not exists run_scheme text;
-alter table public.film_clips add column if not exists puller_count integer;
-alter table public.film_clips add column if not exists puller_positions text[];
+alter table public.film_clips add column if not exists gap_puller_count integer;
+alter table public.film_clips add column if not exists gap_one_puller_concept text;
+alter table public.film_clips add column if not exists gap_two_puller_concept text;
+alter table public.film_clips add column if not exists man_concept text;
+alter table public.film_clips add column if not exists quiz_start_seconds double precision;
+alter table public.film_clips add column if not exists quiz_end_seconds double precision;
 
 create index if not exists film_clips_created_at_idx on public.film_clips (created_at desc);
 create index if not exists film_clips_submode_idx on public.film_clips (submode);

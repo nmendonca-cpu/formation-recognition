@@ -70,6 +70,7 @@ type UserStats = {
   quiz: ModeScoreStats;
   offense_build: ModeScoreStats;
   alignment: ModeScoreStats;
+  film: ModeScoreStats;
 };
 
 type UserRecord = {
@@ -93,10 +94,23 @@ type ScoreSummary = {
   total: number;
 };
 
+type FilmQuizAnswers = {
+  runPass: string;
+  direction: string;
+};
+
+type FilmSaveStatus = {
+  tone: "success" | "error";
+  message: string;
+};
+
 type FilmSourceType = "Personal" | "Drive" | "Hudl" | "Other";
 type FilmRunScheme = "gap" | "zone" | "man" | "";
-type FilmPullerCount = "0" | "1" | "2" | "3";
-type FilmPullerPosition = "LG" | "C" | "RG" | "LT" | "RT" | "TE" | "H" | "Y" | "FB";
+type FilmPassType = "drop_back" | "boot" | "";
+type FilmGapPullerCount = "1" | "2" | "";
+type FilmGapOnePullerConcept = "Power" | "Dart" | "G Lead" | "Trap" | "Center Pull" | "";
+type FilmGapTwoPullerConcept = "GT" | "GY/GH" | "CG/CT" | "Buck Sweep" | "";
+type FilmManConcept = "Duo" | "Lead" | "";
 
 type FilmClip = {
   id: string;
@@ -105,11 +119,16 @@ type FilmClip = {
   sourceType: FilmSourceType;
   runPass: "run" | "pass";
   direction: Side;
+  passType: FilmPassType;
   runScheme: FilmRunScheme;
-  pullerCount: FilmPullerCount;
-  pullerPositions: FilmPullerPosition[];
+  gapPullerCount: FilmGapPullerCount;
+  gapOnePullerConcept: FilmGapOnePullerConcept;
+  gapTwoPullerConcept: FilmGapTwoPullerConcept;
+  manConcept: FilmManConcept;
   studyUrl: string;
   quizUrl?: string | null;
+  quizStartSeconds?: number | null;
+  quizEndSeconds?: number | null;
   studyStoragePath?: string | null;
   quizStoragePath?: string | null;
   kind: "remote" | "local" | "supabase";
@@ -118,13 +137,17 @@ type FilmClip = {
 };
 
 type FilmClipDraft = {
-  clipBucket: string;
   sourceType: FilmSourceType;
   runPass: "run" | "pass";
   direction: Side;
+  passType: FilmPassType;
   runScheme: FilmRunScheme;
-  pullerCount: FilmPullerCount;
-  pullerPositions: FilmPullerPosition[];
+  gapPullerCount: FilmGapPullerCount;
+  gapOnePullerConcept: FilmGapOnePullerConcept;
+  gapTwoPullerConcept: FilmGapTwoPullerConcept;
+  manConcept: FilmManConcept;
+  quizStartSeconds: string;
+  quizEndSeconds: string;
   remoteStudyUrl: string;
   remoteQuizUrl: string;
   studyFile: File | null;
@@ -156,28 +179,11 @@ const FILM_CLIPS_STORAGE_KEY = "formation-recognition-film-clips";
 const FILM_BUCKET = "film-clips";
 const FILM_SOURCE_OPTIONS: FilmSourceType[] = ["Personal", "Drive", "Hudl", "Other"];
 const FILM_RUN_SCHEME_OPTIONS: Exclude<FilmRunScheme, "">[] = ["gap", "zone", "man"];
-const FILM_PULLER_COUNT_OPTIONS: FilmPullerCount[] = ["0", "1", "2", "3"];
-const FILM_PULLER_POSITION_OPTIONS: FilmPullerPosition[] = ["LG", "C", "RG", "LT", "RT", "TE", "H", "Y", "FB"];
-const FILM_BUCKET_OPTIONS = [
-  "Zone Left",
-  "Zone Right",
-  "GH Left",
-  "GH Right",
-  "GT Left",
-  "GT Right",
-  "Lead Left",
-  "Lead Right",
-  "Power Left",
-  "Power Right",
-  "Counter Left",
-  "Counter Right",
-  "Boot Left",
-  "Boot Right",
-  "Pass Left",
-  "Pass Right",
-  "Screen Left",
-  "Screen Right",
-] as const;
+const FILM_PASS_TYPE_OPTIONS: Exclude<FilmPassType, "">[] = ["drop_back", "boot"];
+const FILM_GAP_PULLER_COUNT_OPTIONS: Exclude<FilmGapPullerCount, "">[] = ["1", "2"];
+const FILM_GAP_ONE_PULLER_CONCEPT_OPTIONS: Exclude<FilmGapOnePullerConcept, "">[] = ["Power", "Dart", "G Lead", "Trap", "Center Pull"];
+const FILM_GAP_TWO_PULLER_CONCEPT_OPTIONS: Exclude<FilmGapTwoPullerConcept, "">[] = ["GT", "GY/GH", "CG/CT", "Buck Sweep"];
+const FILM_MAN_CONCEPT_OPTIONS: Exclude<FilmManConcept, "">[] = ["Duo", "Lead"];
 
 const PLAYBOOK_OPTIONS: PlaybookKey[] = ["Foothill", "Pro", "Wing T"];
 const PERSONNEL_OPTIONS = ["Any", "11", "12", "21"] as const;
@@ -236,6 +242,7 @@ const DEFAULT_STATS: UserStats = {
   quiz: { ...DEFAULT_MODE_STATS },
   offense_build: { ...DEFAULT_MODE_STATS },
   alignment: { ...DEFAULT_MODE_STATS },
+  film: { ...DEFAULT_MODE_STATS },
 };
 
 const ADMIN_EMAILS = [
@@ -2049,6 +2056,13 @@ function formatDuration(totalSeconds: number) {
   return `${seconds}s`;
 }
 
+function formatFileSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
 function slugifyFilePart(value: string) {
   return value
     .toLowerCase()
@@ -2057,14 +2071,77 @@ function slugifyFilePart(value: string) {
     .slice(0, 60) || "clip";
 }
 
+function formatFilmDirection(direction: Side) {
+  return direction === "left" ? "Left" : "Right";
+}
+
+function parseTrimSeconds(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return parsed;
+}
+
+function formatVideoTimestamp(totalSeconds: number) {
+  const safeSeconds = Math.max(0, totalSeconds);
+  const minutes = Math.floor(safeSeconds / 60);
+  const seconds = Math.floor(safeSeconds % 60);
+  const hundredths = Math.floor((safeSeconds - Math.floor(safeSeconds)) * 100);
+  return `${minutes}:${String(seconds).padStart(2, "0")}.${String(hundredths).padStart(2, "0")}`;
+}
+
+function deriveFilmClipBucket(metadata: {
+  runPass: "run" | "pass";
+  direction: Side;
+  passType: FilmPassType;
+  runScheme: FilmRunScheme;
+  gapPullerCount: FilmGapPullerCount;
+  gapOnePullerConcept: FilmGapOnePullerConcept;
+  gapTwoPullerConcept: FilmGapTwoPullerConcept;
+  manConcept: FilmManConcept;
+}) {
+  const sideLabel = formatFilmDirection(metadata.direction);
+
+  if (metadata.runPass === "pass") {
+    if (metadata.passType === "boot") return `Boot ${sideLabel}`;
+    if (metadata.passType === "drop_back") return `Drop Back ${sideLabel}`;
+    return `Pass ${sideLabel}`;
+  }
+
+  if (metadata.runScheme === "zone") {
+    return `Zone ${sideLabel}`;
+  }
+
+  if (metadata.runScheme === "man") {
+    if (metadata.manConcept) return `${metadata.manConcept} ${sideLabel}`;
+    return `Man ${sideLabel}`;
+  }
+
+  if (metadata.runScheme === "gap") {
+    if (metadata.gapPullerCount === "1" && metadata.gapOnePullerConcept) {
+      return `${metadata.gapOnePullerConcept} ${sideLabel}`;
+    }
+    if (metadata.gapPullerCount === "2" && metadata.gapTwoPullerConcept) {
+      return `${metadata.gapTwoPullerConcept} ${sideLabel}`;
+    }
+    return `Gap ${sideLabel}`;
+  }
+
+  return `Unsorted ${sideLabel}`;
+}
+
 export default function FormationRecognitionWorkingApp() {
   const router = useRouter();
   const currentSecondsRef = useRef(0);
+  const filmStudyTimeRafRef = useRef<number | null>(null);
   const didHydrateViewStateRef = useRef(false);
   const skipNextModeRandomizeRef = useRef(false);
   const previousModeRef = useRef<AppMode>("study");
   const previousAlignmentViewModeRef = useRef<AlignmentViewMode>("study");
   const videoObjectUrlsRef = useRef<string[]>([]);
+  const filmQuizVideoRef = useRef<HTMLVideoElement | null>(null);
+  const filmStudyVideoRef = useRef<HTMLVideoElement | null>(null);
   const pendingStudyFormationRef = useRef<string | null>(null);
   const pendingAlignmentStudyFormationRef = useRef<string | null>(null);
   const [enhancedLandmarks, setEnhancedLandmarks] = useState(true);
@@ -2076,7 +2153,7 @@ export default function FormationRecognitionWorkingApp() {
   const [mode, setMode] = useState<AppMode>("study");
   const [currentUser, setCurrentUser] = useState<UserRecord | null>(null);
   const [leaderboardEntries, setLeaderboardEntries] = useState<LeaderboardEntry[]>([]);
-  const [lastScoreSummary, setLastScoreSummary] = useState<Partial<Record<"quiz" | "offense_build" | "alignment", ScoreSummary>>>({});
+  const [lastScoreSummary, setLastScoreSummary] = useState<Partial<Record<"quiz" | "offense_build" | "alignment" | "film", ScoreSummary>>>({});
   const [scoredAttemptKey, setScoredAttemptKey] = useState<string | null>(null);
   const [attemptStartedAt, setAttemptStartedAt] = useState<number>(Date.now());
   const [selectedPlaybooks, setSelectedPlaybooks] = useState<PlaybookKey[]>(["Foothill", "Pro", "Wing T"]);
@@ -2096,27 +2173,44 @@ export default function FormationRecognitionWorkingApp() {
   const [selectedFilmClipId, setSelectedFilmClipId] = useState<string>("");
   const [filmStarted, setFilmStarted] = useState(false);
   const [filmPlaybackNonce, setFilmPlaybackNonce] = useState(0);
+  const [filmUploadResetKey, setFilmUploadResetKey] = useState(0);
+  const [filmSaveNotice, setFilmSaveNotice] = useState<FilmSaveStatus | null>(null);
+  const [filmQuizAnswers, setFilmQuizAnswers] = useState<FilmQuizAnswers>({ runPass: "", direction: "" });
+  const [showFilmQuizFeedback, setShowFilmQuizFeedback] = useState(false);
+  const [showFilmQuizAnswers, setShowFilmQuizAnswers] = useState(false);
+  const [filmQuizStarted, setFilmQuizStarted] = useState(false);
+  const [filmQuizFinished, setFilmQuizFinished] = useState(false);
+  const [filmStudyCurrentTime, setFilmStudyCurrentTime] = useState(0);
+  const [filmStudyDuration, setFilmStudyDuration] = useState(0);
   const [filmDraft, setFilmDraft] = useState<FilmClipDraft>({
-    clipBucket: FILM_BUCKET_OPTIONS[0],
     sourceType: "Hudl",
     runPass: "run",
     direction: "right",
+    passType: "",
     runScheme: "zone",
-    pullerCount: "0",
-    pullerPositions: [],
+    gapPullerCount: "",
+    gapOnePullerConcept: "",
+    gapTwoPullerConcept: "",
+    manConcept: "",
+    quizStartSeconds: "",
+    quizEndSeconds: "",
     remoteStudyUrl: "",
     remoteQuizUrl: "",
     studyFile: null,
     quizFile: null,
   });
   const [filmEditDraft, setFilmEditDraft] = useState<Omit<FilmClipDraft, "remoteStudyUrl" | "remoteQuizUrl" | "studyFile" | "quizFile">>({
-    clipBucket: FILM_BUCKET_OPTIONS[0],
     sourceType: "Hudl",
     runPass: "run",
     direction: "right",
+    passType: "",
     runScheme: "zone",
-    pullerCount: "0",
-    pullerPositions: [],
+    gapPullerCount: "",
+    gapOnePullerConcept: "",
+    gapTwoPullerConcept: "",
+    manConcept: "",
+    quizStartSeconds: "",
+    quizEndSeconds: "",
   });
   
   const [editingAlignmentAnswers, setEditingAlignmentAnswers] = useState(false);
@@ -2141,6 +2235,7 @@ export default function FormationRecognitionWorkingApp() {
     quiz: { ...DEFAULT_MODE_STATS },
     offense_build: { ...DEFAULT_MODE_STATS },
     alignment: { ...DEFAULT_MODE_STATS },
+    film: { ...DEFAULT_MODE_STATS },
   });
 
   useEffect(() => {
@@ -2298,7 +2393,7 @@ export default function FormationRecognitionWorkingApp() {
       const supabase = createClient();
       const { data, error } = await supabase
         .from("film_clips")
-        .select("id, title, clip_bucket, source_type, run_pass, direction, run_scheme, puller_count, puller_positions, study_url, quiz_url, study_storage_path, quiz_storage_path, study_file_name, quiz_file_name")
+        .select("id, title, clip_bucket, source_type, source_label, run_pass, direction, pass_type, run_scheme, gap_puller_count, gap_one_puller_concept, gap_two_puller_concept, man_concept, study_url, quiz_url, quiz_start_seconds, quiz_end_seconds, study_storage_path, quiz_storage_path, study_file_name, quiz_file_name")
         .eq("submode", "read_key")
         .order("created_at", { ascending: false });
 
@@ -2315,18 +2410,29 @@ export default function FormationRecognitionWorkingApp() {
             id: row.id,
             title: row.title ?? row.clip_bucket ?? "Untitled Clip",
             clipBucket: row.clip_bucket ?? row.title ?? "Unsorted",
-            sourceType: FILM_SOURCE_OPTIONS.includes(row.source_type) ? row.source_type : "Other",
+            sourceType: FILM_SOURCE_OPTIONS.includes(row.source_type)
+              ? row.source_type
+              : FILM_SOURCE_OPTIONS.includes(row.source_label)
+                ? row.source_label
+                : "Other",
             runPass: row.run_pass,
             direction: row.direction,
+            passType: FILM_PASS_TYPE_OPTIONS.includes(row.pass_type) ? row.pass_type : "",
             runScheme: FILM_RUN_SCHEME_OPTIONS.includes(row.run_scheme) ? row.run_scheme : "",
-            pullerCount: FILM_PULLER_COUNT_OPTIONS.includes(String(row.puller_count) as FilmPullerCount)
-              ? (String(row.puller_count) as FilmPullerCount)
-              : "0",
-            pullerPositions: Array.isArray(row.puller_positions)
-              ? row.puller_positions.filter((position): position is FilmPullerPosition => FILM_PULLER_POSITION_OPTIONS.includes(position as FilmPullerPosition))
-              : [],
+            gapPullerCount: FILM_GAP_PULLER_COUNT_OPTIONS.includes(String(row.gap_puller_count) as Exclude<FilmGapPullerCount, "">)
+              ? (String(row.gap_puller_count) as Exclude<FilmGapPullerCount, "">)
+              : "",
+            gapOnePullerConcept: FILM_GAP_ONE_PULLER_CONCEPT_OPTIONS.includes(row.gap_one_puller_concept)
+              ? row.gap_one_puller_concept
+              : "",
+            gapTwoPullerConcept: FILM_GAP_TWO_PULLER_CONCEPT_OPTIONS.includes(row.gap_two_puller_concept)
+              ? row.gap_two_puller_concept
+              : "",
+            manConcept: FILM_MAN_CONCEPT_OPTIONS.includes(row.man_concept) ? row.man_concept : "",
             studyUrl: row.study_url,
             quizUrl: row.quiz_url ?? null,
+            quizStartSeconds: typeof row.quiz_start_seconds === "number" ? row.quiz_start_seconds : null,
+            quizEndSeconds: typeof row.quiz_end_seconds === "number" ? row.quiz_end_seconds : null,
             studyStoragePath: row.study_storage_path ?? null,
             quizStoragePath: row.quiz_storage_path ?? null,
             kind: "supabase",
@@ -2388,11 +2494,12 @@ const { data: scoreRows } = await supabase
   quiz: { ...DEFAULT_MODE_STATS },
   offense_build: { ...DEFAULT_MODE_STATS },
   alignment: { ...DEFAULT_MODE_STATS },
+  film: { ...DEFAULT_MODE_STATS },
 };
 
 if (Array.isArray(scoreRows)) {
   for (const row of scoreRows) {
-    if (row.mode === "quiz" || row.mode === "offense_build" || row.mode === "alignment") {
+    if (row.mode === "quiz" || row.mode === "offense_build" || row.mode === "alignment" || row.mode === "film") {
       baseStats[row.mode] = {
         points: row.points ?? 0,
         attempts: row.attempts ?? 0,
@@ -2408,7 +2515,8 @@ baseStats.secondsUsed = profileData?.seconds_used ?? 0;
 baseStats.totalPoints =
   baseStats.quiz.points +
   baseStats.offense_build.points +
-  baseStats.alignment.points;
+  baseStats.alignment.points +
+  baseStats.film.points;
 
 const existingStats =
   prev?.id === user.id
@@ -2478,7 +2586,7 @@ const existingStats =
       }
 
       for (const row of scoreRows ?? []) {
-        if (row.mode !== "quiz" && row.mode !== "offense_build" && row.mode !== "alignment") {
+        if (row.mode !== "quiz" && row.mode !== "offense_build" && row.mode !== "alignment" && row.mode !== "film") {
           continue;
         }
 
@@ -2498,7 +2606,8 @@ const existingStats =
         stats.totalPoints =
           stats.quiz.points +
           stats.offense_build.points +
-          stats.alignment.points;
+          stats.alignment.points +
+          stats.film.points;
 
         return {
           id: profile.id,
@@ -2567,15 +2676,46 @@ const existingStats =
   const remainingDefenders = DEFENDER_TOKENS.filter((id) => !alignmentPlayers.some((p) => p.id === id));
   const remainingOffense = OFFENSE_TOKENS.filter((id) => !offenseBuildPlayers.some((p) => p.id === id));
   const leaderboardModeMeta = [
-    { key: "quiz", title: "Quiz" },
-    { key: "offense_build", title: "Offensive" },
-    { key: "alignment", title: "Alignment" },
+    {
+      key: "quiz",
+      title: "Quiz",
+      shellClass: "border-[#8a856f] bg-[#f8f4e6]",
+      headerClass: "from-[#f4ecd5] to-[#ddd2b5]",
+      columnClass: "border-[#8a856f] bg-[#e8e0c8] text-[#5a5646]",
+      stripeOddClass: "border-[#d6cfb7] bg-[#faf7ec]",
+      stripeEvenClass: "border-[#d6cfb7] bg-[#f2ecd9]",
+    },
+    {
+      key: "offense_build",
+      title: "Offensive",
+      shellClass: "border-[#7e8a74] bg-[#eef3e7]",
+      headerClass: "from-[#e7f0da] to-[#cad7bc]",
+      columnClass: "border-[#7e8a74] bg-[#dce7cf] text-[#4f5d48]",
+      stripeOddClass: "border-[#ccd8c0] bg-[#f5faef]",
+      stripeEvenClass: "border-[#ccd8c0] bg-[#eaf3df]",
+    },
+    {
+      key: "alignment",
+      title: "Alignment",
+      shellClass: "border-[#7f857f] bg-[#edf1f0]",
+      headerClass: "from-[#e1e6e4] to-[#c9d0cd]",
+      columnClass: "border-[#7f857f] bg-[#d8dfdc] text-[#4f5652]",
+      stripeOddClass: "border-[#c9d1ce] bg-[#f6f8f7]",
+      stripeEvenClass: "border-[#c9d1ce] bg-[#e8eeeb]",
+    },
+    {
+      key: "film",
+      title: "Film",
+      shellClass: "border-[#85766d] bg-[#f3ece8]",
+      headerClass: "from-[#efe2da] to-[#d8c4b8]",
+      columnClass: "border-[#85766d] bg-[#e5d5cc] text-[#5c514a]",
+      stripeOddClass: "border-[#d8cac2] bg-[#fbf6f3]",
+      stripeEvenClass: "border-[#d8cac2] bg-[#f1e7e1]",
+    },
   ] as const;
   const leaderboardBoards = useMemo(() => {
-    return leaderboardModeMeta.map(({ key, title }) => ({
-      key,
-      title,
-      entries: [...leaderboardEntries]
+    return leaderboardModeMeta.map(({ key, title, shellClass, headerClass, columnClass, stripeOddClass, stripeEvenClass }) => {
+      const rankedEntries = [...leaderboardEntries]
         .sort((a, b) => {
           const pointDiff = b.stats[key].points - a.stats[key].points;
           if (pointDiff !== 0) return pointDiff;
@@ -2586,9 +2726,30 @@ const existingStats =
 
           return a.name.localeCompare(b.name);
         })
-        .slice(0, 5),
-    }));
-  }, [leaderboardEntries]);
+        .map((entry, idx) => ({
+          ...entry,
+          leaderboardRank: idx + 1,
+        }));
+
+      const entries = rankedEntries.slice(0, 10);
+      const currentUserEntry =
+        currentUser && !entries.some((entry) => entry.id === currentUser.id)
+          ? rankedEntries.find((entry) => entry.id === currentUser.id) ?? null
+          : null;
+
+      return {
+        key,
+        title,
+        shellClass,
+        headerClass,
+        columnClass,
+        stripeOddClass,
+        stripeEvenClass,
+        entries,
+        currentUserEntry,
+      };
+    });
+  }, [leaderboardEntries, currentUser?.id]);
   const formationSelectGroups = useMemo(() => {
     const personnelOrder = Array.from({ length: 12 }, (_, idx) => String(idx + 10));
     const nameCounts = new Map<string, number>();
@@ -2620,14 +2781,34 @@ const existingStats =
       })
       .filter((group) => group.options.length > 0);
   }, [pool]);
-  const filmClipOptions = useMemo(
-    () =>
-      filmClips.map((clip) => ({
+  const filmClipGroups = useMemo(() => {
+    const grouped = new Map<"run" | "pass", Map<string, { value: string; label: string }[]>>();
+
+    filmClips.forEach((clip) => {
+      const runPassBuckets = grouped.get(clip.runPass) ?? new Map<string, { value: string; label: string }[]>();
+      const bucketClips = runPassBuckets.get(clip.clipBucket) ?? [];
+      const nextCount = bucketClips.length + 1;
+      bucketClips.push({
         value: clip.id,
-        label: clip.title,
-      })),
-    [filmClips],
-  );
+        label: `Clip ${nextCount}`,
+      });
+      runPassBuckets.set(clip.clipBucket, bucketClips);
+      grouped.set(clip.runPass, runPassBuckets);
+    });
+
+    return (["run", "pass"] as const)
+      .map((runPass) => ({
+        runPass,
+        label: runPass === "run" ? "Run" : "Pass",
+        buckets: Array.from(grouped.get(runPass)?.entries() ?? [])
+          .map(([bucket, options]) => ({
+            bucket,
+            options,
+          }))
+          .sort((a, b) => a.bucket.localeCompare(b.bucket)),
+      }))
+      .filter((group) => group.buckets.length > 0);
+  }, [filmClips]);
   const selectedFilmClip = useMemo(
     () => filmClips.find((clip) => clip.id === selectedFilmClipId) ?? filmClips[0] ?? null,
     [filmClips, selectedFilmClipId],
@@ -2673,15 +2854,60 @@ const existingStats =
   }, [selectedFilmClipId, filmViewMode, filmSubmode]);
 
   useEffect(() => {
+    setFilmStudyCurrentTime(0);
+    setFilmStudyDuration(0);
+  }, [selectedFilmClipId, filmPlaybackNonce]);
+
+  useEffect(() => {
+    if (filmViewMode !== "study") return;
+
+    const updateStudyTime = () => {
+      const video = filmStudyVideoRef.current;
+      if (video) {
+        setFilmStudyCurrentTime(video.currentTime || 0);
+        setFilmStudyDuration(video.duration || 0);
+      }
+      filmStudyTimeRafRef.current = window.requestAnimationFrame(updateStudyTime);
+    };
+
+    filmStudyTimeRafRef.current = window.requestAnimationFrame(updateStudyTime);
+
+    return () => {
+      if (filmStudyTimeRafRef.current !== null) {
+        window.cancelAnimationFrame(filmStudyTimeRafRef.current);
+        filmStudyTimeRafRef.current = null;
+      }
+    };
+  }, [filmViewMode, selectedFilmClipId, filmPlaybackNonce]);
+
+  useEffect(() => {
+    setFilmQuizAnswers({ runPass: "", direction: "" });
+    setShowFilmQuizFeedback(false);
+    setShowFilmQuizAnswers(false);
+    setFilmQuizStarted(false);
+    setFilmQuizFinished(false);
+  }, [selectedFilmClipId]);
+
+  useEffect(() => {
+    if (mode === "film" && filmViewMode === "quiz" && filmClips.length && selectedFilmClip) {
+      setSelectedFilmClipId((prev) => prev || filmClips[getRandomPoolIndex(filmClips.length)].id);
+    }
+  }, [mode, filmViewMode, filmClips.length, selectedFilmClip?.id]);
+
+  useEffect(() => {
     if (!selectedFilmClip) return;
     setFilmEditDraft({
-      clipBucket: selectedFilmClip.clipBucket,
       sourceType: selectedFilmClip.sourceType,
       runPass: selectedFilmClip.runPass,
       direction: selectedFilmClip.direction,
+      passType: selectedFilmClip.passType,
       runScheme: selectedFilmClip.runScheme || "zone",
-      pullerCount: selectedFilmClip.pullerCount,
-      pullerPositions: selectedFilmClip.pullerPositions,
+      gapPullerCount: selectedFilmClip.gapPullerCount,
+      gapOnePullerConcept: selectedFilmClip.gapOnePullerConcept,
+      gapTwoPullerConcept: selectedFilmClip.gapTwoPullerConcept,
+      manConcept: selectedFilmClip.manConcept,
+      quizStartSeconds: selectedFilmClip.quizStartSeconds?.toString() ?? "",
+      quizEndSeconds: selectedFilmClip.quizEndSeconds?.toString() ?? "",
     });
   }, [selectedFilmClip]);
 
@@ -2834,17 +3060,65 @@ const existingStats =
     });
   };
 
+  const nextFilmQuizClip = () => {
+    if (!filmClips.length) return;
+    const currentIndex = selectedFilmClip ? filmClips.findIndex((clip) => clip.id === selectedFilmClip.id) : undefined;
+    const nextIndex = getRandomPoolIndex(filmClips.length, currentIndex);
+    setSelectedFilmClipId(filmClips[nextIndex].id);
+    setFilmQuizAnswers({ runPass: "", direction: "" });
+    setShowFilmQuizFeedback(false);
+    setShowFilmQuizAnswers(false);
+    setFilmQuizStarted(false);
+    setFilmQuizFinished(false);
+    setScoredAttemptKey(null);
+    setAttemptStartedAt(Date.now());
+  };
+
+  const startFilmQuizClip = () => {
+    setFilmQuizStarted(true);
+    setFilmQuizFinished(false);
+    setShowFilmQuizFeedback(false);
+    setShowFilmQuizAnswers(false);
+    setAttemptStartedAt(Date.now());
+  };
+
+  const submitFilmQuiz = () => {
+    setShowFilmQuizFeedback(true);
+    setShowFilmQuizAnswers(false);
+  };
+
   const addFilmClip = () => {
     void (async () => {
-      const clipBucket = filmDraft.clipBucket;
+      const clipBucket = deriveFilmClipBucket(filmDraft);
       const title = clipBucket;
       const sourceType = filmDraft.sourceType;
+      const quizStartSeconds = parseTrimSeconds(filmDraft.quizStartSeconds);
+      const quizEndSeconds = parseTrimSeconds(filmDraft.quizEndSeconds);
       const remoteStudyUrl = filmDraft.remoteStudyUrl.trim();
       const remoteQuizUrl = filmDraft.remoteQuizUrl.trim();
       const studyFile = filmDraft.studyFile;
       const quizFile = filmDraft.quizFile;
-      if (!clipBucket) return;
-      if (!remoteStudyUrl && !studyFile) return;
+      if (!clipBucket) {
+        setFilmSaveNotice({
+          tone: "error",
+          message: "Choose the clip metadata before saving.",
+        });
+        return;
+      }
+      if (!remoteStudyUrl && !studyFile) {
+        setFilmSaveNotice({
+          tone: "error",
+          message: "Add a study clip URL or upload a study clip before saving.",
+        });
+        return;
+      }
+      if (quizStartSeconds !== null && quizEndSeconds !== null && quizEndSeconds <= quizStartSeconds) {
+        setFilmSaveNotice({
+          tone: "error",
+          message: "Quiz end time must be greater than quiz start time.",
+        });
+        return;
+      }
 
       const hasSupabaseUpload = Boolean(currentUser && (studyFile || quizFile));
       if (hasSupabaseUpload) {
@@ -2878,14 +3152,22 @@ const existingStats =
             sourceType,
             runPass: filmDraft.runPass,
             direction: filmDraft.direction,
+            passType: filmDraft.runPass === "pass" ? filmDraft.passType : "",
             runScheme: filmDraft.runPass === "run" ? filmDraft.runScheme : "",
-            pullerCount: filmDraft.runPass === "run" && filmDraft.runScheme === "gap" ? filmDraft.pullerCount : "0",
-            pullerPositions:
-              filmDraft.runPass === "run" && filmDraft.runScheme === "gap"
-                ? filmDraft.pullerPositions.slice(0, Number(filmDraft.pullerCount))
-                : [],
+            gapPullerCount: filmDraft.runPass === "run" && filmDraft.runScheme === "gap" ? filmDraft.gapPullerCount : "",
+            gapOnePullerConcept:
+              filmDraft.runPass === "run" && filmDraft.runScheme === "gap" && filmDraft.gapPullerCount === "1"
+                ? filmDraft.gapOnePullerConcept
+                : "",
+            gapTwoPullerConcept:
+              filmDraft.runPass === "run" && filmDraft.runScheme === "gap" && filmDraft.gapPullerCount === "2"
+                ? filmDraft.gapTwoPullerConcept
+                : "",
+            manConcept: filmDraft.runPass === "run" && filmDraft.runScheme === "man" ? filmDraft.manConcept : "",
             studyUrl,
             quizUrl,
+            quizStartSeconds,
+            quizEndSeconds,
             studyStoragePath: studyAsset.storagePath,
             quizStoragePath: quizAsset.storagePath,
             kind: "supabase",
@@ -2898,14 +3180,20 @@ const existingStats =
             title,
             clip_bucket: nextClip.clipBucket,
             source_type: nextClip.sourceType,
+            source_label: nextClip.sourceType,
             submode: "read_key",
             run_pass: nextClip.runPass,
             direction: nextClip.direction,
+            pass_type: nextClip.passType || null,
             run_scheme: nextClip.runScheme || null,
-            puller_count: nextClip.pullerCount === "0" ? null : Number(nextClip.pullerCount),
-            puller_positions: nextClip.pullerPositions.length ? nextClip.pullerPositions : null,
+            gap_puller_count: nextClip.gapPullerCount ? Number(nextClip.gapPullerCount) : null,
+            gap_one_puller_concept: nextClip.gapOnePullerConcept || null,
+            gap_two_puller_concept: nextClip.gapTwoPullerConcept || null,
+            man_concept: nextClip.manConcept || null,
             study_url: nextClip.studyUrl,
             quiz_url: nextClip.quizUrl,
+            quiz_start_seconds: nextClip.quizStartSeconds,
+            quiz_end_seconds: nextClip.quizEndSeconds,
             study_storage_path: nextClip.studyStoragePath,
             quiz_storage_path: nextClip.quizStoragePath,
             study_file_name: nextClip.studyFileName ?? null,
@@ -2917,8 +3205,23 @@ const existingStats =
 
           setFilmClips((prev) => [nextClip, ...prev.filter((clip) => clip.id !== nextClip.id)]);
           setSelectedFilmClipId(nextClip.id);
+          setFilmSaveNotice({
+            tone: "success",
+            message: `Saved ${nextClip.clipBucket} to the film library.`,
+          });
         } catch (error) {
           console.error("Failed to save film clip", error);
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          const selectedFiles = [
+            studyFile ? `study ${studyFile.name} (${formatFileSize(studyFile.size)})` : null,
+            quizFile ? `quiz ${quizFile.name} (${formatFileSize(quizFile.size)})` : null,
+          ].filter(Boolean);
+          setFilmSaveNotice({
+            tone: "error",
+            message: errorMessage.includes("maximum allowed size")
+              ? `Clip save failed because the file is larger than your Supabase Storage size limit.${selectedFiles.length ? ` Selected: ${selectedFiles.join(" • ")}.` : ""}`
+              : "Clip save failed. Check the video file or URL and try again.",
+          });
           return;
         }
       } else {
@@ -2949,14 +3252,22 @@ const existingStats =
           sourceType,
           runPass: filmDraft.runPass,
           direction: filmDraft.direction,
+          passType: filmDraft.runPass === "pass" ? filmDraft.passType : "",
           runScheme: filmDraft.runPass === "run" ? filmDraft.runScheme : "",
-          pullerCount: filmDraft.runPass === "run" && filmDraft.runScheme === "gap" ? filmDraft.pullerCount : "0",
-          pullerPositions:
-            filmDraft.runPass === "run" && filmDraft.runScheme === "gap"
-              ? filmDraft.pullerPositions.slice(0, Number(filmDraft.pullerCount))
-              : [],
+          gapPullerCount: filmDraft.runPass === "run" && filmDraft.runScheme === "gap" ? filmDraft.gapPullerCount : "",
+          gapOnePullerConcept:
+            filmDraft.runPass === "run" && filmDraft.runScheme === "gap" && filmDraft.gapPullerCount === "1"
+              ? filmDraft.gapOnePullerConcept
+              : "",
+          gapTwoPullerConcept:
+            filmDraft.runPass === "run" && filmDraft.runScheme === "gap" && filmDraft.gapPullerCount === "2"
+              ? filmDraft.gapTwoPullerConcept
+              : "",
+          manConcept: filmDraft.runPass === "run" && filmDraft.runScheme === "man" ? filmDraft.manConcept : "",
           studyUrl,
           quizUrl,
+          quizStartSeconds,
+          quizEndSeconds,
           studyStoragePath: null,
           quizStoragePath: null,
           kind,
@@ -2966,23 +3277,32 @@ const existingStats =
 
         setFilmClips((prev) => [nextClip, ...prev]);
         setSelectedFilmClipId(nextClip.id);
+        setFilmSaveNotice({
+          tone: "success",
+          message: `Saved ${nextClip.clipBucket} to the film library.`,
+        });
       }
 
       setFilmStarted(false);
       setFilmPlaybackNonce(0);
       setFilmDraft({
-        clipBucket: FILM_BUCKET_OPTIONS[0],
         sourceType: "Hudl",
         runPass: "run",
         direction: "right",
+        passType: "",
         runScheme: "zone",
-        pullerCount: "0",
-        pullerPositions: [],
+        gapPullerCount: "",
+        gapOnePullerConcept: "",
+        gapTwoPullerConcept: "",
+        manConcept: "",
+        quizStartSeconds: "",
+        quizEndSeconds: "",
         remoteStudyUrl: "",
         remoteQuizUrl: "",
         studyFile: null,
         quizFile: null,
       });
+      setFilmUploadResetKey((prev) => prev + 1);
     })();
   };
 
@@ -2990,19 +3310,37 @@ const existingStats =
     void (async () => {
       if (!currentUser?.isAdmin || !selectedFilmClip) return;
 
+      const clipBucket = deriveFilmClipBucket(filmEditDraft);
+      const quizStartSeconds = parseTrimSeconds(filmEditDraft.quizStartSeconds);
+      const quizEndSeconds = parseTrimSeconds(filmEditDraft.quizEndSeconds);
+      if (quizStartSeconds !== null && quizEndSeconds !== null && quizEndSeconds <= quizStartSeconds) {
+        setFilmSaveNotice({
+          tone: "error",
+          message: "Quiz end time must be greater than quiz start time.",
+        });
+        return;
+      }
       const nextClip: FilmClip = {
         ...selectedFilmClip,
-        title: filmEditDraft.clipBucket,
-        clipBucket: filmEditDraft.clipBucket,
+        title: clipBucket,
+        clipBucket,
         sourceType: filmEditDraft.sourceType,
         runPass: filmEditDraft.runPass,
         direction: filmEditDraft.direction,
+        passType: filmEditDraft.runPass === "pass" ? filmEditDraft.passType : "",
         runScheme: filmEditDraft.runPass === "run" ? filmEditDraft.runScheme : "",
-        pullerCount: filmEditDraft.runPass === "run" && filmEditDraft.runScheme === "gap" ? filmEditDraft.pullerCount : "0",
-        pullerPositions:
-          filmEditDraft.runPass === "run" && filmEditDraft.runScheme === "gap"
-            ? filmEditDraft.pullerPositions.slice(0, Number(filmEditDraft.pullerCount))
-            : [],
+        gapPullerCount: filmEditDraft.runPass === "run" && filmEditDraft.runScheme === "gap" ? filmEditDraft.gapPullerCount : "",
+        gapOnePullerConcept:
+          filmEditDraft.runPass === "run" && filmEditDraft.runScheme === "gap" && filmEditDraft.gapPullerCount === "1"
+            ? filmEditDraft.gapOnePullerConcept
+            : "",
+        gapTwoPullerConcept:
+          filmEditDraft.runPass === "run" && filmEditDraft.runScheme === "gap" && filmEditDraft.gapPullerCount === "2"
+            ? filmEditDraft.gapTwoPullerConcept
+            : "",
+        manConcept: filmEditDraft.runPass === "run" && filmEditDraft.runScheme === "man" ? filmEditDraft.manConcept : "",
+        quizStartSeconds,
+        quizEndSeconds,
       };
 
       try {
@@ -3014,11 +3352,17 @@ const existingStats =
               title: nextClip.title,
               clip_bucket: nextClip.clipBucket,
               source_type: nextClip.sourceType,
+              source_label: nextClip.sourceType,
               run_pass: nextClip.runPass,
               direction: nextClip.direction,
+              pass_type: nextClip.passType || null,
               run_scheme: nextClip.runScheme || null,
-              puller_count: nextClip.pullerCount === "0" ? null : Number(nextClip.pullerCount),
-              puller_positions: nextClip.pullerPositions.length ? nextClip.pullerPositions : null,
+              gap_puller_count: nextClip.gapPullerCount ? Number(nextClip.gapPullerCount) : null,
+              gap_one_puller_concept: nextClip.gapOnePullerConcept || null,
+              gap_two_puller_concept: nextClip.gapTwoPullerConcept || null,
+              man_concept: nextClip.manConcept || null,
+              quiz_start_seconds: nextClip.quizStartSeconds,
+              quiz_end_seconds: nextClip.quizEndSeconds,
             })
             .eq("id", selectedFilmClip.id);
 
@@ -3026,8 +3370,16 @@ const existingStats =
         }
 
         setFilmClips((prev) => prev.map((clip) => (clip.id === nextClip.id ? nextClip : clip)));
+        setFilmSaveNotice({
+          tone: "success",
+          message: `Updated ${nextClip.clipBucket}.`,
+        });
       } catch (error) {
         console.error("Failed to update film clip metadata", error);
+        setFilmSaveNotice({
+          tone: "error",
+          message: "Clip update failed. Check the file or URL changes and try again.",
+        });
       }
     })();
   };
@@ -3153,6 +3505,15 @@ const existingStats =
     runStrength: FIELD_LABELS[displayFormation.runStrength],
     passStrength: FIELD_LABELS[displayFormation.passStrength],
   };
+  const filmQuizResult = {
+    runPass: normalize(filmQuizAnswers.runPass) === normalize(selectedFilmClip?.runPass === "run" ? "Run" : "Pass"),
+    direction: normalizeStrength(filmQuizAnswers.direction) === normalize(selectedFilmClip?.direction ?? ""),
+  };
+  const filmQuizScore = [filmQuizResult.runPass, filmQuizResult.direction].filter(Boolean).length;
+  const filmQuizPlaybackUrl =
+    selectedFilmClip && (selectedFilmClip.quizStartSeconds !== null && selectedFilmClip.quizStartSeconds !== undefined || selectedFilmClip.quizEndSeconds !== null && selectedFilmClip.quizEndSeconds !== undefined)
+      ? selectedFilmClip.studyUrl
+      : selectedFilmClip?.quizUrl || selectedFilmClip?.studyUrl || "";
 
   const offenseAnswerKey = useMemo(() => getOffenseAnswerKeyFromFormation(displayFormation), [displayFormation]);
   const offenseCheck = useMemo(() => getCheckResult(offenseBuildPlayers, offenseAnswerKey, 0.75), [offenseBuildPlayers, offenseAnswerKey]);
@@ -3214,12 +3575,18 @@ const existingStats =
   router.push("/login");
 };
 
-  const getSpeedBonus = (activeMode: "quiz" | "offense_build" | "alignment", elapsedMs: number) => {
+  const getSpeedBonus = (activeMode: "quiz" | "offense_build" | "alignment" | "film", elapsedMs: number) => {
     const seconds = elapsedMs / 1000;
     if (activeMode === "quiz") {
       if (seconds <= 6) return 30;
       if (seconds <= 10) return 20;
       if (seconds <= 15) return 10;
+      return 0;
+    }
+    if (activeMode === "film") {
+      if (seconds <= 4) return 30;
+      if (seconds <= 7) return 20;
+      if (seconds <= 10) return 10;
       return 0;
     }
     if (activeMode === "offense_build") {
@@ -3236,7 +3603,7 @@ const existingStats =
 
   const persistModeScore = async (
     userId: string,
-    activeMode: "quiz" | "offense_build" | "alignment",
+    activeMode: "quiz" | "offense_build" | "alignment" | "film",
     nextModeStats: ModeScoreStats,
   ) => {
     const supabase = createClient();
@@ -3255,7 +3622,13 @@ const existingStats =
     );
 
     if (error) {
-      console.error("Failed to save mode score", error);
+      console.error("Failed to save mode score", {
+        mode: activeMode,
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+        code: error.code,
+      });
     }
   };
 
@@ -3271,9 +3644,14 @@ const existingStats =
     }
   };
 
-  const scoreAttempt = (activeMode: "quiz" | "offense_build" | "alignment", accuracy: number, isCorrect: boolean) => {
+  const scoreAttempt = (
+    activeMode: "quiz" | "offense_build" | "alignment" | "film",
+    accuracy: number,
+    isCorrect: boolean,
+    customAttemptKey?: string,
+  ) => {
     if (!currentUser) return;
-    const attemptKey = `${activeMode}::${formationKey}`;
+    const attemptKey = customAttemptKey ?? `${activeMode}::${formationKey}`;
     if (scoredAttemptKey === attemptKey) return;
 
     const elapsedMs = Math.max(250, Date.now() - attemptStartedAt);
@@ -3325,6 +3703,12 @@ const existingStats =
       scoreAttempt("quiz", quizScore / 3, quizScore === 3);
     }
   }, [showQuizFeedback, quizScore, formationKey]);
+
+  useEffect(() => {
+    if (mode === "film" && filmViewMode === "quiz" && showFilmQuizFeedback && selectedFilmClip) {
+      scoreAttempt("film", filmQuizScore / 2, filmQuizScore === 2, `film::${selectedFilmClip.id}`);
+    }
+  }, [mode, filmViewMode, showFilmQuizFeedback, filmQuizScore, selectedFilmClip?.id]);
 
   useEffect(() => {
     if (showOffenseCheck) {
@@ -3462,12 +3846,12 @@ const existingStats =
 
           <CardContent className="space-y-4">
            {mode === "account" ? (
-  <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
-    <Card className="rounded-2xl shadow-sm">
+  <div className="space-y-4">
+    <Card className="overflow-hidden rounded-2xl border-slate-200 shadow-sm">
       <CardContent className="p-4">
         {currentUser ? (
           <div className="grid gap-3 md:grid-cols-3">
-            <div className="rounded-xl border bg-white p-4">
+            <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-white to-slate-50 p-4">
               <div className="mb-1 flex items-center gap-2 text-xs uppercase tracking-wide text-slate-500">
                 <User className="h-4 w-4" />
                 User
@@ -3476,18 +3860,18 @@ const existingStats =
               <div className="text-sm text-slate-500">Team: {currentUser.teamCode}</div>
             </div>
 
-            <div className="rounded-xl border bg-white p-4">
+            <div className="rounded-xl border border-amber-200 bg-gradient-to-br from-amber-50 to-white p-4">
               <div className="mb-1 flex items-center gap-2 text-xs uppercase tracking-wide text-slate-500">
                 <Trophy className="h-4 w-4" />
                 Points
               </div>
               <div className="text-lg font-semibold text-slate-900">{currentUser.stats.totalPoints}</div>
               <div className="text-sm text-slate-500">
-                Quiz {currentUser.stats.quiz.points} • Offense {currentUser.stats.offense_build.points} • Align {currentUser.stats.alignment.points}
+                Quiz {currentUser.stats.quiz.points} • Offense {currentUser.stats.offense_build.points} • Align {currentUser.stats.alignment.points} • Film {currentUser.stats.film.points}
               </div>
             </div>
 
-            <div className="rounded-xl border bg-white p-4">
+            <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-white to-slate-50 p-4">
               <div className="mb-1 flex items-center gap-2 text-xs uppercase tracking-wide text-slate-500">
                 <Clock3 className="h-4 w-4" />
                 Time Used
@@ -3506,42 +3890,124 @@ const existingStats =
       </CardContent>
     </Card>
 
-    <Card className="rounded-2xl shadow-sm">
-      <CardHeader className="pb-3">
-        <CardTitle className="text-lg font-bold text-slate-900">Mode Leaderboards</CardTitle>
+    <Card className="overflow-hidden rounded-2xl border border-[#35533f] bg-[#2f5b43] shadow-xl">
+      <CardHeader className="border-b border-[#496a54] bg-gradient-to-b from-[#3c6b51] to-[#2b513d] pb-3">
+        <CardTitle className="text-center text-xl font-black uppercase tracking-[0.22em] text-[#f3ead0]">Mode Leaderboards</CardTitle>
       </CardHeader>
-      <CardContent className="space-y-4">
-        {leaderboardBoards.map((board) => (
-          <div key={board.key} className="space-y-2">
-            <div className="text-sm font-semibold text-slate-900">{board.title}</div>
-            {board.entries.length ? (
-              board.entries.map((entry, idx) => (
-                <div key={`${board.key}-${entry.id}`} className="flex items-center justify-between rounded-xl border bg-white px-3 py-2 text-sm">
-                  <div>
-                    <div className="font-semibold text-slate-900">
-                      #{idx + 1} {entry.name}
-                    </div>
-                    <div className="text-slate-500">
-                      {entry.stats[board.key].correct}/{entry.stats[board.key].attempts} correct
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <div className="font-semibold text-slate-900">{entry.stats[board.key].points} pts</div>
-                    <div className="text-slate-500">
-                      {entry.stats[board.key].bestTimeMs
-                        ? `${(entry.stats[board.key].bestTimeMs / 1000).toFixed(1)}s best`
-                        : "—"}
-                    </div>
+      <CardContent className="bg-[#2f5b43]">
+        <div className="grid gap-4 p-1 xl:grid-cols-4 md:grid-cols-2">
+          {leaderboardBoards.map((board) => (
+            <div key={board.key} className={`overflow-hidden rounded-xl border shadow-[inset_0_1px_0_rgba(255,255,255,0.7)] ${board.shellClass}`}>
+              <div className={`border-b bg-gradient-to-b px-4 py-3 text-center ${board.columnClass.split(" ")[0]} ${board.headerClass}`}>
+                <div className="flex justify-center">
+                  <div className="border-b-2 border-[#7b6f42] px-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.24em] text-[#5f5b48]">
+                    {board.title}
                   </div>
                 </div>
-              ))
-            ) : (
-              <div className="rounded-xl border bg-white p-4 text-sm text-slate-600">
-                No scores yet for this team.
+                <div className="mt-1 text-lg font-black uppercase tracking-[0.12em] text-[#23241d]">Leaders</div>
               </div>
-            )}
-          </div>
-        ))}
+              <div className={`grid grid-cols-[48px_minmax(0,1fr)_74px_74px] items-center gap-0 border-b px-2 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] ${board.columnClass}`}>
+                <div className="border-r border-[#b7b09a] px-2 text-center">Pos</div>
+                <div className="border-r border-[#b7b09a] px-3">Player</div>
+                <div className="border-r border-[#b7b09a] px-2 text-center">Pts</div>
+                <div className="px-2 text-center">Best</div>
+              </div>
+              <div>
+                {board.entries.length ? (
+                  board.entries.map((entry, idx) => (
+                    <div
+                      key={`${board.key}-${entry.id}`}
+                      className={
+                        entry.id === currentUser?.id
+                          ? "grid grid-cols-[48px_minmax(0,1fr)_74px_74px] items-center gap-0 border-b border-[#5d8d62] bg-[#dff0dd] text-sm last:border-b-0"
+                          : idx % 2 === 0
+                            ? `grid grid-cols-[48px_minmax(0,1fr)_74px_74px] items-center gap-0 border-b text-sm last:border-b-0 ${board.stripeOddClass}`
+                            : `grid grid-cols-[48px_minmax(0,1fr)_74px_74px] items-center gap-0 border-b text-sm last:border-b-0 ${board.stripeEvenClass}`
+                      }
+                    >
+                      <div className="border-r border-[#d0c8ae] px-2 py-2 text-center">
+                        <div
+                          className={
+                            idx === 0
+                              ? "inline-flex h-7 w-7 items-center justify-center rounded-full border border-[#9b8430] bg-[#d9bf55] text-[11px] font-black text-[#2b2618]"
+                              : idx === 1
+                                ? "inline-flex h-7 w-7 items-center justify-center rounded-full border border-[#8b8d93] bg-[#d7d9dd] text-[11px] font-black text-[#2b2d32]"
+                                : idx === 2
+                                  ? "inline-flex h-7 w-7 items-center justify-center rounded-full border border-[#866243] bg-[#b88458] text-[11px] font-black text-white"
+                                  : "inline-flex h-7 w-7 items-center justify-center rounded-full border border-[#b7b09a] bg-[#efe7cf] text-[11px] font-black text-[#474334]"
+                          }
+                        >
+                          {entry.leaderboardRank}
+                        </div>
+                      </div>
+                      <div className="min-w-0 border-r border-[#d0c8ae] px-3 py-2">
+                        <div className="truncate font-semibold uppercase tracking-[0.04em] text-[#23241d]">
+                          {entry.name}
+                        </div>
+                        <div className="text-[11px] text-[#6d6857]">
+                          {entry.stats[board.key].attempts > 0
+                            ? `${Math.round((entry.stats[board.key].correct / entry.stats[board.key].attempts) * 100)}% correct`
+                            : "0% correct"}
+                          {entry.id === currentUser?.id ? " • You" : ""}
+                        </div>
+                      </div>
+                      <div className="border-r border-[#d0c8ae] px-2 py-2 text-center">
+                        <div className="font-black text-[#202119]">{entry.stats[board.key].points}</div>
+                        <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#78715b]">Pts</div>
+                      </div>
+                      <div className="px-2 py-2 text-center">
+                        <div className="text-[11px] font-semibold text-[#4f4b3f]">
+                          {entry.stats[board.key].bestTimeMs
+                            ? `${(entry.stats[board.key].bestTimeMs / 1000).toFixed(1)}s best`
+                            : "—"}
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="px-4 py-6 text-sm text-[#6e6a5c]">
+                    No scores yet for this team.
+                  </div>
+                )}
+                {board.currentUserEntry ? (
+                  <>
+                    <div className="grid grid-cols-[48px_minmax(0,1fr)_74px_74px] items-center gap-0 border-b border-[#d6cfb7] bg-[#ddd4bc] text-[10px] font-bold uppercase tracking-[0.16em] text-[#6a654f] last:border-b-0">
+                      <div className="col-span-4 px-4 py-1.5 text-center">Your Standing</div>
+                    </div>
+                    <div className="grid grid-cols-[48px_minmax(0,1fr)_74px_74px] items-center gap-0 border-b border-[#5d8d62] bg-[#dff0dd] text-sm last:border-b-0">
+                      <div className="border-r border-[#b5cfb4] px-2 py-2 text-center">
+                        <div className="inline-flex h-7 min-w-7 items-center justify-center rounded-full border border-[#5d8d62] bg-[#bfe0bd] px-2 text-[11px] font-black text-[#244127]">
+                          {board.currentUserEntry.leaderboardRank}
+                        </div>
+                      </div>
+                      <div className="min-w-0 border-r border-[#b5cfb4] px-3 py-2">
+                        <div className="truncate font-semibold uppercase tracking-[0.04em] text-[#23241d]">
+                          {board.currentUserEntry.name}
+                        </div>
+                        <div className="text-[11px] text-[#4c6a4f]">
+                          {board.currentUserEntry.stats[board.key].attempts > 0
+                            ? `${Math.round((board.currentUserEntry.stats[board.key].correct / board.currentUserEntry.stats[board.key].attempts) * 100)}% correct`
+                            : "0% correct"}{" • You"}
+                        </div>
+                      </div>
+                      <div className="border-r border-[#b5cfb4] px-2 py-2 text-center">
+                        <div className="font-black text-[#202119]">{board.currentUserEntry.stats[board.key].points}</div>
+                        <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#4c6a4f]">Pts</div>
+                      </div>
+                      <div className="px-2 py-2 text-center">
+                        <div className="text-[11px] font-semibold text-[#36513a]">
+                          {board.currentUserEntry.stats[board.key].bestTimeMs
+                            ? `${(board.currentUserEntry.stats[board.key].bestTimeMs / 1000).toFixed(1)}s best`
+                            : "—"}
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                ) : null}
+              </div>
+            </div>
+          ))}
+        </div>
       </CardContent>
     </Card>
   </div>
@@ -3653,37 +4119,62 @@ const existingStats =
 
                   <div className="overflow-hidden rounded-2xl border bg-slate-950">
                     {filmViewMode === "quiz" ? (
-                      <div className="flex aspect-video items-center justify-center px-8 text-center text-sm text-slate-300">
-                        Quiz mode is coming next. Study mode is ready now so we can test the clip library and playback flow first.
-                      </div>
-                    ) : selectedFilmClip ? (
-                      filmStarted ? (
-                        <video
-                          key={`${selectedFilmClip.id}-${filmPlaybackNonce}`}
-                          className="aspect-video w-full bg-black"
-                          src={selectedFilmClip.studyUrl}
-                          controls
-                          playsInline
-                          autoPlay
-                          preload="metadata"
-                        />
-                      ) : (
-                        <div className="flex aspect-video flex-col items-center justify-center gap-4 px-8 text-center text-slate-200">
-                          <div className="text-lg font-semibold">Read Key Study Clip</div>
-                          <div className="max-w-xl text-sm text-slate-400">
-                            The clip stays hidden until you start it. In study mode, once it starts you can pause, replay, and inspect the keys in detail.
-                          </div>
-                          <Button
-                            className="rounded-xl"
-                            onClick={() => {
-                              setFilmPlaybackNonce((prev) => prev + 1);
-                              setFilmStarted(true);
+                      selectedFilmClip ? (
+                        filmQuizStarted && !filmQuizFinished ? (
+                          <video
+                            ref={filmQuizVideoRef}
+                            key={`${selectedFilmClip.id}-${filmPlaybackNonce}-quiz`}
+                            className="aspect-video w-full bg-black"
+                            src={filmQuizPlaybackUrl}
+                            autoPlay
+                            playsInline
+                            preload="metadata"
+                            controls={false}
+                            onLoadedMetadata={(e) => {
+                              const start = selectedFilmClip.quizStartSeconds ?? 0;
+                              if (start > 0) {
+                                e.currentTarget.currentTime = start;
+                              }
+                              void e.currentTarget.play().catch(() => {});
                             }}
-                          >
-                            Start Study Clip
-                          </Button>
+                            onTimeUpdate={(e) => {
+                              const end = selectedFilmClip.quizEndSeconds;
+                              if (typeof end === "number" && e.currentTarget.currentTime >= end) {
+                                e.currentTarget.pause();
+                                setFilmQuizFinished(true);
+                              }
+                            }}
+                            onEnded={() => setFilmQuizFinished(true)}
+                          />
+                        ) : (
+                          <div className="flex aspect-video items-center justify-center px-8 text-center text-sm text-slate-300">
+                            {showFilmQuizFeedback
+                              ? "The clip is complete. Review your result on the right and move to the next rep when ready."
+                              : "Press Start Clip to play the rep. The preview stays hidden in quiz mode."}
+                          </div>
+                        )
+                      ) : (
+                        <div className="flex aspect-video items-center justify-center px-8 text-center text-sm text-slate-300">
+                          Add a clip on the right to begin building Film Mode.
                         </div>
                       )
+                    ) : selectedFilmClip ? (
+                      <video
+                        ref={filmStudyVideoRef}
+                        key={`${selectedFilmClip.id}-${filmPlaybackNonce}`}
+                        className="aspect-video w-full bg-black"
+                        src={selectedFilmClip.studyUrl}
+                        controls
+                        playsInline
+                        preload="metadata"
+                        onLoadedMetadata={(e) => {
+                          setFilmStudyDuration(e.currentTarget.duration || 0);
+                          setFilmStudyCurrentTime(e.currentTarget.currentTime || 0);
+                        }}
+                        onTimeUpdate={(e) => {
+                          setFilmStudyCurrentTime(e.currentTarget.currentTime || 0);
+                        }}
+                      />
                     ) : (
                       <div className="flex aspect-video items-center justify-center px-8 text-center text-sm text-slate-300">
                         Add a clip on the right to begin building Film Mode.
@@ -3694,34 +4185,79 @@ const existingStats =
 
                 <div className="space-y-4">
                   <div className="space-y-3 rounded-2xl border bg-white p-4 text-sm text-slate-600">
-                    <div>
-                      <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Clip</div>
-                      <Select
-                        value={selectedFilmClip?.id ?? ""}
-                        onValueChange={(value) => {
-                          setSelectedFilmClipId(value);
-                          setFilmStarted(false);
-                        }}
-                        disabled={!filmClipOptions.length}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder={filmClipOptions.length ? "Select a clip" : "No clips added yet"} />
-                        </SelectTrigger>
-                        <SelectContent className="max-h-80 overflow-y-auto">
-                          {filmClipOptions.map((option) => (
-                            <SelectItem key={option.value} value={option.value}>
-                              {option.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
+                    {filmViewMode === "study" ? (
+                      <div>
+                        <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Clip</div>
+                        <Select
+                          value={selectedFilmClip?.id ?? ""}
+                          onValueChange={(value) => {
+                            setSelectedFilmClipId(value);
+                            setFilmStarted(false);
+                          }}
+                          disabled={!filmClipGroups.length}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder={filmClipGroups.length ? "Select a clip" : "No clips added yet"} />
+                          </SelectTrigger>
+                          <SelectContent className="max-h-80 overflow-y-auto">
+                            {filmClipGroups.map((group) => (
+                              <React.Fragment key={group.runPass}>
+                                <SelectGroup>
+                                  <SelectLabel className="sticky top-0 z-10 bg-white/95 backdrop-blur">
+                                    {group.label}
+                                  </SelectLabel>
+                                  {group.buckets.map((bucketGroup) => (
+                                    <React.Fragment key={`${group.runPass}-${bucketGroup.bucket}`}>
+                                      <div className="px-2 py-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                        {bucketGroup.bucket}
+                                      </div>
+                                      {bucketGroup.options.map((option) => (
+                                        <SelectItem key={option.value} value={option.value}>
+                                          {option.label}
+                                        </SelectItem>
+                                      ))}
+                                    </React.Fragment>
+                                  ))}
+                                </SelectGroup>
+                                {group.runPass !== filmClipGroups[filmClipGroups.length - 1]?.runPass ? (
+                                  <SelectDivider />
+                                ) : null}
+                              </React.Fragment>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    ) : (
+                      <div className="rounded-xl border bg-slate-50 p-3">
+                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Film Quiz</div>
+                        <div className="mt-1 text-sm text-slate-700">
+                          Clips are randomized in quiz mode. Answer only <span className="font-semibold">Run / Pass</span> and <span className="font-semibold">Direction</span> for version 1.
+                        </div>
+                      </div>
+                    )}
 
                       <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
-                        Film Mode is set up for <span className="font-semibold">Read Key</span>. Version 1 study shows the full clip after start; quiz flow and scoring come next.
+                        Film Mode is set up for <span className="font-semibold">Read Key</span>. Study mode shows the full clip immediately, while quiz mode hides the preview until the rep starts.
                       </div>
 
-                    {selectedFilmClip ? (
+                    {filmViewMode === "study" && selectedFilmClip ? (
+                      <div className="rounded-xl border bg-slate-50 p-3 text-sm text-slate-700">
+                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Player Time</div>
+                        <div className="mt-1 font-semibold text-slate-900">
+                          {formatVideoTimestamp(filmStudyCurrentTime)}
+                          {filmStudyDuration > 0 ? ` / ${formatVideoTimestamp(filmStudyDuration)}` : ""}
+                        </div>
+                        <div className="mt-1 text-sm font-semibold text-slate-800">
+                          {filmStudyCurrentTime.toFixed(2)}s
+                          {filmStudyDuration > 0 ? ` / ${filmStudyDuration.toFixed(2)}s` : ""}
+                        </div>
+                        <div className="mt-1 text-xs text-slate-500">
+                          Quiz trim fields accept decimal seconds, so values like <span className="font-semibold">1.24</span> or <span className="font-semibold">2.68</span> are valid.
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {filmViewMode === "study" && selectedFilmClip ? (
                       <div className="space-y-3 rounded-xl border bg-slate-50 p-3">
                         <div className="text-sm font-semibold text-slate-900">Answer Key</div>
                         <div className="grid gap-2 sm:grid-cols-2">
@@ -3742,6 +4278,16 @@ const existingStats =
                             <div className="mt-1 font-semibold text-slate-900">{selectedFilmClip.clipBucket}</div>
                           </div>
                         </div>
+                        {selectedFilmClip.runPass === "pass" ? (
+                          <div className="grid gap-2 sm:grid-cols-2">
+                            <div className="rounded-lg border bg-white px-3 py-2">
+                              <div className="text-xs uppercase tracking-wide text-slate-500">Pass Type</div>
+                              <div className="mt-1 font-semibold capitalize text-slate-900">
+                                {selectedFilmClip.passType ? selectedFilmClip.passType.replace("_", " ") : "—"}
+                              </div>
+                            </div>
+                          </div>
+                        ) : null}
                         {selectedFilmClip.runPass === "run" ? (
                           <div className="grid gap-2 sm:grid-cols-2">
                             <div className="rounded-lg border bg-white px-3 py-2">
@@ -3749,35 +4295,136 @@ const existingStats =
                               <div className="mt-1 font-semibold capitalize text-slate-900">{selectedFilmClip.runScheme || "—"}</div>
                             </div>
                             <div className="rounded-lg border bg-white px-3 py-2">
-                              <div className="text-xs uppercase tracking-wide text-slate-500">Pullers</div>
+                              <div className="text-xs uppercase tracking-wide text-slate-500">Concept</div>
                               <div className="mt-1 font-semibold text-slate-900">
                                 {selectedFilmClip.runScheme === "gap"
-                                  ? `${selectedFilmClip.pullerCount} • ${selectedFilmClip.pullerPositions.join(", ") || "None selected"}`
-                                  : "Not needed"}
+                                  ? selectedFilmClip.gapPullerCount === "1"
+                                    ? selectedFilmClip.gapOnePullerConcept || "—"
+                                    : selectedFilmClip.gapTwoPullerConcept || "—"
+                                  : selectedFilmClip.runScheme === "man"
+                                    ? selectedFilmClip.manConcept || "—"
+                                    : `${selectedFilmClip.clipBucket}`}
                               </div>
                             </div>
+                            {selectedFilmClip.runScheme === "gap" ? (
+                              <div className="rounded-lg border bg-white px-3 py-2 sm:col-span-2">
+                                <div className="text-xs uppercase tracking-wide text-slate-500">Pullers</div>
+                                <div className="mt-1 font-semibold text-slate-900">
+                                  {selectedFilmClip.gapPullerCount
+                                    ? `${selectedFilmClip.gapPullerCount} puller${selectedFilmClip.gapPullerCount === "1" ? "" : "s"}`
+                                    : "—"}
+                                </div>
+                              </div>
+                            ) : null}
                           </div>
                         ) : null}
                         <div className="text-xs text-slate-500">
                           {selectedFilmClip.studyFileName ? ` • Study: ${selectedFilmClip.studyFileName}` : ""}
                           {selectedFilmClip.quizFileName ? ` • Quiz: ${selectedFilmClip.quizFileName}` : ""}
+                          {(selectedFilmClip.quizStartSeconds !== null && selectedFilmClip.quizStartSeconds !== undefined) ||
+                          (selectedFilmClip.quizEndSeconds !== null && selectedFilmClip.quizEndSeconds !== undefined)
+                            ? ` • Quiz Window: ${selectedFilmClip.quizStartSeconds ?? 0}s to ${selectedFilmClip.quizEndSeconds ?? "end"}s`
+                            : ""}
                         </div>
-                        {filmStarted ? (
-                          <div className="grid grid-cols-2 gap-2">
-                            <Button variant="outline" className="rounded-xl" onClick={() => setFilmStarted(false)}>
-                              Hide Clip
-                            </Button>
-                            <Button
-                              className="rounded-xl"
-                              onClick={() => {
-                                setFilmPlaybackNonce((prev) => prev + 1);
-                                setFilmStarted(true);
+                        <div className="grid grid-cols-1 gap-2">
+                          <Button
+                            className="rounded-xl"
+                            onClick={() => {
+                              setFilmPlaybackNonce((prev) => prev + 1);
+                            }}
+                          >
+                            Restart Clip
+                          </Button>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {filmViewMode === "quiz" ? (
+                      <div className="space-y-3 rounded-xl border bg-slate-50 p-3">
+                        <div className="text-sm font-semibold text-slate-900">Your Answers</div>
+                        <div className="grid gap-3">
+                          <div>
+                            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-600">Run / Pass</div>
+                            <Input
+                              className="h-12 border-2 border-slate-300 bg-white text-base"
+                              placeholder="Run or Pass"
+                              value={filmQuizAnswers.runPass}
+                              onChange={(e) => setFilmQuizAnswers((prev) => ({ ...prev, runPass: e.target.value }))}
+                            />
+                          </div>
+                          <div>
+                            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-600">Direction</div>
+                            <Input
+                              className="h-12 border-2 border-slate-300 bg-white text-base"
+                              placeholder="Left or Right"
+                              value={filmQuizAnswers.direction}
+                              onChange={(e) => setFilmQuizAnswers((prev) => ({ ...prev, direction: e.target.value }))}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  if (showFilmQuizFeedback) {
+                                    nextFilmQuizClip();
+                                  } else {
+                                    submitFilmQuiz();
+                                  }
+                                }
                               }}
-                            >
-                              Restart Clip
-                            </Button>
+                            />
+                          </div>
+                        </div>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          <Button className="h-12 rounded-xl text-base" onClick={startFilmQuizClip}>
+                            Start Clip
+                          </Button>
+                          <Button
+                            variant="outline"
+                            className="h-12 rounded-xl text-base"
+                            onClick={submitFilmQuiz}
+                            disabled={!filmQuizFinished}
+                          >
+                            Check Answers
+                          </Button>
+                        </div>
+                        <Button
+                          variant="outline"
+                          className="h-12 w-full rounded-xl text-base"
+                          onClick={() => {
+                            setShowFilmQuizAnswers(true);
+                            setShowFilmQuizFeedback(true);
+                          }}
+                        >
+                          Show Answers
+                        </Button>
+                        {showFilmQuizAnswers && selectedFilmClip ? (
+                          <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                            <div><span className="font-semibold">Run / Pass:</span> {selectedFilmClip.runPass === "run" ? "Run" : "Pass"}</div>
+                            <div><span className="font-semibold">Direction:</span> {FIELD_LABELS[selectedFilmClip.direction]}</div>
                           </div>
                         ) : null}
+                        {showFilmQuizFeedback ? (
+                          <>
+                            <div className="text-sm font-semibold text-slate-700">Score: {filmQuizScore} / 2</div>
+                            {lastScoreSummary.film ? (
+                              <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
+                                <span className="font-semibold">Points earned:</span> {lastScoreSummary.film.awarded}
+                                <div>
+                                  <span className="font-semibold">Film total:</span> {lastScoreSummary.film.total}
+                                </div>
+                              </div>
+                            ) : null}
+                            <div className="space-y-2 text-sm">
+                              <div className="flex items-center justify-between rounded-lg border p-3"><span>Run / Pass</span>{filmQuizResult.runPass ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <XCircle className="h-4 w-4 text-red-600" />}</div>
+                              <div className="flex items-center justify-between rounded-lg border p-3"><span>Direction</span>{filmQuizResult.direction ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <XCircle className="h-4 w-4 text-red-600" />}</div>
+                            </div>
+                            <Button className="h-12 w-full rounded-xl text-base" onClick={nextFilmQuizClip}>
+                              Next Clip
+                            </Button>
+                          </>
+                        ) : (
+                          <div className="rounded-xl border border-dashed p-3 text-sm text-slate-500">
+                            Press <span className="font-semibold">Start Clip</span>, let the rep finish, then check your answers.
+                          </div>
+                        )}
                       </div>
                     ) : null}
                   </div>
@@ -3785,22 +4432,7 @@ const existingStats =
                   {currentUser?.isAdmin ? (
                     <div className="space-y-3 rounded-2xl border bg-white p-4 text-sm text-slate-600">
                       <div className="text-sm font-semibold text-slate-900">Add Study Clip</div>
-                      <div className="grid gap-3">
-                        <div>
-                          <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Clip Bucket</div>
-                          <Select value={filmDraft.clipBucket} onValueChange={(value: string) => setFilmDraft((prev) => ({ ...prev, clipBucket: value }))}>
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent className="max-h-80 overflow-y-auto">
-                              {FILM_BUCKET_OPTIONS.map((option) => (
-                                <SelectItem key={option} value={option}>
-                                  {option}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
+                        <div className="grid gap-3">
                         <div>
                           <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Source</div>
                           <Select value={filmDraft.sourceType} onValueChange={(value: FilmSourceType) => setFilmDraft((prev) => ({ ...prev, sourceType: value }))}>
@@ -3842,6 +4474,27 @@ const existingStats =
                             </Select>
                           </div>
                         </div>
+                        <div className="rounded-xl border bg-slate-50 p-3">
+                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Clip Bucket</div>
+                          <div className="mt-1 text-sm font-semibold text-slate-900">{deriveFilmClipBucket(filmDraft)}</div>
+                        </div>
+                        {filmDraft.runPass === "pass" ? (
+                          <div>
+                            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Pass Type</div>
+                            <Select value={filmDraft.passType} onValueChange={(value: Exclude<FilmPassType, "">) => setFilmDraft((prev) => ({ ...prev, passType: value }))}>
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent className="max-h-80 overflow-y-auto">
+                                {FILM_PASS_TYPE_OPTIONS.map((option) => (
+                                  <SelectItem key={option} value={option}>
+                                    {option === "drop_back" ? "Drop Back" : "Boot"}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        ) : null}
                         {filmDraft.runPass === "run" ? (
                           <>
                             <div>
@@ -3849,8 +4502,10 @@ const existingStats =
                               <Select value={filmDraft.runScheme} onValueChange={(value: Exclude<FilmRunScheme, "">) => setFilmDraft((prev) => ({
                                 ...prev,
                                 runScheme: value,
-                                pullerCount: value === "gap" ? prev.pullerCount : "0",
-                                pullerPositions: value === "gap" ? prev.pullerPositions : [],
+                                gapPullerCount: value === "gap" ? prev.gapPullerCount : "",
+                                gapOnePullerConcept: value === "gap" ? prev.gapOnePullerConcept : "",
+                                gapTwoPullerConcept: value === "gap" ? prev.gapTwoPullerConcept : "",
+                                manConcept: value === "man" ? prev.manConcept : "",
                               }))}>
                                 <SelectTrigger>
                                   <SelectValue />
@@ -3868,16 +4523,17 @@ const existingStats =
                               <>
                                 <div>
                                   <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Puller Count</div>
-                                  <Select value={filmDraft.pullerCount} onValueChange={(value: FilmPullerCount) => setFilmDraft((prev) => ({
+                                  <Select value={filmDraft.gapPullerCount} onValueChange={(value: Exclude<FilmGapPullerCount, "">) => setFilmDraft((prev) => ({
                                     ...prev,
-                                    pullerCount: value,
-                                    pullerPositions: prev.pullerPositions.slice(0, Number(value)),
+                                    gapPullerCount: value,
+                                    gapOnePullerConcept: value === "1" ? prev.gapOnePullerConcept : "",
+                                    gapTwoPullerConcept: value === "2" ? prev.gapTwoPullerConcept : "",
                                   }))}>
                                     <SelectTrigger>
                                       <SelectValue />
                                     </SelectTrigger>
                                     <SelectContent className="max-h-80 overflow-y-auto">
-                                      {FILM_PULLER_COUNT_OPTIONS.map((option) => (
+                                      {FILM_GAP_PULLER_COUNT_OPTIONS.map((option) => (
                                         <SelectItem key={option} value={option}>
                                           {option}
                                         </SelectItem>
@@ -3885,37 +4541,58 @@ const existingStats =
                                     </SelectContent>
                                   </Select>
                                 </div>
-                                <div>
-                                  <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Puller Positions</div>
-                                  <div className="flex flex-wrap gap-2">
-                                    {FILM_PULLER_POSITION_OPTIONS.map((position) => {
-                                      const active = filmDraft.pullerPositions.includes(position);
-                                      return (
-                                        <Button
-                                          key={position}
-                                          type="button"
-                                          variant={active ? "default" : "outline"}
-                                          className="rounded-xl"
-                                          onClick={() =>
-                                            setFilmDraft((prev) => {
-                                              const exists = prev.pullerPositions.includes(position);
-                                              const next = exists
-                                                ? prev.pullerPositions.filter((item) => item !== position)
-                                                : [...prev.pullerPositions, position].slice(0, Number(prev.pullerCount));
-                                              return {
-                                                ...prev,
-                                                pullerPositions: next,
-                                              };
-                                            })
-                                          }
-                                        >
-                                          {position}
-                                        </Button>
-                                      );
-                                    })}
+                                {filmDraft.gapPullerCount === "1" ? (
+                                  <div>
+                                    <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">One Puller Concept</div>
+                                    <Select value={filmDraft.gapOnePullerConcept} onValueChange={(value: Exclude<FilmGapOnePullerConcept, "">) => setFilmDraft((prev) => ({ ...prev, gapOnePullerConcept: value }))}>
+                                      <SelectTrigger>
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent className="max-h-80 overflow-y-auto">
+                                        {FILM_GAP_ONE_PULLER_CONCEPT_OPTIONS.map((option) => (
+                                          <SelectItem key={option} value={option}>
+                                            {option}
+                                          </SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
                                   </div>
-                                </div>
+                                ) : null}
+                                {filmDraft.gapPullerCount === "2" ? (
+                                  <div>
+                                    <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Two Puller Concept</div>
+                                    <Select value={filmDraft.gapTwoPullerConcept} onValueChange={(value: Exclude<FilmGapTwoPullerConcept, "">) => setFilmDraft((prev) => ({ ...prev, gapTwoPullerConcept: value }))}>
+                                      <SelectTrigger>
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent className="max-h-80 overflow-y-auto">
+                                        {FILM_GAP_TWO_PULLER_CONCEPT_OPTIONS.map((option) => (
+                                          <SelectItem key={option} value={option}>
+                                            {option}
+                                          </SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+                                ) : null}
                               </>
+                            ) : null}
+                            {filmDraft.runScheme === "man" ? (
+                              <div>
+                                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Man Concept</div>
+                                <Select value={filmDraft.manConcept} onValueChange={(value: Exclude<FilmManConcept, "">) => setFilmDraft((prev) => ({ ...prev, manConcept: value }))}>
+                                  <SelectTrigger>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent className="max-h-80 overflow-y-auto">
+                                    {FILM_MAN_CONCEPT_OPTIONS.map((option) => (
+                                      <SelectItem key={option} value={option}>
+                                        {option}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
                             ) : null}
                           </>
                         ) : null}
@@ -3935,9 +4612,58 @@ const existingStats =
                             onChange={(e) => setFilmDraft((prev) => ({ ...prev, remoteQuizUrl: e.target.value }))}
                           />
                         </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Quiz Start (sec)</div>
+                            <Input
+                              value={filmDraft.quizStartSeconds}
+                              placeholder="0.00"
+                              onChange={(e) => setFilmDraft((prev) => ({ ...prev, quizStartSeconds: e.target.value }))}
+                            />
+                          </div>
+                          <div>
+                            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Quiz End (sec)</div>
+                            <Input
+                              value={filmDraft.quizEndSeconds}
+                              placeholder="1.50"
+                              onChange={(e) => setFilmDraft((prev) => ({ ...prev, quizEndSeconds: e.target.value }))}
+                            />
+                          </div>
+                        </div>
+                        {filmViewMode === "study" && selectedFilmClip ? (
+                          <div className="grid grid-cols-2 gap-2">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="rounded-xl"
+                              onClick={() =>
+                                setFilmDraft((prev) => ({
+                                  ...prev,
+                                  quizStartSeconds: filmStudyCurrentTime.toFixed(2),
+                                }))
+                              }
+                            >
+                              Use Current for Start
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="rounded-xl"
+                              onClick={() =>
+                                setFilmDraft((prev) => ({
+                                  ...prev,
+                                  quizEndSeconds: filmStudyCurrentTime.toFixed(2),
+                                }))
+                              }
+                            >
+                              Use Current for End
+                            </Button>
+                          </div>
+                        ) : null}
                         <div>
                           <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Upload Study Clip</div>
                           <Input
+                            key={`film-study-file-${filmUploadResetKey}`}
                             type="file"
                             accept="video/mp4,video/quicktime,video/webm"
                             onChange={(e) =>
@@ -3951,6 +4677,7 @@ const existingStats =
                         <div>
                           <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Upload Quiz Clip</div>
                           <Input
+                            key={`film-quiz-file-${filmUploadResetKey}`}
                             type="file"
                             accept="video/mp4,video/quicktime,video/webm"
                             onChange={(e) =>
@@ -3964,8 +4691,30 @@ const existingStats =
                         <Button className="rounded-xl" onClick={addFilmClip}>
                           Save Clip
                         </Button>
+                        {filmSaveNotice ? (
+                          <div
+                            className={
+                              filmSaveNotice.tone === "success"
+                                ? "rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900"
+                                : "rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900"
+                            }
+                          >
+                            {filmSaveNotice.message}
+                            <div
+                              className={
+                                filmSaveNotice.tone === "success"
+                                  ? "mt-1 text-xs text-emerald-700"
+                                  : "mt-1 text-xs text-rose-700"
+                              }
+                            >
+                              {filmSaveNotice.tone === "success"
+                                ? "The upload form has been reset and is ready for the next clip."
+                                : "Nothing was saved, so the current metadata and files are still in place."}
+                            </div>
+                          </div>
+                        ) : null}
                         <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-                          Uploaded files are sent to Supabase Storage and clip metadata is saved to the <span className="font-semibold">film_clips</span> table. The quiz clip is optional, but this is where you can start saving the shortened version now.
+                          Uploaded files are sent to Supabase Storage and clip metadata is saved to the <span className="font-semibold">film_clips</span> table. Quiz start/end times can trim the study clip for quiz mode without needing a separate uploaded quiz file.
                         </div>
                       </div>
                     </div>
@@ -3979,21 +4728,6 @@ const existingStats =
                     <div className="space-y-3 rounded-2xl border bg-white p-4 text-sm text-slate-600">
                       <div className="text-sm font-semibold text-slate-900">Edit Clip Metadata</div>
                       <div className="grid gap-3">
-                        <div>
-                          <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Clip Bucket</div>
-                          <Select value={filmEditDraft.clipBucket} onValueChange={(value: string) => setFilmEditDraft((prev) => ({ ...prev, clipBucket: value }))}>
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent className="max-h-80 overflow-y-auto">
-                              {FILM_BUCKET_OPTIONS.map((option) => (
-                                <SelectItem key={option} value={option}>
-                                  {option}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
                         <div>
                           <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Source</div>
                           <Select value={filmEditDraft.sourceType} onValueChange={(value: FilmSourceType) => setFilmEditDraft((prev) => ({ ...prev, sourceType: value }))}>
@@ -4035,6 +4769,27 @@ const existingStats =
                             </Select>
                           </div>
                         </div>
+                        <div className="rounded-xl border bg-slate-50 p-3">
+                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Clip Bucket</div>
+                          <div className="mt-1 text-sm font-semibold text-slate-900">{deriveFilmClipBucket(filmEditDraft)}</div>
+                        </div>
+                        {filmEditDraft.runPass === "pass" ? (
+                          <div>
+                            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Pass Type</div>
+                            <Select value={filmEditDraft.passType} onValueChange={(value: Exclude<FilmPassType, "">) => setFilmEditDraft((prev) => ({ ...prev, passType: value }))}>
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent className="max-h-80 overflow-y-auto">
+                                {FILM_PASS_TYPE_OPTIONS.map((option) => (
+                                  <SelectItem key={option} value={option}>
+                                    {option === "drop_back" ? "Drop Back" : "Boot"}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        ) : null}
                         {filmEditDraft.runPass === "run" ? (
                           <>
                             <div>
@@ -4042,8 +4797,10 @@ const existingStats =
                               <Select value={filmEditDraft.runScheme} onValueChange={(value: Exclude<FilmRunScheme, "">) => setFilmEditDraft((prev) => ({
                                 ...prev,
                                 runScheme: value,
-                                pullerCount: value === "gap" ? prev.pullerCount : "0",
-                                pullerPositions: value === "gap" ? prev.pullerPositions : [],
+                                gapPullerCount: value === "gap" ? prev.gapPullerCount : "",
+                                gapOnePullerConcept: value === "gap" ? prev.gapOnePullerConcept : "",
+                                gapTwoPullerConcept: value === "gap" ? prev.gapTwoPullerConcept : "",
+                                manConcept: value === "man" ? prev.manConcept : "",
                               }))}>
                                 <SelectTrigger>
                                   <SelectValue />
@@ -4061,16 +4818,17 @@ const existingStats =
                               <>
                                 <div>
                                   <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Puller Count</div>
-                                  <Select value={filmEditDraft.pullerCount} onValueChange={(value: FilmPullerCount) => setFilmEditDraft((prev) => ({
+                                  <Select value={filmEditDraft.gapPullerCount} onValueChange={(value: Exclude<FilmGapPullerCount, "">) => setFilmEditDraft((prev) => ({
                                     ...prev,
-                                    pullerCount: value,
-                                    pullerPositions: prev.pullerPositions.slice(0, Number(value)),
+                                    gapPullerCount: value,
+                                    gapOnePullerConcept: value === "1" ? prev.gapOnePullerConcept : "",
+                                    gapTwoPullerConcept: value === "2" ? prev.gapTwoPullerConcept : "",
                                   }))}>
                                     <SelectTrigger>
                                       <SelectValue />
                                     </SelectTrigger>
                                     <SelectContent className="max-h-80 overflow-y-auto">
-                                      {FILM_PULLER_COUNT_OPTIONS.map((option) => (
+                                      {FILM_GAP_PULLER_COUNT_OPTIONS.map((option) => (
                                         <SelectItem key={option} value={option}>
                                           {option}
                                         </SelectItem>
@@ -4078,39 +4836,108 @@ const existingStats =
                                     </SelectContent>
                                   </Select>
                                 </div>
-                                <div>
-                                  <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Puller Positions</div>
-                                  <div className="flex flex-wrap gap-2">
-                                    {FILM_PULLER_POSITION_OPTIONS.map((position) => {
-                                      const active = filmEditDraft.pullerPositions.includes(position);
-                                      return (
-                                        <Button
-                                          key={position}
-                                          type="button"
-                                          variant={active ? "default" : "outline"}
-                                          className="rounded-xl"
-                                          onClick={() =>
-                                            setFilmEditDraft((prev) => {
-                                              const exists = prev.pullerPositions.includes(position);
-                                              const next = exists
-                                                ? prev.pullerPositions.filter((item) => item !== position)
-                                                : [...prev.pullerPositions, position].slice(0, Number(prev.pullerCount));
-                                              return {
-                                                ...prev,
-                                                pullerPositions: next,
-                                              };
-                                            })
-                                          }
-                                        >
-                                          {position}
-                                        </Button>
-                                      );
-                                    })}
+                                {filmEditDraft.gapPullerCount === "1" ? (
+                                  <div>
+                                    <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">One Puller Concept</div>
+                                    <Select value={filmEditDraft.gapOnePullerConcept} onValueChange={(value: Exclude<FilmGapOnePullerConcept, "">) => setFilmEditDraft((prev) => ({ ...prev, gapOnePullerConcept: value }))}>
+                                      <SelectTrigger>
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent className="max-h-80 overflow-y-auto">
+                                        {FILM_GAP_ONE_PULLER_CONCEPT_OPTIONS.map((option) => (
+                                          <SelectItem key={option} value={option}>
+                                            {option}
+                                          </SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
                                   </div>
-                                </div>
+                                ) : null}
+                                {filmEditDraft.gapPullerCount === "2" ? (
+                                  <div>
+                                    <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Two Puller Concept</div>
+                                    <Select value={filmEditDraft.gapTwoPullerConcept} onValueChange={(value: Exclude<FilmGapTwoPullerConcept, "">) => setFilmEditDraft((prev) => ({ ...prev, gapTwoPullerConcept: value }))}>
+                                      <SelectTrigger>
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent className="max-h-80 overflow-y-auto">
+                                        {FILM_GAP_TWO_PULLER_CONCEPT_OPTIONS.map((option) => (
+                                          <SelectItem key={option} value={option}>
+                                            {option}
+                                          </SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+                                ) : null}
                               </>
                             ) : null}
+                            {filmEditDraft.runScheme === "man" ? (
+                              <div>
+                                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Man Concept</div>
+                                <Select value={filmEditDraft.manConcept} onValueChange={(value: Exclude<FilmManConcept, "">) => setFilmEditDraft((prev) => ({ ...prev, manConcept: value }))}>
+                                  <SelectTrigger>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent className="max-h-80 overflow-y-auto">
+                                    {FILM_MAN_CONCEPT_OPTIONS.map((option) => (
+                                      <SelectItem key={option} value={option}>
+                                        {option}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            ) : null}
                           </>
+                        ) : null}
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Quiz Start (sec)</div>
+                            <Input
+                              value={filmEditDraft.quizStartSeconds}
+                              placeholder="0.00"
+                              onChange={(e) => setFilmEditDraft((prev) => ({ ...prev, quizStartSeconds: e.target.value }))}
+                            />
+                          </div>
+                          <div>
+                            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Quiz End (sec)</div>
+                            <Input
+                              value={filmEditDraft.quizEndSeconds}
+                              placeholder="1.50"
+                              onChange={(e) => setFilmEditDraft((prev) => ({ ...prev, quizEndSeconds: e.target.value }))}
+                            />
+                          </div>
+                        </div>
+                        {filmViewMode === "study" && selectedFilmClip ? (
+                          <div className="grid grid-cols-2 gap-2">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="rounded-xl"
+                              onClick={() =>
+                                setFilmEditDraft((prev) => ({
+                                  ...prev,
+                                  quizStartSeconds: filmStudyCurrentTime.toFixed(2),
+                                }))
+                              }
+                            >
+                              Use Current for Start
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="rounded-xl"
+                              onClick={() =>
+                                setFilmEditDraft((prev) => ({
+                                  ...prev,
+                                  quizEndSeconds: filmStudyCurrentTime.toFixed(2),
+                                }))
+                              }
+                            >
+                              Use Current for End
+                            </Button>
+                          </div>
                         ) : null}
                         <Button className="rounded-xl" onClick={saveFilmMetadata}>
                           Save Metadata
