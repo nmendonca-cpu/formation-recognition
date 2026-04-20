@@ -9,9 +9,12 @@ import { CheckCircle2, Clock3, Shuffle, Trophy, User, XCircle } from "lucide-rea
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
-type AppMode = "study" | "alignment" | "offense_build" | "quiz" | "editor" | "account";
+type AppMode = "study" | "alignment" | "offense_build" | "film" | "quiz" | "editor" | "account";
 type FrontMode = "4-3" | "4-4";
 type AlignmentViewMode = "study" | "quiz";
+type OffenseBuildViewMode = "study" | "quiz";
+type FilmViewMode = "study" | "quiz";
+type FilmSubmode = "read_key";
 type Side = "left" | "right";
 type PlaybookKey = "Foothill" | "Pro" | "Wing T";
 type Family = "Spread" | "I" | "12p" | "Wing T";
@@ -90,6 +93,44 @@ type ScoreSummary = {
   total: number;
 };
 
+type FilmSourceType = "Personal" | "Drive" | "Hudl" | "Other";
+type FilmRunScheme = "gap" | "zone" | "man" | "";
+type FilmPullerCount = "0" | "1" | "2" | "3";
+type FilmPullerPosition = "LG" | "C" | "RG" | "LT" | "RT" | "TE" | "H" | "Y" | "FB";
+
+type FilmClip = {
+  id: string;
+  title: string;
+  clipBucket: string;
+  sourceType: FilmSourceType;
+  runPass: "run" | "pass";
+  direction: Side;
+  runScheme: FilmRunScheme;
+  pullerCount: FilmPullerCount;
+  pullerPositions: FilmPullerPosition[];
+  studyUrl: string;
+  quizUrl?: string | null;
+  studyStoragePath?: string | null;
+  quizStoragePath?: string | null;
+  kind: "remote" | "local" | "supabase";
+  studyFileName?: string;
+  quizFileName?: string;
+};
+
+type FilmClipDraft = {
+  clipBucket: string;
+  sourceType: FilmSourceType;
+  runPass: "run" | "pass";
+  direction: Side;
+  runScheme: FilmRunScheme;
+  pullerCount: FilmPullerCount;
+  pullerPositions: FilmPullerPosition[];
+  remoteStudyUrl: string;
+  remoteQuizUrl: string;
+  studyFile: File | null;
+  quizFile: File | null;
+};
+
 
 type CustomLandmarkDraft = {
   label: string;
@@ -105,28 +146,60 @@ const MODE_OPTIONS: { value: AppMode; label: string; title: string }[] = [
   { value: "study", label: "Formation Trainer", title: "FORMATION TRAINER" },
   { value: "alignment", label: "Alignment Mode", title: "DEFENSIVE ALIGNMENT" },
   { value: "offense_build", label: "Offensive Mode", title: "OFFENSIVE FORMATION" },
+  { value: "film", label: "Film Mode", title: "FILM MODE" },
   { value: "quiz", label: "Quiz Mode", title: "QUIZ MODE" },
   { value: "editor", label: "Formation Editor", title: "FORMATION EDITOR" },
   { value: "account", label: "Account / Leaderboard", title: "ACCOUNT / LEADERBOARD" },
 ];
 const VIEW_STATE_STORAGE_KEY = "formation-recognition-view-state";
+const FILM_CLIPS_STORAGE_KEY = "formation-recognition-film-clips";
+const FILM_BUCKET = "film-clips";
+const FILM_SOURCE_OPTIONS: FilmSourceType[] = ["Personal", "Drive", "Hudl", "Other"];
+const FILM_RUN_SCHEME_OPTIONS: Exclude<FilmRunScheme, "">[] = ["gap", "zone", "man"];
+const FILM_PULLER_COUNT_OPTIONS: FilmPullerCount[] = ["0", "1", "2", "3"];
+const FILM_PULLER_POSITION_OPTIONS: FilmPullerPosition[] = ["LG", "C", "RG", "LT", "RT", "TE", "H", "Y", "FB"];
+const FILM_BUCKET_OPTIONS = [
+  "Zone Left",
+  "Zone Right",
+  "GH Left",
+  "GH Right",
+  "GT Left",
+  "GT Right",
+  "Lead Left",
+  "Lead Right",
+  "Power Left",
+  "Power Right",
+  "Counter Left",
+  "Counter Right",
+  "Boot Left",
+  "Boot Right",
+  "Pass Left",
+  "Pass Right",
+  "Screen Left",
+  "Screen Right",
+] as const;
 
 const PLAYBOOK_OPTIONS: PlaybookKey[] = ["Foothill", "Pro", "Wing T"];
 const PERSONNEL_OPTIONS = ["Any", "11", "12", "21"] as const;
 const ALIGNMENT_BASE_CALLS = ["Doubles", "Trips", "Trey", "Troop", "Bunch", "B Trips", "B Trey", "B Doubles", "Quad", "Dog"] as const;
 const ALIGNMENT_EMPTY_BASE_CALLS = ["Doubles", "Trips", "Trey", "Troop", "Bunch"] as const;
 const CUSTOM_ALIGNMENT_LAYERS = ["dl", "lb", "cb", "db"] as const;
+const DEFAULT_FILM_CLIPS: FilmClip[] = [];
 const ALIGNMENT_CALLS = [
   ...ALIGNMENT_BASE_CALLS.flatMap((base) => [
     `${base} Left`, `${base} Right`, `${base} Left King`, `${base} Right King`, `${base} Left Queen`, `${base} Right Queen`,
   ]),
   ...ALIGNMENT_EMPTY_BASE_CALLS.flatMap((base) => [`${base} Empty Left`, `${base} Empty Right`]),
+  "Bunch Closed Left", "Bunch Closed Right",
 ] as const;
 const WING_T_CALLS = [
   "Wing T Far Right", "Wing T Far Left",
   "Wing T Near Right", "Wing T Near Left",
   "Wing T Unbalanced Far Right", "Wing T Unbalanced Far Left",
   "Wing T Unbalanced Near Right", "Wing T Unbalanced Near Left",
+  "Double Wing Right", "Double Wing Left",
+  "Wing T Closed Far Right", "Wing T Closed Far Left",
+  "Wing T Closed Near Right", "Wing T Closed Near Left",
 ] as const;
 const PRO_CALLS = [
   "I Dot Right", "I Dot Left", "I Far Right", "I Far Left", "I Near Right", "I Near Left",
@@ -360,7 +433,8 @@ function buildFoothillFormation(call: string, wide = false): FormationMeta {
   const isKing = call.includes("King");
   const isQueen = call.includes("Queen");
   const isGun = !isEmpty && (isKing || isQueen);
-  const base = call.startsWith("B ") ? `${call.split(" ")[0]} ${call.split(" ")[1]}` : call.split(" ")[0];
+  const foothillBaseCalls = ["Bunch Closed", "B Trips", "B Trey", "B Doubles", "Trips", "Trey", "Troop", "Bunch", "Doubles", "Dog", "Quad"] as const;
+  const base = foothillBaseCalls.find((baseCall) => call.startsWith(baseCall)) ?? (call.startsWith("B ") ? `${call.split(" ")[0]} ${call.split(" ")[1]}` : call.split(" ")[0]);
   const players: PlayerDot[] = [...baseLine(wide), { id: "QB", x: 50, y: isGun || isEmpty ? QB_GUN_Y : QB_UNDER_Y }];
   const add = (id: string, x: number, y: number) => players.push({ id, x, y });
 
@@ -405,6 +479,12 @@ function buildFoothillFormation(call: string, wide = false): FormationMeta {
         add("X", getWide(other), LOS_Y);
       }
       break;
+    case "Bunch Closed":
+      add("Y", getAttached(side, wide), LOS_Y);
+      add("H", getBunchWing(other, wide), OFF_Y);
+      add("X", getBunchMiddle(other, wide), LOS_Y);
+      add("Z", getBunchOutside(other, wide), OFF_Y);
+      break;
     case "Doubles":
       // Y/Z stay on the called side. X/H are opposite the called side, which becomes strong pass.
       add("Y", getAttached(side, wide), LOS_Y);
@@ -414,7 +494,7 @@ function buildFoothillFormation(call: string, wide = false): FormationMeta {
       break;
     case "Dog": {
       // H is opposite the called side in a true wing alignment so wing-surface detection can identify it cleanly.
-      const hX = getWing(other, wide);
+      const hX = getAttached(other, wide);
       add("Y", getAttached(side, wide), LOS_Y);
       add("Z", getWide(side), OFF_Y);
       add("H", hX, WING_Y);
@@ -423,7 +503,7 @@ function buildFoothillFormation(call: string, wide = false): FormationMeta {
     }
     case "B Trips":
       add("Y", getAttached(side, wide), LOS_Y);
-      add("H", getWing(other, wide), WING_Y);
+      add("H", getAttached(other, wide), WING_Y);
       add("Z", getSlot(other, wide), OFF_Y);
       add("X", getWide(other), LOS_Y);
       break;
@@ -490,23 +570,38 @@ function buildWingTFormation(call: string, wide = false): FormationMeta {
   const isUnbalanced = call.includes("Unbalanced");
   const isFar = call.includes("Far");
   const isNear = call.includes("Near");
+  const isDoubleWing = call.startsWith("Double Wing");
+  const isClosed = call.startsWith("Wing T Closed");
 
   const players: PlayerDot[] = [...baseLine(wide), { id: "QB", x: 50, y: QB_UNDER_Y }];
   const add = (id: string, x: number, y: number) => players.push({ id, x, y });
   const xs = getLineXs(wide);
+  const useFarBackfield = isFar;
+  const useNearBackfield = isNear;
 
   add("RB", 50, RB_DOT_Y);
 
-  const fbX = isFar ? (side === "right" ? xs[0] : xs[4]) : isNear ? (side === "right" ? xs[4] : xs[0]) : 50;
-  add("F", fbX, RB_DOT_Y);
+  if (!isDoubleWing) {
+    const fbX = useFarBackfield ? (side === "right" ? xs[0] : xs[4]) : useNearBackfield ? (side === "right" ? xs[4] : xs[0]) : 50;
+    add("F", fbX, RB_DOT_Y);
+  }
 
   add("Y", getAttached(side, wide), LOS_Y);
-  add("Z", getWing(side, wide), WING_Y);
 
-  if (isUnbalanced) {
-    add("X", getWide(side), LOS_Y);
-  } else {
+  if (isDoubleWing) {
+    add("Z", getWing(side, wide), WING_Y);
+    add("H", getAttached(other, wide), WING_Y);
     add("X", getWide(other), LOS_Y);
+  } else if (isClosed) {
+    add("Z", getSlot(other, wide), OFF_Y);
+    add("X", getWide(other), LOS_Y);
+  } else {
+    add("Z", getWing(side, wide), WING_Y);
+    if (isUnbalanced) {
+      add("X", getWide(side), LOS_Y);
+    } else {
+      add("X", getWide(other), LOS_Y);
+    }
   }
 
   const passStrength = computePassStrengthFromEligibles(players, side, {
@@ -811,10 +906,23 @@ function getAlignmentLandmarks(formation: FormationMeta): Landmark[] {
     }
   };
 
-  addLbTeRule(inlineLeft, inlineLeft && wingLeft ? wingLeft : null, "left");
-  addLbTeRule(inlineRight, inlineRight && wingRight ? wingRight : null, "right");
+  addLbTeRule(inlineLeft, wingLeft, "left");
+  addLbTeRule(inlineRight, wingRight, "right");
 
   const isLbApexPlayer = (p: PlayerDot) => !inlineTeIds.has(p.id) && !isWingLikePlayer(p);
+  const hasConsiderableApexSpace = (a: PlayerDot | number, b: PlayerDot | number) => {
+    const aX = typeof a === "number" ? a : a.x;
+    const bX = typeof b === "number" ? b : b.x;
+    return Math.abs(aX - bX) >= 6;
+  };
+  const isTightTeWingCombo = (a: PlayerDot | null, b: PlayerDot | null) => {
+    if (!a || !b) return false;
+    const aInline = inlineTeIds.has(a.id);
+    const bInline = inlineTeIds.has(b.id);
+    const aWing = isWingLikePlayer(a);
+    const bWing = isWingLikePlayer(b);
+    return (aInline && bWing) || (bInline && aWing);
+  };
 
   skill.forEach((p, idx) => {
     const spread = 1.9 + (idx % 3) * 0.25;
@@ -911,7 +1019,9 @@ function getAlignmentLandmarks(formation: FormationMeta): Landmark[] {
     if (!bunchOnSide && isLbApexPlayer(next)) {
       push(`lb-${side}-apex`, apexX, LB_Y, "Apex", "lb");
     }
-    push(`db-${side}-apex`, apexX, DB_Y, "Apex", "db");
+    if (hasConsiderableApexSpace(emolosX, next) && !(inlineEmolos && isTightTeWingCombo(inlineEmolos, next))) {
+      push(`db-${side}-apex`, apexX, DB_Y, "Apex", "db");
+    }
   };
   addApex("left");
   addApex("right");
@@ -942,6 +1052,7 @@ function getAlignmentLandmarks(formation: FormationMeta): Landmark[] {
         const a = group[i];
         const b = group[i + 1];
         if (isWingLike(a) || isWingLike(b)) continue;
+        if (!hasConsiderableApexSpace(a, b)) continue;
         const extraApexX = (a.x + b.x) / 2;
         if (!bunchOnSide && isLbApexPlayer(a) && isLbApexPlayer(b)) {
           push(`lb-${side}-apex-extra-${a.id}-${b.id}`, extraApexX, LB_Y, "Apex", "lb");
@@ -958,6 +1069,9 @@ function getAlignmentLandmarks(formation: FormationMeta): Landmark[] {
     if (!numberOne || !numberTwo) return;
     if (!bunchOnSide && isLbApexPlayer(numberOne) && isLbApexPlayer(numberTwo)) {
       push(`lb-${side}-apex-12`, getMidpoint(numberOne.x, numberTwo.x), LB_Y, "Apex", "lb");
+    }
+    if (hasConsiderableApexSpace(numberOne, numberTwo) && !isTightTeWingCombo(numberOne, numberTwo)) {
+      push(`db-${side}-apex-12`, getMidpoint(numberOne.x, numberTwo.x), DB_Y, "Apex", "db");
     }
   });
 
@@ -1060,6 +1174,12 @@ function getWingSurface(formation: FormationMeta, side: Side) {
   const players = findEligibleOnSide(formation, side)
     .filter((p) => Math.abs(p.y - WING_Y) < 0.75 && Math.abs(p.x - tackleX) <= 10)
     .sort((a, b) => Math.abs(a.x - tackleX) - Math.abs(b.x - tackleX));
+  if (!players.length && formation.name.includes("B Trips")) {
+    const attachedWing = findEligibleOnSide(formation, side)
+      .filter((p) => p.id === "H" && Math.abs(p.y - WING_Y) < 1.25 && Math.abs(p.x - tackleX) <= 10)
+      .sort((a, b) => Math.abs(a.x - tackleX) - Math.abs(b.x - tackleX));
+    return attachedWing[0] || null;
+  }
   return players[0] || null;
 }
 
@@ -1089,8 +1209,7 @@ function getBunchNumberedReceivers(formation: FormationMeta, side: Side) {
 function isBunchFamilyOnSide(formation: FormationMeta, side: Side) {
   const name = formation.name.toLowerCase();
   if (!name.includes("bunch")) return false;
-  const runSide = formation.runStrength;
-  return side === runSide;
+  return side === formation.passStrength;
 }
 
 function hasTrueWideReceiverOnSide(formation: FormationMeta, side: Side) {
@@ -1217,8 +1336,16 @@ function getAlignmentSpecialCases(formation: FormationMeta, frontMode: FrontMode
 
   const mikeStrengthEligibles = findTrueEligiblesOnSide(formation, passStrength).length;
   const closedAndBoss43Notes = frontMode === "4-3" && Boolean((isClosedSurfaceOnlySide(formation, "left") && !isClosedSurfaceOnlySide(formation, "right")) || (isClosedSurfaceOnlySide(formation, "right") && !isClosedSurfaceOnlySide(formation, "left"))) && bossIlbs;
+  const closedThreeByOne44Notes =
+    frontMode === "4-4" &&
+    ((isClosedSurfaceOnlySide(formation, "left") && !isClosedSurfaceOnlySide(formation, "right") && findTrueEligiblesOnSide(formation, "right").length === 3) ||
+      (isClosedSurfaceOnlySide(formation, "right") && !isClosedSurfaceOnlySide(formation, "left") && findTrueEligiblesOnSide(formation, "left").length === 3));
   if (closedAndBoss43Notes) {
     notes.push("Closed + boss: Mike and Will to 20T toward TE/FB.");
+  } else if (closedThreeByOne44Notes) {
+    notes.push("Closed 3x1 in 4-4: Mike 60T and Will 30T to pass strength, BS 10T weak.");
+  } else if ((leftCount === 3 && isClosedSurfaceOnlySide(formation, "right")) || (rightCount === 3 && isClosedSurfaceOnlySide(formation, "left"))) {
+    notes.push("Closed 3x1: Mike 60T if #3 is attached, Apex if #3 is flexed.");
   } else if (mikeStrengthEligibles === 3) {
     notes.push("Mike: to strength. 60T if #3 attached, apex if #3 flexed.");
   } else {
@@ -1238,7 +1365,7 @@ function getAlignmentSpecialCases(formation: FormationMeta, frontMode: FrontMode
 
   if (is22) {
     notes.push("2x2: ILBs in open gap.");
-    notes.push("2x2: safeties inside slot #2, outside attached #2.");
+    notes.push("2-eligible side: safety inside #2 if on hash/wider, outside if inside hash.");
   }
 
   if (is31) {
@@ -1282,6 +1409,34 @@ function getAlignmentAnswerKey(formation: FormationMeta, landmarks: Landmark[], 
       .filter((p) => p.layer === layer && p.label === label && Math.abs(p.x - player.x) <= 6)
       .sort((a, b) => Math.abs(a.x - player.x) - Math.abs(b.x - player.x));
     return pts[0] || null;
+  };
+  const getDbApexBetween = (side: Side, a: PlayerDot | null, b: PlayerDot | null) => {
+    if (!a || !b) return null;
+    const targetX = getMidpoint(a.x, b.x);
+    const pts = landmarks
+      .filter((p) => p.layer === "db" && p.label === "Apex")
+      .filter((p) => (side === "left" ? p.x < 50 : p.x > 50))
+      .sort((pA, pB) => Math.abs(pA.x - targetX) - Math.abs(pB.x - targetX));
+    return pts[0] || null;
+  };
+  const getLbApexBetween = (side: Side, a: PlayerDot | number | null, b: PlayerDot | number | null) => {
+    if (a == null || b == null) return null;
+    const aX = typeof a === "number" ? a : a.x;
+    const bX = typeof b === "number" ? b : b.x;
+    const targetX = getMidpoint(aX, bX);
+    const pts = landmarks
+      .filter((p) => p.layer === "lb" && p.label === "Apex")
+      .filter((p) => (side === "left" ? p.x < 50 : p.x > 50))
+      .sort((pA, pB) => Math.abs(pA.x - targetX) - Math.abs(pB.x - targetX));
+    return pts[0] || null;
+  };
+  const getSafetyShadeForTwoEligibleSide = (side: Side, numberTwo: PlayerDot | null) => {
+    if (!numberTwo) return null;
+    const hash = findLandmarkByLabel(landmarks, "db", "Hash", side);
+    if (!hash) return getShade(numberTwo, "db", "I");
+
+    const onHashOrWider = side === "left" ? numberTwo.x <= hash.x + 0.2 : numberTwo.x >= hash.x - 0.2;
+    return getShade(numberTwo, "db", onHashOrWider ? "I" : "O");
   };
 
   const strongInline = getInlineSurface(formation, runStrength);
@@ -1340,10 +1495,20 @@ function getAlignmentAnswerKey(formation: FormationMeta, landmarks: Landmark[], 
   const closedNoBoss44 = frontMode === "4-4" && Boolean(cometSide) && !bossIlbs;
 
   const strongBunch = isBunchFamilyOnSide(formation, mikeSide) ? getBunchNumberedReceivers(formation, mikeSide) : null;
+  const mikeNumberThree = getNumberThreeReceiver(formation, mikeSide);
+  const mikeTackleX = mikeSide === "left" ? ALIGNMENT_OLINE_X[0] : ALIGNMENT_OLINE_X[4];
 
   const mikeStrengthEligibles = findTrueEligiblesOnSide(formation, mikeSide).length;
   const mikeLandmark = (() => {
-    if (closedThreeByOne) return findLandmarkByLabel(landmarks, "lb", "50T", mikeSide);
+    if (shouldMikeApexFlexedThree(formation, mikeSide)) {
+      return getLbApexBetween(mikeSide, mikeNumberThree, mikeTackleX) || findLandmarkByLabel(landmarks, "lb", "Apex", mikeSide);
+    }
+    if (frontMode === "4-4" && closedThreeByOne) {
+      return findLandmarkByLabel(landmarks, "lb", "60T", mikeSide) || findLandmarkByLabel(landmarks, "lb", "50T", mikeSide);
+    }
+    if (closedThreeByOne) {
+      return findLandmarkByLabel(landmarks, "lb", "60T", mikeSide) || findLandmarkByLabel(landmarks, "lb", "50T", mikeSide);
+    }
     if (nonClosedBoss43) return findLandmarkByLabel(landmarks, "lb", "20T", mikeSide) || findLandmarkByLabel(landmarks, "lb", mikeOnRunSide ? "10T" : "30T", mikeSide);
     if (nonClosedBoss44) return findLandmarkByLabel(landmarks, "lb", "20T", mikeSide) || findLandmarkByLabel(landmarks, "lb", mikeOnRunSide ? "10T" : "30T", mikeSide);
     if (closedAndBoss43) return findLandmarkByLabel(landmarks, "lb", "20T", mikeSide) || findLandmarkByLabel(landmarks, "lb", mikeOnRunSide ? "10T" : "30T", mikeSide);
@@ -1363,6 +1528,10 @@ function getAlignmentAnswerKey(formation: FormationMeta, landmarks: Landmark[], 
     const strengthEligibleCount = findTrueEligiblesOnSide(formation, passStrength).length;
 
     // 🔥 FIX: Proper 4-3 Closed Boss behavior (split 20Ts)
+    if (frontMode === "4-4" && closedThreeByOne) {
+      return findLandmarkByLabel(landmarks, "lb", "30T", passStrength) || findLandmarkByLabel(landmarks, "lb", "30T", willSide);
+    }
+
     if (closedThreeByOne) {
       return findLandmarkByLabel(landmarks, "lb", "10T", passStrength) || findLandmarkByLabel(landmarks, "lb", "10T", willSide);
     }
@@ -1549,30 +1718,25 @@ function getAlignmentAnswerKey(formation: FormationMeta, landmarks: Landmark[], 
       if (bc) answer.BC = { x: bc.x, y: bc.y };
     }
 
-    applyOverhangRule(passAway, "BS");
+    if (closedThreeByOne) {
+      const bs = findLandmarkByLabel(landmarks, "lb", "10T", passAway);
+      if (bs) answer.BS = { x: bs.x, y: bs.y };
+    } else {
+      applyOverhangRule(passAway, "BS");
+    }
   } else {
-    if (cometSide && cometSide === passStrength) {
+    if (strongBunch?.numberThree) {
+      const edge = findLandmarkByLabel(landmarks, "db", "Edge", passStrength);
+      if (edge) answer.FS = { x: edge.x, y: edge.y };
+    } else if (cometSide && cometSide === passStrength) {
       const cometFirstEligible = getNumberTwoReceiver(formation, cometSide) || getOutsideReceiver(formation, cometSide) || getInlineSurface(formation, cometSide) || getWingSurface(formation, cometSide);
       const fs = getShade(cometFirstEligible, "db", "I");
       if (fs) answer.FS = { x: fs.x, y: fs.y };
-    } else if (strongBunch?.numberThree) {
-      const fs = getShade(strongBunch.numberThree, "db", "H");
+    } else if (fsStrengthEligibleCount === 3 && fsNumberTwo && fsNumberThree) {
+      const fs = getDbApexBetween(passStrength, fsNumberTwo, fsNumberThree) || (fsApex && (is31 || is32) ? fsApex : null);
       if (fs) answer.FS = { x: fs.x, y: fs.y };
-    } else if (is22) {
-      if (fsSlot) {
-        const fs = getShade(fsSlot, "db", "I");
-        if (fs) answer.FS = { x: fs.x, y: fs.y };
-      } else if (fsNumberTwo) {
-        const fs = getShade(fsNumberTwo, "db", "O");
-        if (fs) answer.FS = { x: fs.x, y: fs.y };
-      }
-    } else if (fsStrengthEligibleCount === 3 && fsNumberThree && !isAttachedOrWingNumberThree(formation, passStrength)) {
-      const fs = getShade(fsNumberThree, "db", "I");
-      if (fs) answer.FS = { x: fs.x, y: fs.y };
-    } else if (fsApex && (is31 || is32)) {
-      answer.FS = { x: fsApex.x, y: fsApex.y };
-    } else if (fsInline && fcTarget) {
-      const fs = getShade(fsInline, "db", "O");
+    } else if (fsStrengthEligibleCount === 2) {
+      const fs = getSafetyShadeForTwoEligibleSide(passStrength, fsNumberTwo);
       if (fs) answer.FS = { x: fs.x, y: fs.y };
     } else {
       const edge = findLandmarkByLabel(landmarks, "db", "Edge", passStrength);
@@ -1584,27 +1748,17 @@ function getAlignmentAnswerKey(formation: FormationMeta, landmarks: Landmark[], 
       if (bc) answer.BC = { x: bc.x, y: bc.y };
     }
 
+    const bsWeakEligibleCount = findTrueEligiblesOnSide(formation, passAway).length;
     if (cometSide && cometSide === passAway) {
       const cometFirstEligible = getNumberTwoReceiver(formation, cometSide) || getOutsideReceiver(formation, cometSide) || getInlineSurface(formation, cometSide) || getWingSurface(formation, cometSide);
       const bs = getShade(cometFirstEligible, "db", "I");
       if (bs) answer.BS = { x: bs.x, y: bs.y };
-    } else if (formation.name.includes("Empty") && is32) {
-      const bs = getShade(bsNumberTwo, "db", "I");
+    } else if (bsWeakEligibleCount === 2) {
+      const bs = getSafetyShadeForTwoEligibleSide(passAway, bsNumberTwo);
       if (bs) answer.BS = { x: bs.x, y: bs.y };
-    } else if (is22) {
-      if (bsSlot) {
-        const bs = getShade(bsSlot, "db", "I");
-        if (bs) answer.BS = { x: bs.x, y: bs.y };
-      } else if (bsNumberTwo) {
-        const bs = getShade(bsNumberTwo, "db", "O");
-        if (bs) answer.BS = { x: bs.x, y: bs.y };
-      }
     } else if (is31) {
       const edge = findLandmarkByLabel(landmarks, "db", "Edge", passAway);
       if (edge) answer.BS = { x: edge.x, y: edge.y };
-    } else if (bsInline && bcTarget) {
-      const bs = getShade(bsInline, "db", "O");
-      if (bs) answer.BS = { x: bs.x, y: bs.y };
     } else {
       const edge = findLandmarkByLabel(landmarks, "db", "Edge", passAway);
       if (edge) answer.BS = { x: edge.x, y: edge.y };
@@ -1703,6 +1857,8 @@ function TrainingField({
   const hashXs = [getHash("left", fieldWide), getHash("right", fieldWide)];
   const losY = flipOffense ? 100 - LOS_Y : LOS_Y;
   const hashMarkRows = [13, 28, 43, 61, 76, 91];
+  const sidelineInset = 1.5;
+  const numberInset = 12;
 
   const getPointer = (e: React.PointerEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -1740,21 +1896,23 @@ function TrainingField({
 
   return (
     <div
-      className="relative aspect-[16/9] w-full overflow-hidden rounded-2xl border bg-emerald-700"
+      className="relative aspect-[19/9] w-full overflow-hidden rounded-2xl border bg-emerald-700"
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onPointerLeave={() => setDrag(null)}
     >
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.06),transparent_55%)]" />
+      <div className="absolute bottom-[4%] top-[4%] w-px bg-white/35" style={{ left: `${sidelineInset}%` }} />
+      <div className="absolute bottom-[4%] top-[4%] w-px bg-white/35" style={{ left: `${100 - sidelineInset}%` }} />
       <div
-        className="absolute left-4 -translate-y-1/2 text-[34px] font-black italic tracking-tight text-white/60"
-        style={{ top: `${losY}%` }}
+        className="absolute -translate-x-1/2 -translate-y-1/2 text-[34px] font-black italic tracking-tight text-white/60"
+        style={{ left: `${numberInset}%`, top: `${losY}%` }}
       >
         #
       </div>
       <div
-        className="absolute right-4 -translate-y-1/2 text-[34px] font-black italic tracking-tight text-white/60"
-        style={{ top: `${losY}%` }}
+        className="absolute -translate-x-1/2 -translate-y-1/2 text-[34px] font-black italic tracking-tight text-white/60"
+        style={{ left: `${100 - numberInset}%`, top: `${losY}%` }}
       >
         #
       </div>
@@ -1891,15 +2049,30 @@ function formatDuration(totalSeconds: number) {
   return `${seconds}s`;
 }
 
+function slugifyFilePart(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60) || "clip";
+}
+
 export default function FormationRecognitionWorkingApp() {
   const router = useRouter();
   const currentSecondsRef = useRef(0);
   const didHydrateViewStateRef = useRef(false);
   const skipNextModeRandomizeRef = useRef(false);
+  const previousModeRef = useRef<AppMode>("study");
+  const previousAlignmentViewModeRef = useRef<AlignmentViewMode>("study");
+  const videoObjectUrlsRef = useRef<string[]>([]);
+  const pendingStudyFormationRef = useRef<string | null>(null);
   const pendingAlignmentStudyFormationRef = useRef<string | null>(null);
   const [enhancedLandmarks, setEnhancedLandmarks] = useState(true);
   const [frontMode, setFrontMode] = useState<FrontMode>("4-3");
   const [alignmentViewMode, setAlignmentViewMode] = useState<AlignmentViewMode>("study");
+  const [offenseBuildViewMode, setOffenseBuildViewMode] = useState<OffenseBuildViewMode>("quiz");
+  const [filmViewMode, setFilmViewMode] = useState<FilmViewMode>("study");
+  const [filmSubmode, setFilmSubmode] = useState<FilmSubmode>("read_key");
   const [mode, setMode] = useState<AppMode>("study");
   const [currentUser, setCurrentUser] = useState<UserRecord | null>(null);
   const [leaderboardEntries, setLeaderboardEntries] = useState<LeaderboardEntry[]>([]);
@@ -1919,6 +2092,32 @@ export default function FormationRecognitionWorkingApp() {
   const [showOffenseCheck, setShowOffenseCheck] = useState(false);
   const [editorOverrides, setEditorOverrides] = useState<Record<string, FormationMeta>>({});
   const [customAlignmentLandmarks, setCustomAlignmentLandmarks] = useState<Record<string, Landmark[]>>({});
+  const [filmClips, setFilmClips] = useState<FilmClip[]>(DEFAULT_FILM_CLIPS);
+  const [selectedFilmClipId, setSelectedFilmClipId] = useState<string>("");
+  const [filmStarted, setFilmStarted] = useState(false);
+  const [filmPlaybackNonce, setFilmPlaybackNonce] = useState(0);
+  const [filmDraft, setFilmDraft] = useState<FilmClipDraft>({
+    clipBucket: FILM_BUCKET_OPTIONS[0],
+    sourceType: "Hudl",
+    runPass: "run",
+    direction: "right",
+    runScheme: "zone",
+    pullerCount: "0",
+    pullerPositions: [],
+    remoteStudyUrl: "",
+    remoteQuizUrl: "",
+    studyFile: null,
+    quizFile: null,
+  });
+  const [filmEditDraft, setFilmEditDraft] = useState<Omit<FilmClipDraft, "remoteStudyUrl" | "remoteQuizUrl" | "studyFile" | "quizFile">>({
+    clipBucket: FILM_BUCKET_OPTIONS[0],
+    sourceType: "Hudl",
+    runPass: "run",
+    direction: "right",
+    runScheme: "zone",
+    pullerCount: "0",
+    pullerPositions: [],
+  });
   
   const [editingAlignmentAnswers, setEditingAlignmentAnswers] = useState(false);
   const [customLandmarkDraft, setCustomLandmarkDraft] = useState<CustomLandmarkDraft>({
@@ -1955,12 +2154,17 @@ export default function FormationRecognitionWorkingApp() {
       const savedViewState = JSON.parse(rawViewState) as {
         mode?: AppMode;
         alignmentViewMode?: AlignmentViewMode;
+        offenseBuildViewMode?: OffenseBuildViewMode;
+        filmViewMode?: FilmViewMode;
+        filmSubmode?: FilmSubmode;
         frontMode?: FrontMode;
         selectedPlaybooks?: PlaybookKey[];
         personnelFilter?: string;
         index?: number;
         enhancedLandmarks?: boolean;
+        studyFormation?: string;
         alignmentStudyFormation?: string;
+        selectedFilmClipId?: string;
       };
 
       if (savedViewState.mode && MODE_OPTIONS.some((option) => option.value === savedViewState.mode)) {
@@ -1973,6 +2177,24 @@ export default function FormationRecognitionWorkingApp() {
         ["study", "quiz"].includes(savedViewState.alignmentViewMode)
       ) {
         setAlignmentViewMode(savedViewState.alignmentViewMode);
+      }
+
+      if (
+        savedViewState.offenseBuildViewMode &&
+        ["study", "quiz"].includes(savedViewState.offenseBuildViewMode)
+      ) {
+        setOffenseBuildViewMode(savedViewState.offenseBuildViewMode);
+      }
+
+      if (
+        savedViewState.filmViewMode &&
+        ["study", "quiz"].includes(savedViewState.filmViewMode)
+      ) {
+        setFilmViewMode(savedViewState.filmViewMode);
+      }
+
+      if (savedViewState.filmSubmode === "read_key") {
+        setFilmSubmode(savedViewState.filmSubmode);
       }
 
       if (savedViewState.frontMode && ["4-3", "4-4"].includes(savedViewState.frontMode)) {
@@ -2001,8 +2223,16 @@ export default function FormationRecognitionWorkingApp() {
         setEnhancedLandmarks(savedViewState.enhancedLandmarks);
       }
 
+      if (typeof savedViewState.studyFormation === "string" && savedViewState.studyFormation) {
+        pendingStudyFormationRef.current = savedViewState.studyFormation;
+      }
+
       if (typeof savedViewState.alignmentStudyFormation === "string" && savedViewState.alignmentStudyFormation) {
         pendingAlignmentStudyFormationRef.current = savedViewState.alignmentStudyFormation;
+      }
+
+      if (typeof savedViewState.selectedFilmClipId === "string") {
+        setSelectedFilmClipId(savedViewState.selectedFilmClipId);
       }
     } catch {}
 
@@ -2018,15 +2248,105 @@ export default function FormationRecognitionWorkingApp() {
         JSON.stringify({
           mode,
           alignmentViewMode,
+          offenseBuildViewMode,
+          filmViewMode,
+          filmSubmode,
           frontMode,
           selectedPlaybooks,
           personnelFilter,
           index,
           enhancedLandmarks,
+          selectedFilmClipId,
         }),
       );
     } catch {}
-  }, [mode, alignmentViewMode, frontMode, selectedPlaybooks, personnelFilter, index, enhancedLandmarks]);
+  }, [mode, alignmentViewMode, offenseBuildViewMode, filmViewMode, filmSubmode, frontMode, selectedPlaybooks, personnelFilter, index, enhancedLandmarks, selectedFilmClipId]);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(FILM_CLIPS_STORAGE_KEY);
+      if (!raw) return;
+      const saved = JSON.parse(raw) as FilmClip[];
+      if (!Array.isArray(saved)) return;
+      const remoteClips = saved.filter(
+        (clip) =>
+          clip &&
+          typeof clip.id === "string" &&
+          typeof clip.title === "string" &&
+          typeof clip.clipBucket === "string" &&
+          FILM_SOURCE_OPTIONS.includes(clip.sourceType) &&
+          (clip.runPass === "run" || clip.runPass === "pass") &&
+          (clip.direction === "left" || clip.direction === "right") &&
+          typeof clip.studyUrl === "string" &&
+          clip.kind === "remote",
+      );
+      if (remoteClips.length) setFilmClips((prev) => [...remoteClips, ...prev.filter((clip) => clip.kind === "local")]);
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    try {
+      const remoteClips = filmClips.filter((clip) => clip.kind === "remote");
+      window.localStorage.setItem(FILM_CLIPS_STORAGE_KEY, JSON.stringify(remoteClips));
+    } catch {}
+  }, [filmClips]);
+
+  useEffect(() => {
+    const loadFilmClips = async () => {
+      if (!currentUser) return;
+
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from("film_clips")
+        .select("id, title, clip_bucket, source_type, run_pass, direction, run_scheme, puller_count, puller_positions, study_url, quiz_url, study_storage_path, quiz_storage_path, study_file_name, quiz_file_name")
+        .eq("submode", "read_key")
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        console.error("Failed to load film clips", error);
+        return;
+      }
+
+      const remoteClips: FilmClip[] = (data ?? []).flatMap((row) => {
+        if (!row.study_url || (row.run_pass !== "run" && row.run_pass !== "pass")) return [];
+        if (row.direction !== "left" && row.direction !== "right") return [];
+        return [
+          {
+            id: row.id,
+            title: row.title ?? row.clip_bucket ?? "Untitled Clip",
+            clipBucket: row.clip_bucket ?? row.title ?? "Unsorted",
+            sourceType: FILM_SOURCE_OPTIONS.includes(row.source_type) ? row.source_type : "Other",
+            runPass: row.run_pass,
+            direction: row.direction,
+            runScheme: FILM_RUN_SCHEME_OPTIONS.includes(row.run_scheme) ? row.run_scheme : "",
+            pullerCount: FILM_PULLER_COUNT_OPTIONS.includes(String(row.puller_count) as FilmPullerCount)
+              ? (String(row.puller_count) as FilmPullerCount)
+              : "0",
+            pullerPositions: Array.isArray(row.puller_positions)
+              ? row.puller_positions.filter((position): position is FilmPullerPosition => FILM_PULLER_POSITION_OPTIONS.includes(position as FilmPullerPosition))
+              : [],
+            studyUrl: row.study_url,
+            quizUrl: row.quiz_url ?? null,
+            studyStoragePath: row.study_storage_path ?? null,
+            quizStoragePath: row.quiz_storage_path ?? null,
+            kind: "supabase",
+            studyFileName: row.study_file_name ?? undefined,
+            quizFileName: row.quiz_file_name ?? undefined,
+          },
+        ];
+      });
+
+      setFilmClips((prev) => [...remoteClips, ...prev.filter((clip) => clip.kind === "local")]);
+    };
+
+    void loadFilmClips();
+  }, [currentUser?.id]);
+
+  useEffect(() => {
+    return () => {
+      videoObjectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, []);
 
    useEffect(() => {
   const checkAuth = async () => {
@@ -2300,6 +2620,18 @@ const existingStats =
       })
       .filter((group) => group.options.length > 0);
   }, [pool]);
+  const filmClipOptions = useMemo(
+    () =>
+      filmClips.map((clip) => ({
+        value: clip.id,
+        label: clip.title,
+      })),
+    [filmClips],
+  );
+  const selectedFilmClip = useMemo(
+    () => filmClips.find((clip) => clip.id === selectedFilmClipId) ?? filmClips[0] ?? null,
+    [filmClips, selectedFilmClipId],
+  );
 
   useEffect(() => {
     if (!didHydrateViewStateRef.current) return;
@@ -2311,6 +2643,10 @@ const existingStats =
         VIEW_STATE_STORAGE_KEY,
         JSON.stringify({
           ...savedViewState,
+          studyFormation:
+            mode === "study"
+              ? currentFormationIdentity
+              : savedViewState?.studyFormation ?? null,
           alignmentStudyFormation:
             mode === "alignment" && alignmentViewMode === "study"
               ? currentFormationIdentity
@@ -2319,6 +2655,35 @@ const existingStats =
       );
     } catch {}
   }, [mode, alignmentViewMode, currentFormationIdentity]);
+
+  useEffect(() => {
+    if (!filmClips.length) {
+      if (selectedFilmClipId) setSelectedFilmClipId("");
+      return;
+    }
+
+    if (!selectedFilmClipId || !filmClips.some((clip) => clip.id === selectedFilmClipId)) {
+      setSelectedFilmClipId(filmClips[0].id);
+    }
+  }, [filmClips, selectedFilmClipId]);
+
+  useEffect(() => {
+    setFilmStarted(false);
+    setFilmPlaybackNonce(0);
+  }, [selectedFilmClipId, filmViewMode, filmSubmode]);
+
+  useEffect(() => {
+    if (!selectedFilmClip) return;
+    setFilmEditDraft({
+      clipBucket: selectedFilmClip.clipBucket,
+      sourceType: selectedFilmClip.sourceType,
+      runPass: selectedFilmClip.runPass,
+      direction: selectedFilmClip.direction,
+      runScheme: selectedFilmClip.runScheme || "zone",
+      pullerCount: selectedFilmClip.pullerCount,
+      pullerPositions: selectedFilmClip.pullerPositions,
+    });
+  }, [selectedFilmClip]);
 
   const getRandomPoolIndex = (length: number, currentIndex?: number) => {
     if (length <= 1) return 0;
@@ -2351,10 +2716,36 @@ const existingStats =
     if (!pool.length) return;
     if (skipNextModeRandomizeRef.current) {
       skipNextModeRandomizeRef.current = false;
+      previousModeRef.current = mode;
+      previousAlignmentViewModeRef.current = alignmentViewMode;
       return;
     }
-    setIndex((prev) => getRandomPoolIndex(pool.length, prev));
-  }, [mode]);
+
+    const previousMode = previousModeRef.current;
+    const previousAlignmentViewMode = previousAlignmentViewModeRef.current;
+
+    let shouldRandomize = false;
+
+    if (mode !== previousMode) {
+      shouldRandomize =
+        mode === "quiz" ||
+        mode === "offense_build" ||
+        (mode === "alignment" && alignmentViewMode === "quiz");
+    } else if (
+      mode === "alignment" &&
+      alignmentViewMode !== previousAlignmentViewMode &&
+      alignmentViewMode === "quiz"
+    ) {
+      shouldRandomize = true;
+    }
+
+    if (shouldRandomize) {
+      setIndex((prev) => getRandomPoolIndex(pool.length, prev));
+    }
+
+    previousModeRef.current = mode;
+    previousAlignmentViewModeRef.current = alignmentViewMode;
+  }, [mode, alignmentViewMode, pool.length]);
 
   useEffect(() => {
     if (!pool.length) return;
@@ -2363,6 +2754,29 @@ const existingStats =
       return normalized;
     });
   }, [pool.length]);
+
+  useEffect(() => {
+    if (
+      !didHydrateViewStateRef.current ||
+      mode !== "study" ||
+      !pool.length ||
+      !pendingStudyFormationRef.current
+    ) {
+      return;
+    }
+
+    const savedFormation = pendingStudyFormationRef.current;
+    const savedIndex = pool.findIndex(
+      (formation) =>
+        `${formation.playbook}::${formation.name}::${formation.personnel}` === savedFormation,
+    );
+
+    pendingStudyFormationRef.current = null;
+
+    if (savedIndex >= 0) {
+      setIndex(savedIndex);
+    }
+  }, [mode, pool]);
 
   useEffect(() => {
     if (
@@ -2399,6 +2813,16 @@ const existingStats =
   }, [displayFormation]);
 
   const nextCall = () => {
+    if (mode === "film") {
+      if (!filmClips.length) return;
+      setSelectedFilmClipId((prev) => {
+        if (filmClips.length === 1) return filmClips[0].id;
+        const currentIndex = filmClips.findIndex((clip) => clip.id === prev);
+        const nextIndex = getRandomPoolIndex(filmClips.length, currentIndex >= 0 ? currentIndex : undefined);
+        return filmClips[nextIndex].id;
+      });
+      return;
+    }
     if (!pool.length) return;
     setIndex((prev) => {
       if (pool.length === 1) return 0;
@@ -2408,6 +2832,204 @@ const existingStats =
       }
       return next;
     });
+  };
+
+  const addFilmClip = () => {
+    void (async () => {
+      const clipBucket = filmDraft.clipBucket;
+      const title = clipBucket;
+      const sourceType = filmDraft.sourceType;
+      const remoteStudyUrl = filmDraft.remoteStudyUrl.trim();
+      const remoteQuizUrl = filmDraft.remoteQuizUrl.trim();
+      const studyFile = filmDraft.studyFile;
+      const quizFile = filmDraft.quizFile;
+      if (!clipBucket) return;
+      if (!remoteStudyUrl && !studyFile) return;
+
+      const hasSupabaseUpload = Boolean(currentUser && (studyFile || quizFile));
+      if (hasSupabaseUpload) {
+        const supabase = createClient();
+        const clipId = `film-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const titleSlug = slugifyFilePart(title);
+
+        const uploadAsset = async (variant: "study" | "quiz", file: File | null) => {
+          if (!file) return { publicUrl: "", storagePath: null as string | null, fileName: undefined as string | undefined };
+          const extension = file.name.includes(".") ? file.name.split(".").pop() : "mp4";
+          const storagePath = `${currentUser!.id}/${clipId}/${variant}-${titleSlug}.${extension}`;
+          const { error: uploadError } = await supabase.storage.from(FILM_BUCKET).upload(storagePath, file, {
+            upsert: false,
+            cacheControl: "3600",
+          });
+          if (uploadError) throw uploadError;
+          const { data } = supabase.storage.from(FILM_BUCKET).getPublicUrl(storagePath);
+          return { publicUrl: data.publicUrl, storagePath, fileName: file.name };
+        };
+
+        try {
+          const studyAsset = await uploadAsset("study", studyFile);
+          const quizAsset = await uploadAsset("quiz", quizFile);
+
+          const studyUrl = studyAsset.publicUrl || remoteStudyUrl;
+          const quizUrl = quizAsset.publicUrl || remoteQuizUrl || null;
+          const nextClip: FilmClip = {
+            id: clipId,
+            title,
+            clipBucket,
+            sourceType,
+            runPass: filmDraft.runPass,
+            direction: filmDraft.direction,
+            runScheme: filmDraft.runPass === "run" ? filmDraft.runScheme : "",
+            pullerCount: filmDraft.runPass === "run" && filmDraft.runScheme === "gap" ? filmDraft.pullerCount : "0",
+            pullerPositions:
+              filmDraft.runPass === "run" && filmDraft.runScheme === "gap"
+                ? filmDraft.pullerPositions.slice(0, Number(filmDraft.pullerCount))
+                : [],
+            studyUrl,
+            quizUrl,
+            studyStoragePath: studyAsset.storagePath,
+            quizStoragePath: quizAsset.storagePath,
+            kind: "supabase",
+            studyFileName: studyAsset.fileName ?? studyFile?.name,
+            quizFileName: quizAsset.fileName ?? quizFile?.name,
+          };
+
+          const { error: insertError } = await supabase.from("film_clips").insert({
+            id: clipId,
+            title,
+            clip_bucket: nextClip.clipBucket,
+            source_type: nextClip.sourceType,
+            submode: "read_key",
+            run_pass: nextClip.runPass,
+            direction: nextClip.direction,
+            run_scheme: nextClip.runScheme || null,
+            puller_count: nextClip.pullerCount === "0" ? null : Number(nextClip.pullerCount),
+            puller_positions: nextClip.pullerPositions.length ? nextClip.pullerPositions : null,
+            study_url: nextClip.studyUrl,
+            quiz_url: nextClip.quizUrl,
+            study_storage_path: nextClip.studyStoragePath,
+            quiz_storage_path: nextClip.quizStoragePath,
+            study_file_name: nextClip.studyFileName ?? null,
+            quiz_file_name: nextClip.quizFileName ?? null,
+            created_by: currentUser.id,
+          });
+
+          if (insertError) throw insertError;
+
+          setFilmClips((prev) => [nextClip, ...prev.filter((clip) => clip.id !== nextClip.id)]);
+          setSelectedFilmClipId(nextClip.id);
+        } catch (error) {
+          console.error("Failed to save film clip", error);
+          return;
+        }
+      } else {
+        let studyUrl = remoteStudyUrl;
+        let quizUrl = remoteQuizUrl || null;
+        let kind: FilmClip["kind"] = "remote";
+        let studyFileName: string | undefined;
+        let quizFileName: string | undefined;
+
+        if (studyFile) {
+          studyUrl = URL.createObjectURL(studyFile);
+          kind = "local";
+          studyFileName = studyFile.name;
+          videoObjectUrlsRef.current.push(studyUrl);
+        }
+
+        if (quizFile) {
+          quizUrl = URL.createObjectURL(quizFile);
+          kind = "local";
+          quizFileName = quizFile.name;
+          videoObjectUrlsRef.current.push(quizUrl);
+        }
+
+        const nextClip: FilmClip = {
+          id: `film-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          title,
+          clipBucket,
+          sourceType,
+          runPass: filmDraft.runPass,
+          direction: filmDraft.direction,
+          runScheme: filmDraft.runPass === "run" ? filmDraft.runScheme : "",
+          pullerCount: filmDraft.runPass === "run" && filmDraft.runScheme === "gap" ? filmDraft.pullerCount : "0",
+          pullerPositions:
+            filmDraft.runPass === "run" && filmDraft.runScheme === "gap"
+              ? filmDraft.pullerPositions.slice(0, Number(filmDraft.pullerCount))
+              : [],
+          studyUrl,
+          quizUrl,
+          studyStoragePath: null,
+          quizStoragePath: null,
+          kind,
+          studyFileName,
+          quizFileName,
+        };
+
+        setFilmClips((prev) => [nextClip, ...prev]);
+        setSelectedFilmClipId(nextClip.id);
+      }
+
+      setFilmStarted(false);
+      setFilmPlaybackNonce(0);
+      setFilmDraft({
+        clipBucket: FILM_BUCKET_OPTIONS[0],
+        sourceType: "Hudl",
+        runPass: "run",
+        direction: "right",
+        runScheme: "zone",
+        pullerCount: "0",
+        pullerPositions: [],
+        remoteStudyUrl: "",
+        remoteQuizUrl: "",
+        studyFile: null,
+        quizFile: null,
+      });
+    })();
+  };
+
+  const saveFilmMetadata = () => {
+    void (async () => {
+      if (!currentUser?.isAdmin || !selectedFilmClip) return;
+
+      const nextClip: FilmClip = {
+        ...selectedFilmClip,
+        title: filmEditDraft.clipBucket,
+        clipBucket: filmEditDraft.clipBucket,
+        sourceType: filmEditDraft.sourceType,
+        runPass: filmEditDraft.runPass,
+        direction: filmEditDraft.direction,
+        runScheme: filmEditDraft.runPass === "run" ? filmEditDraft.runScheme : "",
+        pullerCount: filmEditDraft.runPass === "run" && filmEditDraft.runScheme === "gap" ? filmEditDraft.pullerCount : "0",
+        pullerPositions:
+          filmEditDraft.runPass === "run" && filmEditDraft.runScheme === "gap"
+            ? filmEditDraft.pullerPositions.slice(0, Number(filmEditDraft.pullerCount))
+            : [],
+      };
+
+      try {
+        if (selectedFilmClip.kind === "supabase") {
+          const supabase = createClient();
+          const { error } = await supabase
+            .from("film_clips")
+            .update({
+              title: nextClip.title,
+              clip_bucket: nextClip.clipBucket,
+              source_type: nextClip.sourceType,
+              run_pass: nextClip.runPass,
+              direction: nextClip.direction,
+              run_scheme: nextClip.runScheme || null,
+              puller_count: nextClip.pullerCount === "0" ? null : Number(nextClip.pullerCount),
+              puller_positions: nextClip.pullerPositions.length ? nextClip.pullerPositions : null,
+            })
+            .eq("id", selectedFilmClip.id);
+
+          if (error) throw error;
+        }
+
+        setFilmClips((prev) => prev.map((clip) => (clip.id === nextClip.id ? nextClip : clip)));
+      } catch (error) {
+        console.error("Failed to update film clip metadata", error);
+      }
+    })();
   };
 
   const addDefender = (id: string) => {
@@ -2539,7 +3161,6 @@ const existingStats =
   }, [displayFormation, alignmentLandmarks, frontMode]);
   const alignmentStudyPlayers = useMemo(() => getDefensePlayersFromAnswerKey(alignmentAnswerKey), [alignmentAnswerKey]);
   const alignmentCheck = useMemo(() => getCheckResult(alignmentPlayers, alignmentAnswerKey, 1.0), [alignmentPlayers, alignmentAnswerKey]);
-  const alignmentSpecialCases = useMemo(() => getAlignmentSpecialCases(displayFormation, frontMode), [displayFormation, frontMode]);
 
 
   useEffect(() => {
@@ -2768,6 +3389,8 @@ const existingStats =
                 <div className="min-w-[220px]">
                   {mode === "offense_build" ? (
                     <div className="rounded-md border bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700">Foothill</div>
+                  ) : mode === "film" ? (
+                    <div className="rounded-md border bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700">Film Library</div>
                   ) : (
                     <details className="relative">
                       <summary className="cursor-pointer list-none rounded-md border bg-white px-3 py-2 text-sm font-medium text-slate-700">
@@ -2805,7 +3428,7 @@ const existingStats =
                     </details>
                   )}
                 </div>
-                {mode === "offense_build" ? null : (
+                {mode === "offense_build" || mode === "film" ? null : (
                   <div className="min-w-[120px]">
                     <Select value={personnelFilter} onValueChange={(value: string) => { setPersonnelFilter(value); setIndex(0); }}>
                       <SelectTrigger>
@@ -2823,14 +3446,16 @@ const existingStats =
                 )}
                 <Button className="rounded-xl" onClick={nextCall}>
                   <Shuffle className="mr-2 h-4 w-4" />
-                  Randomize
+                  {mode === "film" ? "Random Clip" : "Randomize"}
                 </Button>
               </div>
             </div>
             {mode !== "quiz" && mode !== "account" && (
               <div className="rounded-xl border bg-white p-4 text-3xl font-extrabold tracking-tight text-slate-900 md:text-4xl">
-                {displayFormation.name}
-                <div className="mt-1 text-sm font-semibold uppercase tracking-[0.14em] text-slate-500">{displayFormation.playbook}</div>
+                {mode === "film" ? selectedFilmClip?.title ?? "FILM MODE" : displayFormation.name}
+                <div className="mt-1 text-sm font-semibold uppercase tracking-[0.14em] text-slate-500">
+                  {mode === "film" ? "READ KEY" : displayFormation.playbook}
+                </div>
               </div>
             )}
           </CardHeader>
@@ -2922,38 +3547,587 @@ const existingStats =
   </div>
 
             ) : mode === "study" ? (
-              <>
-                <TrainingField
-                  offensePlayers={displayFormation.players}
-                  overlayLabel={`${displayFormation.playbook} • ${displayFormation.family} • ${displayFormation.personnel}P • Run ${FIELD_LABELS[displayFormation.runStrength]} • Pass ${FIELD_LABELS[displayFormation.passStrength]}`}
-                />
-                <div className="grid gap-3 md:grid-cols-4">
-                  <Card className="rounded-xl">
-                    <CardContent className="p-4">
-                      <div className="text-xs uppercase tracking-wide text-slate-500">Playbook</div>
-                      <div className="mt-1 text-lg font-semibold">{displayFormation.playbook}</div>
-                    </CardContent>
-                  </Card>
-                  <Card className="rounded-xl">
-                    <CardContent className="p-4">
-                      <div className="text-xs uppercase tracking-wide text-slate-500">Family</div>
-                      <div className="mt-1 text-lg font-semibold">{getQuizFormationFamily(displayFormation.name)}</div>
-                    </CardContent>
-                  </Card>
-                  <Card className="rounded-xl">
-                    <CardContent className="p-4">
-                      <div className="text-xs uppercase tracking-wide text-slate-500">Run Strength</div>
-                      <div className="mt-1 text-lg font-semibold">{FIELD_LABELS[displayFormation.runStrength]}</div>
-                    </CardContent>
-                  </Card>
-                  <Card className="rounded-xl">
-                    <CardContent className="p-4">
-                      <div className="text-xs uppercase tracking-wide text-slate-500">Pass Strength</div>
-                      <div className="mt-1 text-lg font-semibold">{FIELD_LABELS[displayFormation.passStrength]}</div>
-                    </CardContent>
-                  </Card>
+              <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
+                <div className="space-y-4">
+                  <TrainingField
+                    offensePlayers={displayFormation.players}
+                    overlayLabel={`${displayFormation.playbook} • ${displayFormation.family} • ${displayFormation.personnel}P • Run ${FIELD_LABELS[displayFormation.runStrength]} • Pass ${FIELD_LABELS[displayFormation.passStrength]}`}
+                  />
+                  <div className="grid gap-3 md:grid-cols-5">
+                    <Card className="rounded-xl">
+                      <CardContent className="p-4">
+                        <div className="text-xs uppercase tracking-wide text-slate-500">Playbook</div>
+                        <div className="mt-1 text-lg font-semibold">{displayFormation.playbook}</div>
+                      </CardContent>
+                    </Card>
+                    <Card className="rounded-xl">
+                      <CardContent className="p-4">
+                        <div className="text-xs uppercase tracking-wide text-slate-500">Family</div>
+                        <div className="mt-1 text-lg font-semibold">{getQuizFormationFamily(displayFormation.name)}</div>
+                      </CardContent>
+                    </Card>
+                    <Card className="rounded-xl">
+                      <CardContent className="p-4">
+                        <div className="text-xs uppercase tracking-wide text-slate-500">Personnel</div>
+                        <div className="mt-1 text-lg font-semibold">{displayFormation.personnel}P</div>
+                      </CardContent>
+                    </Card>
+                    <Card className="rounded-xl">
+                      <CardContent className="p-4">
+                        <div className="text-xs uppercase tracking-wide text-slate-500">Run Strength</div>
+                        <div className="mt-1 text-lg font-semibold">{FIELD_LABELS[displayFormation.runStrength]}</div>
+                      </CardContent>
+                    </Card>
+                    <Card className="rounded-xl">
+                      <CardContent className="p-4">
+                        <div className="text-xs uppercase tracking-wide text-slate-500">Pass Strength</div>
+                        <div className="mt-1 text-lg font-semibold">{FIELD_LABELS[displayFormation.passStrength]}</div>
+                      </CardContent>
+                    </Card>
+                  </div>
                 </div>
-              </>
+                <div className="space-y-3 rounded-2xl border bg-white p-4 text-sm text-slate-600">
+                  <div>
+                    <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Formation</div>
+                    <Select
+                      value={`${current.playbook}::${current.name}::${current.personnel}::${index % Math.max(pool.length, 1)}`}
+                      onValueChange={(value) => {
+                        const selected = formationSelectGroups
+                          .flatMap((group) => group.options)
+                          .find((option) => option.value === value);
+                        if (selected) setIndex(selected.index);
+                      }}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-80 overflow-y-auto">
+                        {formationSelectGroups.map((group) => (
+                          <React.Fragment key={group.personnel}>
+                            <SelectGroup>
+                              <SelectLabel>{group.personnel}P</SelectLabel>
+                              {group.options.map((option) => (
+                                <SelectItem key={option.value} value={option.value}>
+                                  {option.label}
+                                </SelectItem>
+                              ))}
+                            </SelectGroup>
+                            {group.personnel !== formationSelectGroups[formationSelectGroups.length - 1]?.personnel ? (
+                              <SelectDivider />
+                            ) : null}
+                          </React.Fragment>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>Study the formation menu and recognition information for this look.</div>
+                </div>
+              </div>
+            ) : mode === "film" ? (
+              currentUser?.isAdmin ? (
+              <div className="grid gap-4 lg:grid-cols-[1fr_360px]">
+                <div className="space-y-2">
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <div className="min-w-[160px]">
+                      <Select value={filmSubmode} onValueChange={(value: FilmSubmode) => setFilmSubmode(value)}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="max-h-80 overflow-y-auto">
+                          <SelectItem value="read_key">Read Key</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="min-w-[140px]">
+                      <Select value={filmViewMode} onValueChange={(value: FilmViewMode) => setFilmViewMode(value)}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="max-h-80 overflow-y-auto">
+                          <SelectItem value="study">Study</SelectItem>
+                          <SelectItem value="quiz">Quiz</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  <div className="overflow-hidden rounded-2xl border bg-slate-950">
+                    {filmViewMode === "quiz" ? (
+                      <div className="flex aspect-video items-center justify-center px-8 text-center text-sm text-slate-300">
+                        Quiz mode is coming next. Study mode is ready now so we can test the clip library and playback flow first.
+                      </div>
+                    ) : selectedFilmClip ? (
+                      filmStarted ? (
+                        <video
+                          key={`${selectedFilmClip.id}-${filmPlaybackNonce}`}
+                          className="aspect-video w-full bg-black"
+                          src={selectedFilmClip.studyUrl}
+                          controls
+                          playsInline
+                          autoPlay
+                          preload="metadata"
+                        />
+                      ) : (
+                        <div className="flex aspect-video flex-col items-center justify-center gap-4 px-8 text-center text-slate-200">
+                          <div className="text-lg font-semibold">Read Key Study Clip</div>
+                          <div className="max-w-xl text-sm text-slate-400">
+                            The clip stays hidden until you start it. In study mode, once it starts you can pause, replay, and inspect the keys in detail.
+                          </div>
+                          <Button
+                            className="rounded-xl"
+                            onClick={() => {
+                              setFilmPlaybackNonce((prev) => prev + 1);
+                              setFilmStarted(true);
+                            }}
+                          >
+                            Start Study Clip
+                          </Button>
+                        </div>
+                      )
+                    ) : (
+                      <div className="flex aspect-video items-center justify-center px-8 text-center text-sm text-slate-300">
+                        Add a clip on the right to begin building Film Mode.
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="space-y-3 rounded-2xl border bg-white p-4 text-sm text-slate-600">
+                    <div>
+                      <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Clip</div>
+                      <Select
+                        value={selectedFilmClip?.id ?? ""}
+                        onValueChange={(value) => {
+                          setSelectedFilmClipId(value);
+                          setFilmStarted(false);
+                        }}
+                        disabled={!filmClipOptions.length}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder={filmClipOptions.length ? "Select a clip" : "No clips added yet"} />
+                        </SelectTrigger>
+                        <SelectContent className="max-h-80 overflow-y-auto">
+                          {filmClipOptions.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                      <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
+                        Film Mode is set up for <span className="font-semibold">Read Key</span>. Version 1 study shows the full clip after start; quiz flow and scoring come next.
+                      </div>
+
+                    {selectedFilmClip ? (
+                      <div className="space-y-3 rounded-xl border bg-slate-50 p-3">
+                        <div className="text-sm font-semibold text-slate-900">Answer Key</div>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          <div className="rounded-lg border bg-white px-3 py-2">
+                            <div className="text-xs uppercase tracking-wide text-slate-500">Run / Pass</div>
+                            <div className="mt-1 font-semibold text-slate-900">{selectedFilmClip.runPass === "run" ? "Run" : "Pass"}</div>
+                          </div>
+                          <div className="rounded-lg border bg-white px-3 py-2">
+                            <div className="text-xs uppercase tracking-wide text-slate-500">Direction</div>
+                            <div className="mt-1 font-semibold text-slate-900">{FIELD_LABELS[selectedFilmClip.direction]}</div>
+                          </div>
+                          <div className="rounded-lg border bg-white px-3 py-2">
+                            <div className="text-xs uppercase tracking-wide text-slate-500">Source</div>
+                            <div className="mt-1 font-semibold text-slate-900">{selectedFilmClip.sourceType}</div>
+                          </div>
+                          <div className="rounded-lg border bg-white px-3 py-2">
+                            <div className="text-xs uppercase tracking-wide text-slate-500">Bucket</div>
+                            <div className="mt-1 font-semibold text-slate-900">{selectedFilmClip.clipBucket}</div>
+                          </div>
+                        </div>
+                        {selectedFilmClip.runPass === "run" ? (
+                          <div className="grid gap-2 sm:grid-cols-2">
+                            <div className="rounded-lg border bg-white px-3 py-2">
+                              <div className="text-xs uppercase tracking-wide text-slate-500">Scheme</div>
+                              <div className="mt-1 font-semibold capitalize text-slate-900">{selectedFilmClip.runScheme || "—"}</div>
+                            </div>
+                            <div className="rounded-lg border bg-white px-3 py-2">
+                              <div className="text-xs uppercase tracking-wide text-slate-500">Pullers</div>
+                              <div className="mt-1 font-semibold text-slate-900">
+                                {selectedFilmClip.runScheme === "gap"
+                                  ? `${selectedFilmClip.pullerCount} • ${selectedFilmClip.pullerPositions.join(", ") || "None selected"}`
+                                  : "Not needed"}
+                              </div>
+                            </div>
+                          </div>
+                        ) : null}
+                        <div className="text-xs text-slate-500">
+                          {selectedFilmClip.studyFileName ? ` • Study: ${selectedFilmClip.studyFileName}` : ""}
+                          {selectedFilmClip.quizFileName ? ` • Quiz: ${selectedFilmClip.quizFileName}` : ""}
+                        </div>
+                        {filmStarted ? (
+                          <div className="grid grid-cols-2 gap-2">
+                            <Button variant="outline" className="rounded-xl" onClick={() => setFilmStarted(false)}>
+                              Hide Clip
+                            </Button>
+                            <Button
+                              className="rounded-xl"
+                              onClick={() => {
+                                setFilmPlaybackNonce((prev) => prev + 1);
+                                setFilmStarted(true);
+                              }}
+                            >
+                              Restart Clip
+                            </Button>
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+
+                  {currentUser?.isAdmin ? (
+                    <div className="space-y-3 rounded-2xl border bg-white p-4 text-sm text-slate-600">
+                      <div className="text-sm font-semibold text-slate-900">Add Study Clip</div>
+                      <div className="grid gap-3">
+                        <div>
+                          <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Clip Bucket</div>
+                          <Select value={filmDraft.clipBucket} onValueChange={(value: string) => setFilmDraft((prev) => ({ ...prev, clipBucket: value }))}>
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent className="max-h-80 overflow-y-auto">
+                              {FILM_BUCKET_OPTIONS.map((option) => (
+                                <SelectItem key={option} value={option}>
+                                  {option}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div>
+                          <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Source</div>
+                          <Select value={filmDraft.sourceType} onValueChange={(value: FilmSourceType) => setFilmDraft((prev) => ({ ...prev, sourceType: value }))}>
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent className="max-h-80 overflow-y-auto">
+                              {FILM_SOURCE_OPTIONS.map((option) => (
+                                <SelectItem key={option} value={option}>
+                                  {option}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Run / Pass</div>
+                            <Select value={filmDraft.runPass} onValueChange={(value: "run" | "pass") => setFilmDraft((prev) => ({ ...prev, runPass: value }))}>
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent className="max-h-80 overflow-y-auto">
+                                <SelectItem value="run">Run</SelectItem>
+                                <SelectItem value="pass">Pass</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div>
+                            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Direction</div>
+                            <Select value={filmDraft.direction} onValueChange={(value: Side) => setFilmDraft((prev) => ({ ...prev, direction: value }))}>
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent className="max-h-80 overflow-y-auto">
+                                <SelectItem value="left">Left</SelectItem>
+                                <SelectItem value="right">Right</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+                        {filmDraft.runPass === "run" ? (
+                          <>
+                            <div>
+                              <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Run Scheme</div>
+                              <Select value={filmDraft.runScheme} onValueChange={(value: Exclude<FilmRunScheme, "">) => setFilmDraft((prev) => ({
+                                ...prev,
+                                runScheme: value,
+                                pullerCount: value === "gap" ? prev.pullerCount : "0",
+                                pullerPositions: value === "gap" ? prev.pullerPositions : [],
+                              }))}>
+                                <SelectTrigger>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent className="max-h-80 overflow-y-auto">
+                                  {FILM_RUN_SCHEME_OPTIONS.map((option) => (
+                                    <SelectItem key={option} value={option}>
+                                      {option.charAt(0).toUpperCase() + option.slice(1)}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            {filmDraft.runScheme === "gap" ? (
+                              <>
+                                <div>
+                                  <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Puller Count</div>
+                                  <Select value={filmDraft.pullerCount} onValueChange={(value: FilmPullerCount) => setFilmDraft((prev) => ({
+                                    ...prev,
+                                    pullerCount: value,
+                                    pullerPositions: prev.pullerPositions.slice(0, Number(value)),
+                                  }))}>
+                                    <SelectTrigger>
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent className="max-h-80 overflow-y-auto">
+                                      {FILM_PULLER_COUNT_OPTIONS.map((option) => (
+                                        <SelectItem key={option} value={option}>
+                                          {option}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                                <div>
+                                  <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Puller Positions</div>
+                                  <div className="flex flex-wrap gap-2">
+                                    {FILM_PULLER_POSITION_OPTIONS.map((position) => {
+                                      const active = filmDraft.pullerPositions.includes(position);
+                                      return (
+                                        <Button
+                                          key={position}
+                                          type="button"
+                                          variant={active ? "default" : "outline"}
+                                          className="rounded-xl"
+                                          onClick={() =>
+                                            setFilmDraft((prev) => {
+                                              const exists = prev.pullerPositions.includes(position);
+                                              const next = exists
+                                                ? prev.pullerPositions.filter((item) => item !== position)
+                                                : [...prev.pullerPositions, position].slice(0, Number(prev.pullerCount));
+                                              return {
+                                                ...prev,
+                                                pullerPositions: next,
+                                              };
+                                            })
+                                          }
+                                        >
+                                          {position}
+                                        </Button>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              </>
+                            ) : null}
+                          </>
+                        ) : null}
+                        <div>
+                          <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Study Clip URL</div>
+                          <Input
+                            value={filmDraft.remoteStudyUrl}
+                            placeholder="Public MP4 URL for the full study clip"
+                            onChange={(e) => setFilmDraft((prev) => ({ ...prev, remoteStudyUrl: e.target.value }))}
+                          />
+                        </div>
+                        <div>
+                          <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Quiz Clip URL</div>
+                          <Input
+                            value={filmDraft.remoteQuizUrl}
+                            placeholder="Optional public MP4 URL for the cut quiz version"
+                            onChange={(e) => setFilmDraft((prev) => ({ ...prev, remoteQuizUrl: e.target.value }))}
+                          />
+                        </div>
+                        <div>
+                          <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Upload Study Clip</div>
+                          <Input
+                            type="file"
+                            accept="video/mp4,video/quicktime,video/webm"
+                            onChange={(e) =>
+                              setFilmDraft((prev) => ({
+                                ...prev,
+                                studyFile: e.target.files?.[0] ?? null,
+                              }))
+                            }
+                          />
+                        </div>
+                        <div>
+                          <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Upload Quiz Clip</div>
+                          <Input
+                            type="file"
+                            accept="video/mp4,video/quicktime,video/webm"
+                            onChange={(e) =>
+                              setFilmDraft((prev) => ({
+                                ...prev,
+                                quizFile: e.target.files?.[0] ?? null,
+                              }))
+                            }
+                          />
+                        </div>
+                        <Button className="rounded-xl" onClick={addFilmClip}>
+                          Save Clip
+                        </Button>
+                        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                          Uploaded files are sent to Supabase Storage and clip metadata is saved to the <span className="font-semibold">film_clips</span> table. The quiz clip is optional, but this is where you can start saving the shortened version now.
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="rounded-2xl border bg-white p-4 text-sm text-slate-600">
+                      Film upload tools are admin-only. Logged-in players can still study any clips already saved to the library.
+                    </div>
+                  )}
+
+                  {selectedFilmClip ? (
+                    <div className="space-y-3 rounded-2xl border bg-white p-4 text-sm text-slate-600">
+                      <div className="text-sm font-semibold text-slate-900">Edit Clip Metadata</div>
+                      <div className="grid gap-3">
+                        <div>
+                          <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Clip Bucket</div>
+                          <Select value={filmEditDraft.clipBucket} onValueChange={(value: string) => setFilmEditDraft((prev) => ({ ...prev, clipBucket: value }))}>
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent className="max-h-80 overflow-y-auto">
+                              {FILM_BUCKET_OPTIONS.map((option) => (
+                                <SelectItem key={option} value={option}>
+                                  {option}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div>
+                          <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Source</div>
+                          <Select value={filmEditDraft.sourceType} onValueChange={(value: FilmSourceType) => setFilmEditDraft((prev) => ({ ...prev, sourceType: value }))}>
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent className="max-h-80 overflow-y-auto">
+                              {FILM_SOURCE_OPTIONS.map((option) => (
+                                <SelectItem key={option} value={option}>
+                                  {option}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Run / Pass</div>
+                            <Select value={filmEditDraft.runPass} onValueChange={(value: "run" | "pass") => setFilmEditDraft((prev) => ({ ...prev, runPass: value }))}>
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent className="max-h-80 overflow-y-auto">
+                                <SelectItem value="run">Run</SelectItem>
+                                <SelectItem value="pass">Pass</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div>
+                            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Direction</div>
+                            <Select value={filmEditDraft.direction} onValueChange={(value: Side) => setFilmEditDraft((prev) => ({ ...prev, direction: value }))}>
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent className="max-h-80 overflow-y-auto">
+                                <SelectItem value="left">Left</SelectItem>
+                                <SelectItem value="right">Right</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+                        {filmEditDraft.runPass === "run" ? (
+                          <>
+                            <div>
+                              <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Run Scheme</div>
+                              <Select value={filmEditDraft.runScheme} onValueChange={(value: Exclude<FilmRunScheme, "">) => setFilmEditDraft((prev) => ({
+                                ...prev,
+                                runScheme: value,
+                                pullerCount: value === "gap" ? prev.pullerCount : "0",
+                                pullerPositions: value === "gap" ? prev.pullerPositions : [],
+                              }))}>
+                                <SelectTrigger>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent className="max-h-80 overflow-y-auto">
+                                  {FILM_RUN_SCHEME_OPTIONS.map((option) => (
+                                    <SelectItem key={option} value={option}>
+                                      {option.charAt(0).toUpperCase() + option.slice(1)}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            {filmEditDraft.runScheme === "gap" ? (
+                              <>
+                                <div>
+                                  <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Puller Count</div>
+                                  <Select value={filmEditDraft.pullerCount} onValueChange={(value: FilmPullerCount) => setFilmEditDraft((prev) => ({
+                                    ...prev,
+                                    pullerCount: value,
+                                    pullerPositions: prev.pullerPositions.slice(0, Number(value)),
+                                  }))}>
+                                    <SelectTrigger>
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent className="max-h-80 overflow-y-auto">
+                                      {FILM_PULLER_COUNT_OPTIONS.map((option) => (
+                                        <SelectItem key={option} value={option}>
+                                          {option}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                                <div>
+                                  <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Puller Positions</div>
+                                  <div className="flex flex-wrap gap-2">
+                                    {FILM_PULLER_POSITION_OPTIONS.map((position) => {
+                                      const active = filmEditDraft.pullerPositions.includes(position);
+                                      return (
+                                        <Button
+                                          key={position}
+                                          type="button"
+                                          variant={active ? "default" : "outline"}
+                                          className="rounded-xl"
+                                          onClick={() =>
+                                            setFilmEditDraft((prev) => {
+                                              const exists = prev.pullerPositions.includes(position);
+                                              const next = exists
+                                                ? prev.pullerPositions.filter((item) => item !== position)
+                                                : [...prev.pullerPositions, position].slice(0, Number(prev.pullerCount));
+                                              return {
+                                                ...prev,
+                                                pullerPositions: next,
+                                              };
+                                            })
+                                          }
+                                        >
+                                          {position}
+                                        </Button>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              </>
+                            ) : null}
+                          </>
+                        ) : null}
+                        <Button className="rounded-xl" onClick={saveFilmMetadata}>
+                          Save Metadata
+                        </Button>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+              ) : (
+                <div className="rounded-2xl border bg-white p-6 text-center text-slate-700">
+                  <div className="text-lg font-semibold">Admin Access Required</div>
+                  <div className="mt-2 text-sm text-slate-500">
+                    Film Mode is currently available only to admin users while the clip library is being built.
+                  </div>
+                </div>
+              )
             ) : mode === "quiz" ? (
               <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
                 <div className="space-y-4">
@@ -3111,16 +4285,6 @@ const existingStats =
                                 <CheckCircle2 className="h-5 w-5" /> Correct Alignment
                               </div>
                             ) : null}
-                            {alignmentSpecialCases.length ? (
-                              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
-                                <div className="mb-2 font-semibold">Special-case feedback</div>
-                                <div className="space-y-2">
-                                  {alignmentSpecialCases.map((note, idx) => (
-                                    <div key={idx}>• {note}</div>
-                                  ))}
-                                </div>
-                              </div>
-                            ) : null}
                           </div>
                         ) : null}
                       </div>
@@ -3164,16 +4328,6 @@ const existingStats =
                       <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
                         The blue defenders are already placed on their correct alignments for study mode.
                       </div>
-                      {alignmentSpecialCases.length ? (
-                        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
-                          <div className="mb-2 font-semibold">Special-case feedback</div>
-                          <div className="space-y-2">
-                            {alignmentSpecialCases.map((note, idx) => (
-                              <div key={idx}>• {note}</div>
-                            ))}
-                          </div>
-                        </div>
-                      ) : null}
                     </div>
                   )}
                 </div>
@@ -3288,45 +4442,104 @@ const existingStats =
 
             ) : (
               <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
-                <TrainingField
-                  offensePlayers={[...baseLine(false), ...offenseBuildPlayers]}
-                  offenseLandmarks={offenseLandmarks}
-                  offenseGhostOffset={showOffenseCheck ? 1.6 : 0}
-                  dimOffenseOnAnswers={showOffenseCheck}
-                  editableOffense
-                  flipOffense
-                  onMoveOffense={moveOffense}
-                  incorrectOffenseIds={showOffenseCheck ? offenseCheck.incorrectIds : []}
-                  offenseGhosts={showOffenseCheck ? offenseCheck.ghosts : []}
-                  overlayLabel="Drag QB, RB, X, Y, H, Z to the offensive landmarks."
-                />
-                <div className="space-y-4">
-                  <TokenTray title="Offense Tray" ids={remainingOffense as unknown as string[]} onAdd={addOffense} />
-                  <div className="space-y-3 rounded-2xl border bg-white p-4 text-sm text-slate-600">
-                    <div>Drag offensive pieces to the shared landmark grid.</div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <Button className="rounded-xl" onClick={() => setShowOffenseCheck(true)}>Check</Button>
-                      <Button variant="outline" className="rounded-xl" onClick={() => setShowOffenseCheck(false)}>Hide Answers</Button>
+                <div className="space-y-2">
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <div className="min-w-[140px]">
+                      <Select value={offenseBuildViewMode} onValueChange={(value: OffenseBuildViewMode) => { setOffenseBuildViewMode(value); setShowOffenseCheck(false); }}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="max-h-80 overflow-y-auto">
+                          <SelectItem value="study">Study</SelectItem>
+                          <SelectItem value="quiz">Quiz</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
-                    {showOffenseCheck ? (
-                      <div className="space-y-2">
-                        <div>Wrong players are highlighted in red. Dashed circles show the correct spots.</div>
-                        {lastScoreSummary.offense_build ? (
-                          <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
-                            <span className="font-semibold">Points earned:</span> {lastScoreSummary.offense_build.awarded}
-                            <div>
-                              <span className="font-semibold">Offensive total:</span> {lastScoreSummary.offense_build.total}
-                            </div>
-                          </div>
-                        ) : null}
-                        {offenseCheck.isCorrect ? (
-                          <div className="flex items-center gap-2 rounded-xl border border-emerald-300 bg-emerald-100 p-3 text-sm font-semibold text-emerald-700">
-                            <CheckCircle2 className="h-5 w-5" /> Correct Formation
+                  </div>
+                  <TrainingField
+                    offensePlayers={offenseBuildViewMode === "study" ? displayFormation.players : [...baseLine(false), ...offenseBuildPlayers]}
+                    offenseLandmarks={offenseLandmarks}
+                    offenseGhostOffset={showOffenseCheck ? 1.6 : 0}
+                    dimOffenseOnAnswers={showOffenseCheck}
+                    editableOffense={offenseBuildViewMode === "quiz"}
+                    flipOffense
+                    onMoveOffense={offenseBuildViewMode === "quiz" ? moveOffense : undefined}
+                    incorrectOffenseIds={offenseBuildViewMode === "quiz" && showOffenseCheck ? offenseCheck.incorrectIds : []}
+                    offenseGhosts={offenseBuildViewMode === "quiz" && showOffenseCheck ? offenseCheck.ghosts : []}
+                    overlayLabel={offenseBuildViewMode === "study" ? "Study the offensive alignments for this formation." : "Drag QB, RB, X, Y, H, Z to the offensive landmarks."}
+                  />
+                </div>
+                <div className="space-y-4">
+                  {offenseBuildViewMode === "quiz" ? (
+                    <>
+                      <TokenTray title="Offense Tray" ids={remainingOffense as unknown as string[]} onAdd={addOffense} />
+                      <div className="space-y-3 rounded-2xl border bg-white p-4 text-sm text-slate-600">
+                        <div>Drag offensive pieces to the shared landmark grid.</div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <Button className="rounded-xl" onClick={() => setShowOffenseCheck(true)}>Check</Button>
+                          <Button variant="outline" className="rounded-xl" onClick={() => setShowOffenseCheck(false)}>Hide Answers</Button>
+                        </div>
+                        {showOffenseCheck ? (
+                          <div className="space-y-2">
+                            <div>Wrong players are highlighted in red. Dashed circles show the correct spots.</div>
+                            {lastScoreSummary.offense_build ? (
+                              <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
+                                <span className="font-semibold">Points earned:</span> {lastScoreSummary.offense_build.awarded}
+                                <div>
+                                  <span className="font-semibold">Offensive total:</span> {lastScoreSummary.offense_build.total}
+                                </div>
+                              </div>
+                            ) : null}
+                            {offenseCheck.isCorrect ? (
+                              <div className="flex items-center gap-2 rounded-xl border border-emerald-300 bg-emerald-100 p-3 text-sm font-semibold text-emerald-700">
+                                <CheckCircle2 className="h-5 w-5" /> Correct Formation
+                              </div>
+                            ) : null}
                           </div>
                         ) : null}
                       </div>
-                    ) : null}
-                  </div>
+                    </>
+                  ) : (
+                    <div className="space-y-3 rounded-2xl border bg-white p-4 text-sm text-slate-600">
+                      <div>
+                        <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Formation</div>
+                        <Select
+                          value={`${current.playbook}::${current.name}::${current.personnel}::${index % Math.max(pool.length, 1)}`}
+                          onValueChange={(value) => {
+                            const selected = formationSelectGroups
+                              .flatMap((group) => group.options)
+                              .find((option) => option.value === value);
+                            if (selected) setIndex(selected.index);
+                          }}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent className="max-h-80 overflow-y-auto">
+                            {formationSelectGroups.map((group) => (
+                              <React.Fragment key={group.personnel}>
+                                <SelectGroup>
+                                  <SelectLabel>{group.personnel}P</SelectLabel>
+                                  {group.options.map((option) => (
+                                    <SelectItem key={option.value} value={option.value}>
+                                      {option.label}
+                                    </SelectItem>
+                                  ))}
+                                </SelectGroup>
+                                {group.personnel !== formationSelectGroups[formationSelectGroups.length - 1]?.personnel ? (
+                                  <SelectDivider />
+                                ) : null}
+                              </React.Fragment>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div>Study the offensive alignment landmarks for this formation.</div>
+                      <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
+                        The offense is already placed on the answer-key landmarks for study mode.
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
