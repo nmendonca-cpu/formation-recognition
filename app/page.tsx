@@ -2175,6 +2175,7 @@ export default function FormationRecognitionWorkingApp() {
   const [filmPlaybackNonce, setFilmPlaybackNonce] = useState(0);
   const [filmUploadResetKey, setFilmUploadResetKey] = useState(0);
   const [filmSaveNotice, setFilmSaveNotice] = useState<FilmSaveStatus | null>(null);
+  const [showFilmAdminTools, setShowFilmAdminTools] = useState(false);
   const [filmQuizAnswers, setFilmQuizAnswers] = useState<FilmQuizAnswers>({ runPass: "", direction: "" });
   const [showFilmQuizFeedback, setShowFilmQuizFeedback] = useState(false);
   const [showFilmQuizAnswers, setShowFilmQuizAnswers] = useState(false);
@@ -2910,6 +2911,10 @@ const existingStats =
       quizEndSeconds: selectedFilmClip.quizEndSeconds?.toString() ?? "",
     });
   }, [selectedFilmClip]);
+
+  useEffect(() => {
+    setShowFilmAdminTools(Boolean(currentUser?.isAdmin));
+  }, [currentUser?.isAdmin]);
 
   const getRandomPoolIndex = (length: number, currentIndex?: number) => {
     if (length <= 1) return 0;
@@ -4090,7 +4095,6 @@ const existingStats =
                 </div>
               </div>
             ) : mode === "film" ? (
-              currentUser?.isAdmin ? (
               <div className="grid gap-4 lg:grid-cols-[1fr_360px]">
                 <div className="space-y-2">
                   <div className="flex flex-wrap justify-end gap-2">
@@ -4115,6 +4119,15 @@ const existingStats =
                         </SelectContent>
                       </Select>
                     </div>
+                    {currentUser?.isAdmin ? (
+                      <Button
+                        variant={showFilmAdminTools ? "default" : "outline"}
+                        className="min-w-[180px] rounded-xl"
+                        onClick={() => setShowFilmAdminTools((prev) => !prev)}
+                      >
+                        {showFilmAdminTools ? "Hide Admin Tools" : "Show Admin Tools"}
+                      </Button>
+                    ) : null}
                   </div>
 
                   <div className="overflow-hidden rounded-2xl border bg-slate-950">
@@ -4181,6 +4194,24 @@ const existingStats =
                       </div>
                     )}
                   </div>
+
+                  {filmViewMode === "quiz" && showFilmQuizFeedback && selectedFilmClip ? (
+                    <div className="overflow-hidden rounded-2xl border bg-white">
+                      <div className="border-b bg-slate-50 px-4 py-3">
+                        <div className="text-sm font-semibold text-slate-900">Full Clip Review</div>
+                        <div className="mt-1 text-sm text-slate-600">
+                          Watch the full study clip as many times as you want before moving to the next rep.
+                        </div>
+                      </div>
+                      <video
+                        className="aspect-video w-full bg-black"
+                        src={selectedFilmClip.studyUrl}
+                        controls
+                        playsInline
+                        preload="metadata"
+                      />
+                    </div>
+                  ) : null}
                 </div>
 
                 <div className="space-y-4">
@@ -4416,6 +4447,77 @@ const existingStats =
                               <div className="flex items-center justify-between rounded-lg border p-3"><span>Run / Pass</span>{filmQuizResult.runPass ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <XCircle className="h-4 w-4 text-red-600" />}</div>
                               <div className="flex items-center justify-between rounded-lg border p-3"><span>Direction</span>{filmQuizResult.direction ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <XCircle className="h-4 w-4 text-red-600" />}</div>
                             </div>
+                            {selectedFilmClip ? (
+                              <div className="space-y-3 rounded-xl border border-sky-200 bg-sky-50 p-3">
+                                <div className="text-sm font-semibold text-slate-900">Teaching Panel</div>
+                                <div className="grid gap-2 sm:grid-cols-2">
+                                  <div className="rounded-lg border bg-white px-3 py-2">
+                                    <div className="text-xs uppercase tracking-wide text-slate-500">Run / Pass</div>
+                                    <div className="mt-1 font-semibold text-slate-900">{selectedFilmClip.runPass === "run" ? "Run" : "Pass"}</div>
+                                  </div>
+                                  <div className="rounded-lg border bg-white px-3 py-2">
+                                    <div className="text-xs uppercase tracking-wide text-slate-500">Direction</div>
+                                    <div className="mt-1 font-semibold text-slate-900">{FIELD_LABELS[selectedFilmClip.direction]}</div>
+                                  </div>
+                                  <div className="rounded-lg border bg-white px-3 py-2">
+                                    <div className="text-xs uppercase tracking-wide text-slate-500">Source</div>
+                                    <div className="mt-1 font-semibold text-slate-900">{selectedFilmClip.sourceType}</div>
+                                  </div>
+                                  <div className="rounded-lg border bg-white px-3 py-2">
+                                    <div className="text-xs uppercase tracking-wide text-slate-500">Bucket</div>
+                                    <div className="mt-1 font-semibold text-slate-900">{selectedFilmClip.clipBucket}</div>
+                                  </div>
+                                </div>
+                                {selectedFilmClip.runPass === "pass" ? (
+                                  <div className="grid gap-2 sm:grid-cols-2">
+                                    <div className="rounded-lg border bg-white px-3 py-2">
+                                      <div className="text-xs uppercase tracking-wide text-slate-500">Pass Type</div>
+                                      <div className="mt-1 font-semibold capitalize text-slate-900">
+                                        {selectedFilmClip.passType ? selectedFilmClip.passType.replace("_", " ") : "—"}
+                                      </div>
+                                    </div>
+                                  </div>
+                                ) : null}
+                                {selectedFilmClip.runPass === "run" ? (
+                                  <div className="grid gap-2 sm:grid-cols-2">
+                                    <div className="rounded-lg border bg-white px-3 py-2">
+                                      <div className="text-xs uppercase tracking-wide text-slate-500">Scheme</div>
+                                      <div className="mt-1 font-semibold capitalize text-slate-900">{selectedFilmClip.runScheme || "—"}</div>
+                                    </div>
+                                    <div className="rounded-lg border bg-white px-3 py-2">
+                                      <div className="text-xs uppercase tracking-wide text-slate-500">Concept</div>
+                                      <div className="mt-1 font-semibold text-slate-900">
+                                        {selectedFilmClip.runScheme === "gap"
+                                          ? selectedFilmClip.gapPullerCount === "1"
+                                            ? selectedFilmClip.gapOnePullerConcept || "—"
+                                            : selectedFilmClip.gapTwoPullerConcept || "—"
+                                          : selectedFilmClip.runScheme === "man"
+                                            ? selectedFilmClip.manConcept || "—"
+                                            : `${selectedFilmClip.clipBucket}`}
+                                      </div>
+                                    </div>
+                                    {selectedFilmClip.runScheme === "gap" ? (
+                                      <div className="rounded-lg border bg-white px-3 py-2 sm:col-span-2">
+                                        <div className="text-xs uppercase tracking-wide text-slate-500">Pullers</div>
+                                        <div className="mt-1 font-semibold text-slate-900">
+                                          {selectedFilmClip.gapPullerCount
+                                            ? `${selectedFilmClip.gapPullerCount} puller${selectedFilmClip.gapPullerCount === "1" ? "" : "s"}`
+                                            : "—"}
+                                        </div>
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                ) : null}
+                                <div className="text-xs text-slate-500">
+                                  {selectedFilmClip.studyFileName ? ` • Study: ${selectedFilmClip.studyFileName}` : ""}
+                                  {selectedFilmClip.quizFileName ? ` • Quiz: ${selectedFilmClip.quizFileName}` : ""}
+                                  {(selectedFilmClip.quizStartSeconds !== null && selectedFilmClip.quizStartSeconds !== undefined) ||
+                                  (selectedFilmClip.quizEndSeconds !== null && selectedFilmClip.quizEndSeconds !== undefined)
+                                    ? ` • Quiz Window: ${selectedFilmClip.quizStartSeconds ?? 0}s to ${selectedFilmClip.quizEndSeconds ?? "end"}s`
+                                    : ""}
+                                </div>
+                              </div>
+                            ) : null}
                             <Button className="h-12 w-full rounded-xl text-base" onClick={nextFilmQuizClip}>
                               Next Clip
                             </Button>
@@ -4429,7 +4531,7 @@ const existingStats =
                     ) : null}
                   </div>
 
-                  {currentUser?.isAdmin ? (
+                  {currentUser?.isAdmin && showFilmAdminTools ? (
                     <div className="space-y-3 rounded-2xl border bg-white p-4 text-sm text-slate-600">
                       <div className="text-sm font-semibold text-slate-900">Add Study Clip</div>
                         <div className="grid gap-3">
@@ -4718,13 +4820,9 @@ const existingStats =
                         </div>
                       </div>
                     </div>
-                  ) : (
-                    <div className="rounded-2xl border bg-white p-4 text-sm text-slate-600">
-                      Film upload tools are admin-only. Logged-in players can still study any clips already saved to the library.
-                    </div>
-                  )}
+                  ) : null}
 
-                  {selectedFilmClip ? (
+                  {currentUser?.isAdmin && showFilmAdminTools && selectedFilmClip ? (
                     <div className="space-y-3 rounded-2xl border bg-white p-4 text-sm text-slate-600">
                       <div className="text-sm font-semibold text-slate-900">Edit Clip Metadata</div>
                       <div className="grid gap-3">
@@ -4947,14 +5045,6 @@ const existingStats =
                   ) : null}
                 </div>
               </div>
-              ) : (
-                <div className="rounded-2xl border bg-white p-6 text-center text-slate-700">
-                  <div className="text-lg font-semibold">Admin Access Required</div>
-                  <div className="mt-2 text-sm text-slate-500">
-                    Film Mode is currently available only to admin users while the clip library is being built.
-                  </div>
-                </div>
-              )
             ) : mode === "quiz" ? (
               <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
                 <div className="space-y-4">
