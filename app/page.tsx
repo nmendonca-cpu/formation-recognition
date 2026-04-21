@@ -97,6 +97,10 @@ type ScoreSummary = {
 type FilmQuizAnswers = {
   runPass: string;
   direction: string;
+  runScheme: string;
+  zoneType: string;
+  gapPullerCount: string;
+  pullerConcept: string;
 };
 
 type FilmSaveStatus = {
@@ -106,9 +110,10 @@ type FilmSaveStatus = {
 
 type FilmSourceType = "Personal" | "Drive" | "Hudl" | "Other";
 type FilmRunScheme = "gap" | "zone" | "man" | "";
-type FilmPassType = "drop_back" | "boot" | "";
+type FilmZoneType = "normal" | "split" | "";
+type FilmPassType = "";
 type FilmGapPullerCount = "1" | "2" | "";
-type FilmGapOnePullerConcept = "Power" | "Dart" | "G Lead" | "Trap" | "Center Pull" | "";
+type FilmGapOnePullerConcept = "Power" | "Dart (Tackle Power)" | "G Lead" | "Trap" | "Center Pull" | "";
 type FilmGapTwoPullerConcept = "GT" | "GY/GH" | "CG/CT" | "Buck Sweep" | "";
 type FilmManConcept = "Duo" | "Lead" | "";
 
@@ -121,6 +126,7 @@ type FilmClip = {
   direction: Side;
   passType: FilmPassType;
   runScheme: FilmRunScheme;
+  zoneType: FilmZoneType;
   gapPullerCount: FilmGapPullerCount;
   gapOnePullerConcept: FilmGapOnePullerConcept;
   gapTwoPullerConcept: FilmGapTwoPullerConcept;
@@ -142,6 +148,7 @@ type FilmClipDraft = {
   direction: Side;
   passType: FilmPassType;
   runScheme: FilmRunScheme;
+  zoneType: FilmZoneType;
   gapPullerCount: FilmGapPullerCount;
   gapOnePullerConcept: FilmGapOnePullerConcept;
   gapTwoPullerConcept: FilmGapTwoPullerConcept;
@@ -177,11 +184,10 @@ const MODE_OPTIONS: { value: AppMode; label: string; title: string }[] = [
 const VIEW_STATE_STORAGE_KEY = "formation-recognition-view-state";
 const FILM_CLIPS_STORAGE_KEY = "formation-recognition-film-clips";
 const FILM_BUCKET = "film-clips";
-const FILM_SOURCE_OPTIONS: FilmSourceType[] = ["Personal", "Drive", "Hudl", "Other"];
 const FILM_RUN_SCHEME_OPTIONS: Exclude<FilmRunScheme, "">[] = ["gap", "zone", "man"];
-const FILM_PASS_TYPE_OPTIONS: Exclude<FilmPassType, "">[] = ["drop_back", "boot"];
+const FILM_ZONE_TYPE_OPTIONS: Exclude<FilmZoneType, "">[] = ["normal", "split"];
 const FILM_GAP_PULLER_COUNT_OPTIONS: Exclude<FilmGapPullerCount, "">[] = ["1", "2"];
-const FILM_GAP_ONE_PULLER_CONCEPT_OPTIONS: Exclude<FilmGapOnePullerConcept, "">[] = ["Power", "Dart", "G Lead", "Trap", "Center Pull"];
+const FILM_GAP_ONE_PULLER_CONCEPT_OPTIONS: Exclude<FilmGapOnePullerConcept, "">[] = ["Power", "Dart (Tackle Power)", "G Lead", "Trap", "Center Pull"];
 const FILM_GAP_TWO_PULLER_CONCEPT_OPTIONS: Exclude<FilmGapTwoPullerConcept, "">[] = ["GT", "GY/GH", "CG/CT", "Buck Sweep"];
 const FILM_MAN_CONCEPT_OPTIONS: Exclude<FilmManConcept, "">[] = ["Duo", "Lead"];
 
@@ -611,11 +617,13 @@ function buildWingTFormation(call: string, wide = false): FormationMeta {
     }
   }
 
-  const passStrength = computePassStrengthFromEligibles(players, side, {
-    isEmpty: false,
-    isPistol: false,
-    personnel: "21",
-  });
+  const passStrength = isUnbalanced
+    ? side
+    : computePassStrengthFromEligibles(players, side, {
+        isEmpty: false,
+        isPistol: false,
+        personnel: "21",
+      });
 
   return {
     playbook: "Wing T",
@@ -1069,12 +1077,21 @@ function getAlignmentLandmarks(formation: FormationMeta): Landmark[] {
     }
   });
 
+  if (isWingTUnbalancedFormation(formation)) {
+    const strongSide = formation.passStrength;
+    const strongWing = getWingSurface(formation, strongSide);
+    const strongWide = getOutsideReceiver(formation, strongSide);
+    if (strongWing && strongWide && hasConsiderableApexSpace(strongWing, strongWide)) {
+      push(`lb-${strongSide}-unbalanced-wing-wide-apex`, getMidpoint(strongWing.x, strongWide.x), LB_Y, "Apex", "lb");
+    }
+  }
+
   (["left", "right"] as Side[]).forEach((side) => {
     const bunchOnSide = isBunchFamilyOnSide(formation, side);
     const numberOne = getOutsideReceiver(formation, side);
     const numberTwo = getNumberTwoReceiver(formation, side);
     if (!numberOne || !numberTwo) return;
-    if (!bunchOnSide && isLbApexPlayer(numberOne) && isLbApexPlayer(numberTwo)) {
+    if (!bunchOnSide && hasConsiderableApexSpace(numberOne, numberTwo) && !isTightTeWingCombo(numberOne, numberTwo)) {
       push(`lb-${side}-apex-12`, getMidpoint(numberOne.x, numberTwo.x), LB_Y, "Apex", "lb");
     }
     if (hasConsiderableApexSpace(numberOne, numberTwo) && !isTightTeWingCombo(numberOne, numberTwo)) {
@@ -1235,7 +1252,24 @@ function getFullbackOffsetSide(formation: FormationMeta): Side | null {
   return fullback.x < 50 ? "left" : "right";
 }
 
+function isWingTUnbalancedFormation(formation: FormationMeta) {
+  return formation.playbook === "Wing T" && formation.name.includes("Unbalanced");
+}
+
+function isAceTreyFormation(formation: FormationMeta) {
+  return formation.playbook === "Pro" && formation.name.startsWith("Ace Trey");
+}
+
+function getNextClosedBumpLabel(label: "30T" | "40T" | "50T") {
+  if (label === "30T") return "40T";
+  if (label === "40T") return "50T";
+  return "60T";
+}
+
 function isClosedSurfaceOnlySide(formation: FormationMeta, side: Side) {
+  if (isWingTUnbalancedFormation(formation) && findTrueEligiblesOnSide(formation, side).length === 0) {
+    return true;
+  }
   const inline = getInlineSurface(formation, side);
   const wing = getWingSurface(formation, side);
   const slot = getSlotReceiver(formation, side);
@@ -1243,6 +1277,11 @@ function isClosedSurfaceOnlySide(formation: FormationMeta, side: Side) {
 }
 
 function shouldBossIlbs(formation: FormationMeta) {
+  if (formation.playbook === "Wing T" || formation.family === "Wing T" || formation.name.startsWith("Wing T") || formation.name.startsWith("Double Wing")) {
+    if (formation.name.includes("Near")) return true;
+    return false;
+  }
+
   const leftInline = getInlineSurface(formation, "left");
   const rightInline = getInlineSurface(formation, "right");
   const leftWing = getWingSurface(formation, "left");
@@ -1446,20 +1485,27 @@ function getAlignmentAnswerKey(formation: FormationMeta, landmarks: Landmark[], 
     return getShade(numberTwo, "db", onHashOrWider ? "I" : "O");
   };
 
-  const strongInline = getInlineSurface(formation, runStrength);
-  const strongWing = getWingSurface(formation, runStrength);
-  const weakInline = getInlineSurface(formation, weakSide);
-  const weakWing = getWingSurface(formation, weakSide);
+  const hasTrueInlineTe = Boolean(getInlineSurface(formation, "left") || getInlineSurface(formation, "right"));
+  const emptyUnderFront = (formation.backfield === "Empty" || formation.name.includes("Empty")) && !hasTrueInlineTe;
+  const threeTechSide: Side = emptyUnderFront ? passAway : runStrength;
+  const noseSide: Side = emptyUnderFront ? passStrength : weakSide;
+  const sdeSide: Side = emptyUnderFront ? passAway : runStrength;
+  const wdeSide: Side = emptyUnderFront ? passStrength : weakSide;
+
+  const strongInline = getInlineSurface(formation, sdeSide);
+  const strongWing = getWingSurface(formation, sdeSide);
+  const weakInline = getInlineSurface(formation, wdeSide);
+  const weakWing = getWingSurface(formation, wdeSide);
   const multipleTes = Boolean(strongInline && weakInline);
 
-  const tPoint = findLandmarkByLabel(landmarks, "dl", "3T", runStrength);
-  const nPoint = findLandmarkByLabel(landmarks, "dl", "2i", weakSide);
-  const sdeFive = findLandmarkByLabel(landmarks, "dl", "5T", runStrength);
-  const sdeSix = findLandmarkByLabel(landmarks, "dl", "6", runStrength) || findLandmarkByLabel(landmarks, "dl", "6T", runStrength);
-  const sdeNine = findLandmarkByLabel(landmarks, "dl", "7T", runStrength) || findLandmarkByLabel(landmarks, "dl", "9T", runStrength);
-  const wdeFive = findLandmarkByLabel(landmarks, "dl", "5T", weakSide);
-  const wdeSix = findLandmarkByLabel(landmarks, "dl", "6", weakSide) || findLandmarkByLabel(landmarks, "dl", "6T", weakSide);
-  const wdeNine = findLandmarkByLabel(landmarks, "dl", "7T", weakSide) || findLandmarkByLabel(landmarks, "dl", "9T", weakSide);
+  const tPoint = findLandmarkByLabel(landmarks, "dl", "3T", threeTechSide);
+  const nPoint = findLandmarkByLabel(landmarks, "dl", "2i", noseSide);
+  const sdeFive = findLandmarkByLabel(landmarks, "dl", "5T", sdeSide);
+  const sdeSix = findLandmarkByLabel(landmarks, "dl", "6", sdeSide) || findLandmarkByLabel(landmarks, "dl", "6T", sdeSide);
+  const sdeNine = findLandmarkByLabel(landmarks, "dl", "7T", sdeSide) || findLandmarkByLabel(landmarks, "dl", "9T", sdeSide);
+  const wdeFive = findLandmarkByLabel(landmarks, "dl", "5T", wdeSide);
+  const wdeSix = findLandmarkByLabel(landmarks, "dl", "6", wdeSide) || findLandmarkByLabel(landmarks, "dl", "6T", wdeSide);
+  const wdeNine = findLandmarkByLabel(landmarks, "dl", "7T", wdeSide) || findLandmarkByLabel(landmarks, "dl", "9T", wdeSide);
 
   if (tPoint) answer.T = { x: tPoint.x, y: tPoint.y };
   if (nPoint) answer.N = { x: nPoint.x, y: nPoint.y };
@@ -1476,6 +1522,7 @@ function getAlignmentAnswerKey(formation: FormationMeta, landmarks: Landmark[], 
   else if (wdeFive) answer.WDE = { x: wdeFive.x, y: wdeFive.y };
 
   const bossIlbs = shouldBossIlbs(formation);
+  const fullbackSide = getFullbackOffsetSide(formation);
   const mikeSide = passStrength;
   const willSide = passAway;
   const mikeOnRunSide = mikeSide === runStrength;
@@ -1500,6 +1547,7 @@ function getAlignmentAnswerKey(formation: FormationMeta, landmarks: Landmark[], 
   const closedAndBoss43 = frontMode === "4-3" && Boolean(cometSide) && bossIlbs;
   const closedAndBoss44 = frontMode === "4-4" && Boolean(cometSide) && bossIlbs;
   const closedNoBoss44 = frontMode === "4-4" && Boolean(cometSide) && !bossIlbs;
+  const aceTreyFourFour = frontMode === "4-4" && isAceTreyFormation(formation);
 
   const strongBunch = isBunchFamilyOnSide(formation, mikeSide) ? getBunchNumberedReceivers(formation, mikeSide) : null;
   const mikeNumberThree = getNumberThreeReceiver(formation, mikeSide);
@@ -1533,6 +1581,11 @@ function getAlignmentAnswerKey(formation: FormationMeta, landmarks: Landmark[], 
 
   const willLandmark = (() => {
     const strengthEligibleCount = findTrueEligiblesOnSide(formation, passStrength).length;
+
+    if (aceTreyFourFour) {
+      return findLandmarkByLabel(landmarks, "lb", "20T", passStrength)
+        || findLandmarkByLabel(landmarks, "lb", "30T", passStrength);
+    }
 
     // 🔥 FIX: Proper 4-3 Closed Boss behavior (split 20Ts)
     if (frontMode === "4-4" && closedThreeByOne) {
@@ -1611,6 +1664,11 @@ function getAlignmentAnswerKey(formation: FormationMeta, landmarks: Landmark[], 
 
     if (cometSide && cometSide === side) {
       const strongEligibleCount = findTrueEligiblesOnSide(formation, passStrength).length;
+      const closedBossBsBump =
+        targetId === "BS" &&
+        bossIlbs &&
+        fullbackSide === side &&
+        Boolean(cometTe);
 
       // 4-4 weak overhang rule: if the closed side has no TE, treat the tackle like the TE
       // and align BS in the next open gap on that closed side.
@@ -1628,7 +1686,8 @@ function getAlignmentAnswerKey(formation: FormationMeta, landmarks: Landmark[], 
         !(cometTe && cometWing) &&
         (Boolean(cometTe) || Boolean(cometWing));
 
-      const bumpLabel = singleSurfaceCometBump ? "30T" : cometTe && cometWing ? "50T" : "40T";
+      const baseBumpLabel = singleSurfaceCometBump ? "30T" : cometTe && cometWing ? "50T" : "40T";
+      const bumpLabel = closedBossBsBump ? getNextClosedBumpLabel(baseBumpLabel) : baseBumpLabel;
       const bump = findLandmarkByLabel(landmarks, "lb", bumpLabel, side);
       if (bump) answer[targetId] = { x: bump.x, y: bump.y };
       return;
@@ -1725,7 +1784,11 @@ function getAlignmentAnswerKey(formation: FormationMeta, landmarks: Landmark[], 
       if (bc) answer.BC = { x: bc.x, y: bc.y };
     }
 
-    if (closedThreeByOne) {
+    if (aceTreyFourFour) {
+      const bs = findLandmarkByLabel(landmarks, "lb", "20T", passAway)
+        || findLandmarkByLabel(landmarks, "lb", "10T", passAway);
+      if (bs) answer.BS = { x: bs.x, y: bs.y };
+    } else if (closedThreeByOne) {
       const bs = findLandmarkByLabel(landmarks, "lb", "10T", passAway);
       if (bs) answer.BS = { x: bs.x, y: bs.y };
     } else {
@@ -1756,7 +1819,10 @@ function getAlignmentAnswerKey(formation: FormationMeta, landmarks: Landmark[], 
     }
 
     const bsWeakEligibleCount = findTrueEligiblesOnSide(formation, passAway).length;
-    if (cometSide && cometSide === passAway) {
+    if (isWingTUnbalancedFormation(formation) && bsWeakEligibleCount === 0) {
+      const edge = findLandmarkByLabel(landmarks, "db", "Edge", passAway);
+      if (edge) answer.BS = { x: edge.x, y: edge.y };
+    } else if (cometSide && cometSide === passAway) {
       const cometFirstEligible = getNumberTwoReceiver(formation, cometSide) || getOutsideReceiver(formation, cometSide) || getInlineSurface(formation, cometSide) || getWingSurface(formation, cometSide);
       const bs = getShade(cometFirstEligible, "db", "I");
       if (bs) answer.BS = { x: bs.x, y: bs.y };
@@ -2096,6 +2162,7 @@ function deriveFilmClipBucket(metadata: {
   direction: Side;
   passType: FilmPassType;
   runScheme: FilmRunScheme;
+  zoneType: FilmZoneType;
   gapPullerCount: FilmGapPullerCount;
   gapOnePullerConcept: FilmGapOnePullerConcept;
   gapTwoPullerConcept: FilmGapTwoPullerConcept;
@@ -2104,12 +2171,11 @@ function deriveFilmClipBucket(metadata: {
   const sideLabel = formatFilmDirection(metadata.direction);
 
   if (metadata.runPass === "pass") {
-    if (metadata.passType === "boot") return `Boot ${sideLabel}`;
-    if (metadata.passType === "drop_back") return `Drop Back ${sideLabel}`;
-    return `Pass ${sideLabel}`;
+    return "Pass";
   }
 
   if (metadata.runScheme === "zone") {
+    if (metadata.zoneType === "split") return `Split Zone ${sideLabel}`;
     return `Zone ${sideLabel}`;
   }
 
@@ -2139,6 +2205,7 @@ export default function FormationRecognitionWorkingApp() {
   const skipNextModeRandomizeRef = useRef(false);
   const previousModeRef = useRef<AppMode>("study");
   const previousAlignmentViewModeRef = useRef<AlignmentViewMode>("study");
+  const lastFilmRandomizeSignatureRef = useRef<string>("");
   const videoObjectUrlsRef = useRef<string[]>([]);
   const filmQuizVideoRef = useRef<HTMLVideoElement | null>(null);
   const filmStudyVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -2176,19 +2243,28 @@ export default function FormationRecognitionWorkingApp() {
   const [filmUploadResetKey, setFilmUploadResetKey] = useState(0);
   const [filmSaveNotice, setFilmSaveNotice] = useState<FilmSaveStatus | null>(null);
   const [showFilmAdminTools, setShowFilmAdminTools] = useState(false);
-  const [filmQuizAnswers, setFilmQuizAnswers] = useState<FilmQuizAnswers>({ runPass: "", direction: "" });
+  const [filmQuizAnswers, setFilmQuizAnswers] = useState<FilmQuizAnswers>({
+    runPass: "",
+    direction: "",
+    runScheme: "",
+    zoneType: "",
+    gapPullerCount: "",
+    pullerConcept: "",
+  });
   const [showFilmQuizFeedback, setShowFilmQuizFeedback] = useState(false);
   const [showFilmQuizAnswers, setShowFilmQuizAnswers] = useState(false);
   const [filmQuizStarted, setFilmQuizStarted] = useState(false);
   const [filmQuizFinished, setFilmQuizFinished] = useState(false);
+  const [filmQuizPlaysUsed, setFilmQuizPlaysUsed] = useState(0);
   const [filmStudyCurrentTime, setFilmStudyCurrentTime] = useState(0);
   const [filmStudyDuration, setFilmStudyDuration] = useState(0);
   const [filmDraft, setFilmDraft] = useState<FilmClipDraft>({
-    sourceType: "Hudl",
+    sourceType: "Other",
     runPass: "run",
     direction: "right",
     passType: "",
     runScheme: "zone",
+    zoneType: "normal",
     gapPullerCount: "",
     gapOnePullerConcept: "",
     gapTwoPullerConcept: "",
@@ -2201,11 +2277,12 @@ export default function FormationRecognitionWorkingApp() {
     quizFile: null,
   });
   const [filmEditDraft, setFilmEditDraft] = useState<Omit<FilmClipDraft, "remoteStudyUrl" | "remoteQuizUrl" | "studyFile" | "quizFile">>({
-    sourceType: "Hudl",
+    sourceType: "Other",
     runPass: "run",
     direction: "right",
     passType: "",
     runScheme: "zone",
+    zoneType: "normal",
     gapPullerCount: "",
     gapOnePullerConcept: "",
     gapTwoPullerConcept: "",
@@ -2370,7 +2447,7 @@ export default function FormationRecognitionWorkingApp() {
           typeof clip.id === "string" &&
           typeof clip.title === "string" &&
           typeof clip.clipBucket === "string" &&
-          FILM_SOURCE_OPTIONS.includes(clip.sourceType) &&
+          Boolean(clip.sourceType) &&
           (clip.runPass === "run" || clip.runPass === "pass") &&
           (clip.direction === "left" || clip.direction === "right") &&
           typeof clip.studyUrl === "string" &&
@@ -2392,14 +2469,32 @@ export default function FormationRecognitionWorkingApp() {
       if (!currentUser) return;
 
       const supabase = createClient();
-      const { data, error } = await supabase
+      const baseSelect = "id, title, clip_bucket, source_type, source_label, run_pass, direction, pass_type, run_scheme, gap_puller_count, gap_one_puller_concept, gap_two_puller_concept, man_concept, study_url, quiz_url, quiz_start_seconds, quiz_end_seconds, study_storage_path, quiz_storage_path, study_file_name, quiz_file_name";
+      const primaryResult = await supabase
         .from("film_clips")
-        .select("id, title, clip_bucket, source_type, source_label, run_pass, direction, pass_type, run_scheme, gap_puller_count, gap_one_puller_concept, gap_two_puller_concept, man_concept, study_url, quiz_url, quiz_start_seconds, quiz_end_seconds, study_storage_path, quiz_storage_path, study_file_name, quiz_file_name")
+        .select(`${baseSelect}, zone_type`)
         .eq("submode", "read_key")
         .order("created_at", { ascending: false });
+      let data = primaryResult.data as any[] | null;
+      let error = primaryResult.error;
+
+      if (error?.code === "PGRST204" || error?.message?.includes("zone_type")) {
+        const fallbackResult = await supabase
+          .from("film_clips")
+          .select(baseSelect)
+          .eq("submode", "read_key")
+          .order("created_at", { ascending: false });
+        data = fallbackResult.data as any[] | null;
+        error = fallbackResult.error;
+      }
 
       if (error) {
-        console.error("Failed to load film clips", error);
+        console.error("Failed to load film clips", {
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          code: error.code,
+        });
         return;
       }
 
@@ -2411,15 +2506,17 @@ export default function FormationRecognitionWorkingApp() {
             id: row.id,
             title: row.title ?? row.clip_bucket ?? "Untitled Clip",
             clipBucket: row.clip_bucket ?? row.title ?? "Unsorted",
-            sourceType: FILM_SOURCE_OPTIONS.includes(row.source_type)
-              ? row.source_type
-              : FILM_SOURCE_OPTIONS.includes(row.source_label)
-                ? row.source_label
-                : "Other",
+            sourceType: row.source_type || row.source_label || "Other",
             runPass: row.run_pass,
-            direction: row.direction,
-            passType: FILM_PASS_TYPE_OPTIONS.includes(row.pass_type) ? row.pass_type : "",
+            direction: row.run_pass === "pass" ? "right" : row.direction,
+            passType: "",
             runScheme: FILM_RUN_SCHEME_OPTIONS.includes(row.run_scheme) ? row.run_scheme : "",
+            zoneType:
+              row.zone_type === "split_zone"
+                ? "split"
+                : FILM_ZONE_TYPE_OPTIONS.includes(row.zone_type)
+                  ? row.zone_type
+                  : "",
             gapPullerCount: FILM_GAP_PULLER_COUNT_OPTIONS.includes(String(row.gap_puller_count) as Exclude<FilmGapPullerCount, "">)
               ? (String(row.gap_puller_count) as Exclude<FilmGapPullerCount, "">)
               : "",
@@ -2783,32 +2880,63 @@ const existingStats =
       .filter((group) => group.options.length > 0);
   }, [pool]);
   const filmClipGroups = useMemo(() => {
-    const grouped = new Map<"run" | "pass", Map<string, { value: string; label: string }[]>>();
+    type ClipOption = { value: string; label: string };
+    type BucketGroup = { bucket: string; options: ClipOption[] };
+    type SectionGroup = { section: string; buckets: BucketGroup[] };
+
+    const grouped = new Map<"run" | "pass", Map<string, Map<string, ClipOption[]>>>();
+
+    const getRunSection = (clip: FilmClip) => {
+      if (clip.runScheme === "zone") return "Zone";
+      if (clip.runScheme === "man") return "Man";
+      if (clip.runScheme === "gap") return "Gap";
+      return "Other Runs";
+    };
+
+    const getPassSection = (_clip: FilmClip) => "Pass";
 
     filmClips.forEach((clip) => {
-      const runPassBuckets = grouped.get(clip.runPass) ?? new Map<string, { value: string; label: string }[]>();
-      const bucketClips = runPassBuckets.get(clip.clipBucket) ?? [];
+      const sectionLabel = clip.runPass === "run" ? getRunSection(clip) : getPassSection(clip);
+      const runPassSections = grouped.get(clip.runPass) ?? new Map<string, Map<string, ClipOption[]>>();
+      const sectionBuckets = runPassSections.get(sectionLabel) ?? new Map<string, ClipOption[]>();
+      const bucketClips = sectionBuckets.get(clip.clipBucket) ?? [];
       const nextCount = bucketClips.length + 1;
+
       bucketClips.push({
         value: clip.id,
         label: `Clip ${nextCount}`,
       });
-      runPassBuckets.set(clip.clipBucket, bucketClips);
-      grouped.set(clip.runPass, runPassBuckets);
+
+      sectionBuckets.set(clip.clipBucket, bucketClips);
+      runPassSections.set(sectionLabel, sectionBuckets);
+      grouped.set(clip.runPass, runPassSections);
     });
 
+    const runSectionOrder = ["Zone", "Man", "Gap", "Other Runs"];
+    const passSectionOrder = ["Pass"];
+
     return (["run", "pass"] as const)
-      .map((runPass) => ({
-        runPass,
-        label: runPass === "run" ? "Run" : "Pass",
-        buckets: Array.from(grouped.get(runPass)?.entries() ?? [])
-          .map(([bucket, options]) => ({
-            bucket,
-            options,
+      .map((runPass) => {
+        const sectionOrder = runPass === "run" ? runSectionOrder : passSectionOrder;
+        const sections: SectionGroup[] = Array.from(grouped.get(runPass)?.entries() ?? [])
+          .map(([section, buckets]) => ({
+            section,
+            buckets: Array.from(buckets.entries())
+              .map(([bucket, options]) => ({
+                bucket,
+                options,
+              }))
+              .sort((a, b) => a.bucket.localeCompare(b.bucket)),
           }))
-          .sort((a, b) => a.bucket.localeCompare(b.bucket)),
-      }))
-      .filter((group) => group.buckets.length > 0);
+          .sort((a, b) => sectionOrder.indexOf(a.section) - sectionOrder.indexOf(b.section));
+
+        return {
+          runPass,
+          label: runPass === "run" ? "Run" : "Pass",
+          sections,
+        };
+      })
+      .filter((group) => group.sections.length > 0);
   }, [filmClips]);
   const selectedFilmClip = useMemo(
     () => filmClips.find((clip) => clip.id === selectedFilmClipId) ?? filmClips[0] ?? null,
@@ -2882,18 +3010,43 @@ const existingStats =
   }, [filmViewMode, selectedFilmClipId, filmPlaybackNonce]);
 
   useEffect(() => {
-    setFilmQuizAnswers({ runPass: "", direction: "" });
+    setFilmQuizAnswers({
+      runPass: "",
+      direction: "",
+      runScheme: "",
+      zoneType: "",
+      gapPullerCount: "",
+      pullerConcept: "",
+    });
     setShowFilmQuizFeedback(false);
     setShowFilmQuizAnswers(false);
     setFilmQuizStarted(false);
     setFilmQuizFinished(false);
+    setFilmQuizPlaysUsed(0);
   }, [selectedFilmClipId]);
 
   useEffect(() => {
-    if (mode === "film" && filmViewMode === "quiz" && filmClips.length && selectedFilmClip) {
-      setSelectedFilmClipId((prev) => prev || filmClips[getRandomPoolIndex(filmClips.length)].id);
+    if (mode !== "film" || !filmClips.length) return;
+
+    const signature = `${mode}:${filmViewMode}`;
+    const hasValidSelection = Boolean(
+      selectedFilmClipId && filmClips.some((clip) => clip.id === selectedFilmClipId),
+    );
+    const shouldRandomize =
+      lastFilmRandomizeSignatureRef.current !== signature || !hasValidSelection;
+
+    if (shouldRandomize) {
+      const currentIndex = selectedFilmClipId
+        ? filmClips.findIndex((clip) => clip.id === selectedFilmClipId)
+        : undefined;
+      const nextIndex =
+        filmViewMode === "quiz"
+          ? getRandomPoolIndex(filmClips.length, currentIndex >= 0 ? currentIndex : undefined)
+          : getRandomPoolIndex(filmClips.length);
+      setSelectedFilmClipId(filmClips[nextIndex].id);
+      lastFilmRandomizeSignatureRef.current = signature;
     }
-  }, [mode, filmViewMode, filmClips.length, selectedFilmClip?.id]);
+  }, [mode, filmViewMode, filmClips, selectedFilmClipId]);
 
   useEffect(() => {
     if (!selectedFilmClip) return;
@@ -2903,6 +3056,7 @@ const existingStats =
       direction: selectedFilmClip.direction,
       passType: selectedFilmClip.passType,
       runScheme: selectedFilmClip.runScheme || "zone",
+      zoneType: selectedFilmClip.zoneType || "normal",
       gapPullerCount: selectedFilmClip.gapPullerCount,
       gapOnePullerConcept: selectedFilmClip.gapOnePullerConcept,
       gapTwoPullerConcept: selectedFilmClip.gapTwoPullerConcept,
@@ -3070,20 +3224,48 @@ const existingStats =
     const currentIndex = selectedFilmClip ? filmClips.findIndex((clip) => clip.id === selectedFilmClip.id) : undefined;
     const nextIndex = getRandomPoolIndex(filmClips.length, currentIndex);
     setSelectedFilmClipId(filmClips[nextIndex].id);
-    setFilmQuizAnswers({ runPass: "", direction: "" });
+    setFilmQuizAnswers({
+      runPass: "",
+      direction: "",
+      runScheme: "",
+      zoneType: "",
+      gapPullerCount: "",
+      pullerConcept: "",
+    });
     setShowFilmQuizFeedback(false);
     setShowFilmQuizAnswers(false);
     setFilmQuizStarted(false);
     setFilmQuizFinished(false);
+    setFilmQuizPlaysUsed(0);
     setScoredAttemptKey(null);
     setAttemptStartedAt(Date.now());
   };
 
+  useEffect(() => {
+    if (mode !== "film" || filmViewMode !== "quiz" || !showFilmQuizFeedback) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Enter") return;
+      const target = event.target as HTMLElement | null;
+      const tagName = target?.tagName;
+      if (tagName === "INPUT" || tagName === "TEXTAREA") return;
+      event.preventDefault();
+      nextFilmQuizClip();
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [mode, filmViewMode, showFilmQuizFeedback, nextFilmQuizClip]);
+
   const startFilmQuizClip = () => {
+    const maxPlays = 1;
+    if (filmQuizPlaysUsed >= maxPlays) return;
     setFilmQuizStarted(true);
     setFilmQuizFinished(false);
     setShowFilmQuizFeedback(false);
     setShowFilmQuizAnswers(false);
+    setFilmQuizPlaysUsed((prev) => prev + 1);
+    setFilmPlaybackNonce((prev) => prev + 1);
     setAttemptStartedAt(Date.now());
   };
 
@@ -3156,9 +3338,10 @@ const existingStats =
             clipBucket,
             sourceType,
             runPass: filmDraft.runPass,
-            direction: filmDraft.direction,
-            passType: filmDraft.runPass === "pass" ? filmDraft.passType : "",
+            direction: filmDraft.runPass === "pass" ? "right" : filmDraft.direction,
+            passType: "",
             runScheme: filmDraft.runPass === "run" ? filmDraft.runScheme : "",
+            zoneType: filmDraft.runPass === "run" && filmDraft.runScheme === "zone" ? filmDraft.zoneType : "",
             gapPullerCount: filmDraft.runPass === "run" && filmDraft.runScheme === "gap" ? filmDraft.gapPullerCount : "",
             gapOnePullerConcept:
               filmDraft.runPass === "run" && filmDraft.runScheme === "gap" && filmDraft.gapPullerCount === "1"
@@ -3189,8 +3372,9 @@ const existingStats =
             submode: "read_key",
             run_pass: nextClip.runPass,
             direction: nextClip.direction,
-            pass_type: nextClip.passType || null,
+            pass_type: null,
             run_scheme: nextClip.runScheme || null,
+            zone_type: nextClip.zoneType || null,
             gap_puller_count: nextClip.gapPullerCount ? Number(nextClip.gapPullerCount) : null,
             gap_one_puller_concept: nextClip.gapOnePullerConcept || null,
             gap_two_puller_concept: nextClip.gapTwoPullerConcept || null,
@@ -3256,9 +3440,10 @@ const existingStats =
           clipBucket,
           sourceType,
           runPass: filmDraft.runPass,
-          direction: filmDraft.direction,
-          passType: filmDraft.runPass === "pass" ? filmDraft.passType : "",
+          direction: filmDraft.runPass === "pass" ? "right" : filmDraft.direction,
+          passType: "",
           runScheme: filmDraft.runPass === "run" ? filmDraft.runScheme : "",
+          zoneType: filmDraft.runPass === "run" && filmDraft.runScheme === "zone" ? filmDraft.zoneType : "",
           gapPullerCount: filmDraft.runPass === "run" && filmDraft.runScheme === "gap" ? filmDraft.gapPullerCount : "",
           gapOnePullerConcept:
             filmDraft.runPass === "run" && filmDraft.runScheme === "gap" && filmDraft.gapPullerCount === "1"
@@ -3296,6 +3481,7 @@ const existingStats =
         direction: "right",
         passType: "",
         runScheme: "zone",
+        zoneType: "normal",
         gapPullerCount: "",
         gapOnePullerConcept: "",
         gapTwoPullerConcept: "",
@@ -3331,9 +3517,10 @@ const existingStats =
         clipBucket,
         sourceType: filmEditDraft.sourceType,
         runPass: filmEditDraft.runPass,
-        direction: filmEditDraft.direction,
-        passType: filmEditDraft.runPass === "pass" ? filmEditDraft.passType : "",
+        direction: filmEditDraft.runPass === "pass" ? "right" : filmEditDraft.direction,
+        passType: "",
         runScheme: filmEditDraft.runPass === "run" ? filmEditDraft.runScheme : "",
+        zoneType: filmEditDraft.runPass === "run" && filmEditDraft.runScheme === "zone" ? filmEditDraft.zoneType : "",
         gapPullerCount: filmEditDraft.runPass === "run" && filmEditDraft.runScheme === "gap" ? filmEditDraft.gapPullerCount : "",
         gapOnePullerConcept:
           filmEditDraft.runPass === "run" && filmEditDraft.runScheme === "gap" && filmEditDraft.gapPullerCount === "1"
@@ -3351,25 +3538,36 @@ const existingStats =
       try {
         if (selectedFilmClip.kind === "supabase") {
           const supabase = createClient();
-          const { error } = await supabase
+          const updatePayload = {
+            title: nextClip.title,
+            clip_bucket: nextClip.clipBucket,
+            source_type: nextClip.sourceType,
+            source_label: nextClip.sourceType,
+            run_pass: nextClip.runPass,
+            direction: nextClip.direction,
+            pass_type: null,
+            run_scheme: nextClip.runScheme || null,
+            zone_type: nextClip.zoneType || null,
+            gap_puller_count: nextClip.gapPullerCount ? Number(nextClip.gapPullerCount) : null,
+            gap_one_puller_concept: nextClip.gapOnePullerConcept || null,
+            gap_two_puller_concept: nextClip.gapTwoPullerConcept || null,
+            man_concept: nextClip.manConcept || null,
+            quiz_start_seconds: nextClip.quizStartSeconds,
+            quiz_end_seconds: nextClip.quizEndSeconds,
+          };
+          let { error } = await supabase
             .from("film_clips")
-            .update({
-              title: nextClip.title,
-              clip_bucket: nextClip.clipBucket,
-              source_type: nextClip.sourceType,
-              source_label: nextClip.sourceType,
-              run_pass: nextClip.runPass,
-              direction: nextClip.direction,
-              pass_type: nextClip.passType || null,
-              run_scheme: nextClip.runScheme || null,
-              gap_puller_count: nextClip.gapPullerCount ? Number(nextClip.gapPullerCount) : null,
-              gap_one_puller_concept: nextClip.gapOnePullerConcept || null,
-              gap_two_puller_concept: nextClip.gapTwoPullerConcept || null,
-              man_concept: nextClip.manConcept || null,
-              quiz_start_seconds: nextClip.quizStartSeconds,
-              quiz_end_seconds: nextClip.quizEndSeconds,
-            })
+            .update(updatePayload)
             .eq("id", selectedFilmClip.id);
+
+          if (error?.code === "PGRST204" || error?.message?.includes("zone_type")) {
+            const { zone_type: _zoneType, ...fallbackPayload } = updatePayload;
+            const fallbackResult = await supabase
+              .from("film_clips")
+              .update(fallbackPayload)
+              .eq("id", selectedFilmClip.id);
+            error = fallbackResult.error;
+          }
 
           if (error) throw error;
         }
@@ -3380,7 +3578,22 @@ const existingStats =
           message: `Updated ${nextClip.clipBucket}.`,
         });
       } catch (error) {
-        console.error("Failed to update film clip metadata", error);
+        if (error && typeof error === "object" && "message" in error) {
+          const typedError = error as {
+            message?: string;
+            details?: string | null;
+            hint?: string | null;
+            code?: string | null;
+          };
+          console.error("Failed to update film clip metadata", {
+            message: typedError.message,
+            details: typedError.details,
+            hint: typedError.hint,
+            code: typedError.code,
+          });
+        } else {
+          console.error("Failed to update film clip metadata", error);
+        }
         setFilmSaveNotice({
           tone: "error",
           message: "Clip update failed. Check the file or URL changes and try again.",
@@ -3510,15 +3723,64 @@ const existingStats =
     runStrength: FIELD_LABELS[displayFormation.runStrength],
     passStrength: FIELD_LABELS[displayFormation.passStrength],
   };
+  const filmQuizIsPass = selectedFilmClip?.runPass === "pass";
+  const selectedFilmGapConcept = selectedFilmClip?.gapPullerCount === "1"
+    ? selectedFilmClip.gapOnePullerConcept
+    : selectedFilmClip?.gapPullerCount === "2"
+      ? selectedFilmClip.gapTwoPullerConcept
+      : "";
+  const filmQuizNeedsRunScheme = selectedFilmClip?.runPass === "run";
+  const filmQuizNeedsZoneType = filmQuizNeedsRunScheme && selectedFilmClip?.runScheme === "zone";
+  const filmQuizNeedsGapDetails = filmQuizNeedsRunScheme && selectedFilmClip?.runScheme === "gap";
+  const filmQuizChecks = [
+    normalize(filmQuizAnswers.runPass) === normalize(selectedFilmClip?.runPass === "run" ? "Run" : "Pass"),
+    ...(filmQuizNeedsRunScheme
+      ? [normalize(filmQuizAnswers.runScheme) === normalize(selectedFilmClip?.runScheme ?? "")]
+      : []),
+    ...(!filmQuizIsPass
+      ? [normalizeStrength(filmQuizAnswers.direction) === normalize(selectedFilmClip?.direction ?? "")]
+      : []),
+    ...(filmQuizNeedsZoneType
+      ? [normalize(filmQuizAnswers.zoneType) === normalize(selectedFilmClip?.zoneType ?? "")]
+      : []),
+    ...(filmQuizNeedsGapDetails
+      ? [
+          normalize(filmQuizAnswers.gapPullerCount) === normalize(selectedFilmClip?.gapPullerCount ?? ""),
+          normalize(filmQuizAnswers.pullerConcept) === normalize(selectedFilmGapConcept),
+        ]
+      : []),
+  ];
   const filmQuizResult = {
     runPass: normalize(filmQuizAnswers.runPass) === normalize(selectedFilmClip?.runPass === "run" ? "Run" : "Pass"),
-    direction: normalizeStrength(filmQuizAnswers.direction) === normalize(selectedFilmClip?.direction ?? ""),
+    direction: filmQuizIsPass
+      ? true
+      : normalizeStrength(filmQuizAnswers.direction) === normalize(selectedFilmClip?.direction ?? ""),
+    runScheme: filmQuizNeedsRunScheme
+      ? normalize(filmQuizAnswers.runScheme) === normalize(selectedFilmClip?.runScheme ?? "")
+      : true,
+    zoneType: filmQuizNeedsZoneType
+      ? normalize(filmQuizAnswers.zoneType) === normalize(selectedFilmClip?.zoneType ?? "")
+      : true,
+    gapPullerCount: filmQuizNeedsGapDetails
+      ? normalize(filmQuizAnswers.gapPullerCount) === normalize(selectedFilmClip?.gapPullerCount ?? "")
+      : true,
+    pullerConcept: filmQuizNeedsGapDetails
+      ? normalize(filmQuizAnswers.pullerConcept) === normalize(selectedFilmGapConcept)
+      : true,
   };
-  const filmQuizScore = [filmQuizResult.runPass, filmQuizResult.direction].filter(Boolean).length;
+  const filmQuizQuestionCount = filmQuizChecks.length;
+  const filmQuizScore = filmQuizChecks.filter(Boolean).length;
+  const filmQuizIsPerfect = filmQuizChecks.every(Boolean);
+  const filmQuizAllowedReplays = 0;
+  const filmQuizTotalPlaysAllowed = 1 + filmQuizAllowedReplays;
+  const filmQuizReplaysRemaining = Math.max(0, filmQuizTotalPlaysAllowed - filmQuizPlaysUsed);
   const filmQuizPlaybackUrl =
     selectedFilmClip && (selectedFilmClip.quizStartSeconds !== null && selectedFilmClip.quizStartSeconds !== undefined || selectedFilmClip.quizEndSeconds !== null && selectedFilmClip.quizEndSeconds !== undefined)
       ? selectedFilmClip.studyUrl
       : selectedFilmClip?.quizUrl || selectedFilmClip?.studyUrl || "";
+  const showFilmQuizRunFields = normalize(filmQuizAnswers.runPass) === "run";
+  const showFilmQuizZoneFields = showFilmQuizRunFields && normalize(filmQuizAnswers.runScheme) === "zone";
+  const showFilmQuizGapFields = showFilmQuizRunFields && normalize(filmQuizAnswers.runScheme) === "gap";
 
   const offenseAnswerKey = useMemo(() => getOffenseAnswerKeyFromFormation(displayFormation), [displayFormation]);
   const offenseCheck = useMemo(() => getCheckResult(offenseBuildPlayers, offenseAnswerKey, 0.75), [offenseBuildPlayers, offenseAnswerKey]);
@@ -3711,9 +3973,9 @@ const existingStats =
 
   useEffect(() => {
     if (mode === "film" && filmViewMode === "quiz" && showFilmQuizFeedback && selectedFilmClip) {
-      scoreAttempt("film", filmQuizScore / 2, filmQuizScore === 2, `film::${selectedFilmClip.id}`);
+      scoreAttempt("film", filmQuizScore / Math.max(1, filmQuizQuestionCount), filmQuizIsPerfect, `film::${selectedFilmClip.id}`);
     }
-  }, [mode, filmViewMode, showFilmQuizFeedback, filmQuizScore, selectedFilmClip?.id]);
+  }, [mode, filmViewMode, showFilmQuizFeedback, filmQuizScore, filmQuizQuestionCount, filmQuizIsPerfect, selectedFilmClip?.id]);
 
   useEffect(() => {
     if (showOffenseCheck) {
@@ -3841,9 +4103,13 @@ const existingStats =
             </div>
             {mode !== "quiz" && mode !== "account" && (
               <div className="rounded-xl border bg-white p-4 text-3xl font-extrabold tracking-tight text-slate-900 md:text-4xl">
-                {mode === "film" ? selectedFilmClip?.title ?? "FILM MODE" : displayFormation.name}
+                {mode === "film"
+                  ? filmViewMode === "quiz"
+                    ? "Film Quiz"
+                    : selectedFilmClip?.title ?? "FILM MODE"
+                  : displayFormation.name}
                 <div className="mt-1 text-sm font-semibold uppercase tracking-[0.14em] text-slate-500">
-                  {mode === "film" ? "READ KEY" : displayFormation.playbook}
+                  {mode === "film" ? (filmViewMode === "quiz" ? "QUIZ" : "READ KEY") : displayFormation.playbook}
                 </div>
               </div>
             )}
@@ -4119,15 +4385,6 @@ const existingStats =
                         </SelectContent>
                       </Select>
                     </div>
-                    {currentUser?.isAdmin ? (
-                      <Button
-                        variant={showFilmAdminTools ? "default" : "outline"}
-                        className="min-w-[180px] rounded-xl"
-                        onClick={() => setShowFilmAdminTools((prev) => !prev)}
-                      >
-                        {showFilmAdminTools ? "Hide Admin Tools" : "Show Admin Tools"}
-                      </Button>
-                    ) : null}
                   </div>
 
                   <div className="overflow-hidden rounded-2xl border bg-slate-950">
@@ -4195,6 +4452,507 @@ const existingStats =
                     )}
                   </div>
 
+                  {currentUser?.isAdmin && filmViewMode === "study" ? (
+                    <div className="space-y-4 rounded-2xl border bg-white p-4">
+                      <div className="flex justify-end">
+                        <Button
+                          variant={showFilmAdminTools ? "default" : "outline"}
+                          className="min-w-[180px] rounded-xl"
+                          onClick={() => setShowFilmAdminTools((prev) => !prev)}
+                        >
+                          {showFilmAdminTools ? "Hide Admin Tools" : "Show Admin Tools"}
+                        </Button>
+                      </div>
+
+                      {showFilmAdminTools ? (
+                        <>
+                          <div className="space-y-3 rounded-2xl border bg-white p-4 text-sm text-slate-600">
+                            <div className="text-sm font-semibold text-slate-900">Add Study Clip</div>
+                            <div className="grid gap-3">
+                              <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                  <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Run / Pass</div>
+                                  <Select
+                                    value={filmDraft.runPass}
+                                    onValueChange={(value: "run" | "pass") =>
+                                      setFilmDraft((prev) => ({
+                                        ...prev,
+                                        runPass: value,
+                                        direction: value === "run" ? prev.direction : "right",
+                                        passType: "",
+                                        runScheme: value === "run" ? prev.runScheme : "",
+                                        zoneType: value === "run" ? prev.zoneType : "",
+                                        gapPullerCount: value === "run" ? prev.gapPullerCount : "",
+                                        gapOnePullerConcept: value === "run" ? prev.gapOnePullerConcept : "",
+                                        gapTwoPullerConcept: value === "run" ? prev.gapTwoPullerConcept : "",
+                                        manConcept: value === "run" ? prev.manConcept : "",
+                                      }))
+                                    }
+                                  >
+                                    <SelectTrigger>
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent className="max-h-80 overflow-y-auto">
+                                      <SelectItem value="run">Run</SelectItem>
+                                        <SelectItem value="pass">Pass</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+                                {filmDraft.runPass === "run" ? (
+                                  <div>
+                                    <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Direction</div>
+                                    <Select value={filmDraft.direction} onValueChange={(value: Side) => setFilmDraft((prev) => ({ ...prev, direction: value }))}>
+                                      <SelectTrigger>
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent className="max-h-80 overflow-y-auto">
+                                        <SelectItem value="left">Left</SelectItem>
+                                        <SelectItem value="right">Right</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+                                ) : null}
+                              </div>
+                              <div className="rounded-xl border bg-slate-50 p-3">
+                                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Clip Bucket</div>
+                                <div className="mt-1 text-sm font-semibold text-slate-900">{deriveFilmClipBucket(filmDraft)}</div>
+                              </div>
+                              {filmDraft.runPass === "run" ? (
+                                <>
+                                  <div>
+                                    <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Run Scheme</div>
+                                    <Select value={filmDraft.runScheme} onValueChange={(value: Exclude<FilmRunScheme, "">) => setFilmDraft((prev) => ({
+                                      ...prev,
+                                      runScheme: value,
+                                      zoneType: value === "zone" ? prev.zoneType || "normal" : "",
+                                      gapPullerCount: value === "gap" ? prev.gapPullerCount : "",
+                                      gapOnePullerConcept: value === "gap" ? prev.gapOnePullerConcept : "",
+                                      gapTwoPullerConcept: value === "gap" ? prev.gapTwoPullerConcept : "",
+                                      manConcept: value === "man" ? prev.manConcept : "",
+                                    }))}>
+                                      <SelectTrigger>
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent className="max-h-80 overflow-y-auto">
+                                        {FILM_RUN_SCHEME_OPTIONS.map((option) => (
+                                          <SelectItem key={option} value={option}>
+                                            {option.charAt(0).toUpperCase() + option.slice(1)}
+                                          </SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+                                  {filmDraft.runScheme === "zone" ? (
+                                    <div>
+                                      <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Zone Type</div>
+                                      <Select value={filmDraft.zoneType} onValueChange={(value: Exclude<FilmZoneType, "">) => setFilmDraft((prev) => ({ ...prev, zoneType: value }))}>
+                                        <SelectTrigger>
+                                          <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent className="max-h-80 overflow-y-auto">
+                                          <SelectItem value="normal">Normal</SelectItem>
+                                          <SelectItem value="split">Split</SelectItem>
+                                        </SelectContent>
+                                      </Select>
+                                    </div>
+                                  ) : null}
+                                  {filmDraft.runScheme === "gap" ? (
+                                    <>
+                                      <div>
+                                        <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Puller Count</div>
+                                        <Select value={filmDraft.gapPullerCount} onValueChange={(value: Exclude<FilmGapPullerCount, "">) => setFilmDraft((prev) => ({
+                                          ...prev,
+                                          gapPullerCount: value,
+                                          gapOnePullerConcept: value === "1" ? prev.gapOnePullerConcept : "",
+                                          gapTwoPullerConcept: value === "2" ? prev.gapTwoPullerConcept : "",
+                                        }))}>
+                                          <SelectTrigger>
+                                            <SelectValue />
+                                          </SelectTrigger>
+                                          <SelectContent className="max-h-80 overflow-y-auto">
+                                            {FILM_GAP_PULLER_COUNT_OPTIONS.map((option) => (
+                                              <SelectItem key={option} value={option}>
+                                                {option}
+                                              </SelectItem>
+                                            ))}
+                                          </SelectContent>
+                                        </Select>
+                                      </div>
+                                      {filmDraft.gapPullerCount === "1" ? (
+                                        <div>
+                                          <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">One Puller Concept</div>
+                                          <Select value={filmDraft.gapOnePullerConcept} onValueChange={(value: Exclude<FilmGapOnePullerConcept, "">) => setFilmDraft((prev) => ({ ...prev, gapOnePullerConcept: value }))}>
+                                            <SelectTrigger>
+                                              <SelectValue />
+                                            </SelectTrigger>
+                                            <SelectContent className="max-h-80 overflow-y-auto">
+                                              {FILM_GAP_ONE_PULLER_CONCEPT_OPTIONS.map((option) => (
+                                                <SelectItem key={option} value={option}>
+                                                  {option}
+                                                </SelectItem>
+                                              ))}
+                                            </SelectContent>
+                                          </Select>
+                                        </div>
+                                      ) : null}
+                                      {filmDraft.gapPullerCount === "2" ? (
+                                        <div>
+                                          <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Two Puller Concept</div>
+                                          <Select value={filmDraft.gapTwoPullerConcept} onValueChange={(value: Exclude<FilmGapTwoPullerConcept, "">) => setFilmDraft((prev) => ({ ...prev, gapTwoPullerConcept: value }))}>
+                                            <SelectTrigger>
+                                              <SelectValue />
+                                            </SelectTrigger>
+                                            <SelectContent className="max-h-80 overflow-y-auto">
+                                              {FILM_GAP_TWO_PULLER_CONCEPT_OPTIONS.map((option) => (
+                                                <SelectItem key={option} value={option}>
+                                                  {option}
+                                                </SelectItem>
+                                              ))}
+                                            </SelectContent>
+                                          </Select>
+                                        </div>
+                                      ) : null}
+                                    </>
+                                  ) : null}
+                                  {filmDraft.runScheme === "man" ? (
+                                    <div>
+                                      <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Man Concept</div>
+                                      <Select value={filmDraft.manConcept} onValueChange={(value: Exclude<FilmManConcept, "">) => setFilmDraft((prev) => ({ ...prev, manConcept: value }))}>
+                                        <SelectTrigger>
+                                          <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent className="max-h-80 overflow-y-auto">
+                                          {FILM_MAN_CONCEPT_OPTIONS.map((option) => (
+                                            <SelectItem key={option} value={option}>
+                                              {option}
+                                            </SelectItem>
+                                          ))}
+                                        </SelectContent>
+                                      </Select>
+                                    </div>
+                                  ) : null}
+                                </>
+                              ) : null}
+                              <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                  <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Quiz Start (sec)</div>
+                                  <Input
+                                    value={filmDraft.quizStartSeconds}
+                                    placeholder="0.00"
+                                    onChange={(e) => setFilmDraft((prev) => ({ ...prev, quizStartSeconds: e.target.value }))}
+                                  />
+                                </div>
+                                <div>
+                                  <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Quiz End (sec)</div>
+                                  <Input
+                                    value={filmDraft.quizEndSeconds}
+                                    placeholder="1.50"
+                                    onChange={(e) => setFilmDraft((prev) => ({ ...prev, quizEndSeconds: e.target.value }))}
+                                  />
+                                </div>
+                              </div>
+                              {selectedFilmClip ? (
+                                <div className="grid grid-cols-2 gap-2">
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    className="rounded-xl"
+                                    onClick={() =>
+                                      setFilmDraft((prev) => ({
+                                        ...prev,
+                                        quizStartSeconds: filmStudyCurrentTime.toFixed(2),
+                                      }))
+                                    }
+                                  >
+                                    Use Current for Start
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    className="rounded-xl"
+                                    onClick={() =>
+                                      setFilmDraft((prev) => ({
+                                        ...prev,
+                                        quizEndSeconds: filmStudyCurrentTime.toFixed(2),
+                                      }))
+                                    }
+                                  >
+                                    Use Current for End
+                                  </Button>
+                                </div>
+                              ) : null}
+                              <div>
+                                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Upload Study Clip</div>
+                                <Input
+                                  key={`film-study-file-${filmUploadResetKey}`}
+                                  type="file"
+                                  accept="video/mp4,video/quicktime,video/webm"
+                                  onChange={(e) =>
+                                    setFilmDraft((prev) => ({
+                                      ...prev,
+                                      studyFile: e.target.files?.[0] ?? null,
+                                    }))
+                                  }
+                                />
+                              </div>
+                              <Button className="rounded-xl" onClick={addFilmClip}>
+                                Save Clip
+                              </Button>
+                              {filmSaveNotice ? (
+                                <div
+                                  className={
+                                    filmSaveNotice.tone === "success"
+                                      ? "rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900"
+                                      : "rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900"
+                                  }
+                                >
+                                  {filmSaveNotice.message}
+                                  <div
+                                    className={
+                                      filmSaveNotice.tone === "success"
+                                        ? "mt-1 text-xs text-emerald-700"
+                                        : "mt-1 text-xs text-rose-700"
+                                    }
+                                  >
+                                    {filmSaveNotice.tone === "success"
+                                      ? "The upload form has been reset and is ready for the next clip."
+                                      : "Nothing was saved, so the current metadata and files are still in place."}
+                                  </div>
+                                </div>
+                              ) : null}
+                              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                                Uploaded study clips are sent to Supabase Storage and clip metadata is saved to the <span className="font-semibold">film_clips</span> table. Quiz mode uses that same study clip plus the quiz start/end trim window.
+                              </div>
+                            </div>
+                          </div>
+
+                          {selectedFilmClip ? (
+                            <div className="space-y-3 rounded-2xl border bg-white p-4 text-sm text-slate-600">
+                              <div className="text-sm font-semibold text-slate-900">Edit Clip Metadata</div>
+                              <div className="grid gap-3">
+                                <div className="grid grid-cols-2 gap-3">
+                                  <div>
+                                    <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Run / Pass</div>
+                                    <Select
+                                      value={filmEditDraft.runPass}
+                                      onValueChange={(value: "run" | "pass") =>
+                                        setFilmEditDraft((prev) => ({
+                                          ...prev,
+                                          runPass: value,
+                                          direction: value === "run" ? prev.direction : "right",
+                                          passType: "",
+                                          runScheme: value === "run" ? prev.runScheme : "",
+                                          zoneType: value === "run" ? prev.zoneType : "",
+                                          gapPullerCount: value === "run" ? prev.gapPullerCount : "",
+                                          gapOnePullerConcept: value === "run" ? prev.gapOnePullerConcept : "",
+                                          gapTwoPullerConcept: value === "run" ? prev.gapTwoPullerConcept : "",
+                                          manConcept: value === "run" ? prev.manConcept : "",
+                                        }))
+                                      }
+                                    >
+                                      <SelectTrigger>
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent className="max-h-80 overflow-y-auto">
+                                        <SelectItem value="run">Run</SelectItem>
+                                          <SelectItem value="pass">Pass</SelectItem>
+                                        </SelectContent>
+                                      </Select>
+                                    </div>
+                                  {filmEditDraft.runPass === "run" ? (
+                                    <div>
+                                      <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Direction</div>
+                                      <Select value={filmEditDraft.direction} onValueChange={(value: Side) => setFilmEditDraft((prev) => ({ ...prev, direction: value }))}>
+                                        <SelectTrigger>
+                                          <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent className="max-h-80 overflow-y-auto">
+                                          <SelectItem value="left">Left</SelectItem>
+                                          <SelectItem value="right">Right</SelectItem>
+                                        </SelectContent>
+                                      </Select>
+                                    </div>
+                                  ) : null}
+                                </div>
+                                <div className="rounded-xl border bg-slate-50 p-3">
+                                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Clip Bucket</div>
+                                  <div className="mt-1 text-sm font-semibold text-slate-900">{deriveFilmClipBucket(filmEditDraft)}</div>
+                                </div>
+                                {filmEditDraft.runPass === "run" ? (
+                                  <>
+                                    <div>
+                                      <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Run Scheme</div>
+                                      <Select value={filmEditDraft.runScheme} onValueChange={(value: Exclude<FilmRunScheme, "">) => setFilmEditDraft((prev) => ({
+                                        ...prev,
+                                        runScheme: value,
+                                        zoneType: value === "zone" ? prev.zoneType || "normal" : "",
+                                        gapPullerCount: value === "gap" ? prev.gapPullerCount : "",
+                                        gapOnePullerConcept: value === "gap" ? prev.gapOnePullerConcept : "",
+                                        gapTwoPullerConcept: value === "gap" ? prev.gapTwoPullerConcept : "",
+                                        manConcept: value === "man" ? prev.manConcept : "",
+                                      }))}>
+                                        <SelectTrigger>
+                                          <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent className="max-h-80 overflow-y-auto">
+                                          {FILM_RUN_SCHEME_OPTIONS.map((option) => (
+                                            <SelectItem key={option} value={option}>
+                                              {option.charAt(0).toUpperCase() + option.slice(1)}
+                                            </SelectItem>
+                                          ))}
+                                        </SelectContent>
+                                      </Select>
+                                    </div>
+                                    {filmEditDraft.runScheme === "zone" ? (
+                                      <div>
+                                        <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Zone Type</div>
+                                        <Select value={filmEditDraft.zoneType} onValueChange={(value: Exclude<FilmZoneType, "">) => setFilmEditDraft((prev) => ({ ...prev, zoneType: value }))}>
+                                          <SelectTrigger>
+                                            <SelectValue />
+                                          </SelectTrigger>
+                                          <SelectContent className="max-h-80 overflow-y-auto">
+                                            <SelectItem value="normal">Normal</SelectItem>
+                                            <SelectItem value="split">Split</SelectItem>
+                                          </SelectContent>
+                                        </Select>
+                                      </div>
+                                    ) : null}
+                                    {filmEditDraft.runScheme === "gap" ? (
+                                      <>
+                                        <div>
+                                          <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Puller Count</div>
+                                          <Select value={filmEditDraft.gapPullerCount} onValueChange={(value: Exclude<FilmGapPullerCount, "">) => setFilmEditDraft((prev) => ({
+                                            ...prev,
+                                            gapPullerCount: value,
+                                            gapOnePullerConcept: value === "1" ? prev.gapOnePullerConcept : "",
+                                            gapTwoPullerConcept: value === "2" ? prev.gapTwoPullerConcept : "",
+                                          }))}>
+                                            <SelectTrigger>
+                                              <SelectValue />
+                                            </SelectTrigger>
+                                            <SelectContent className="max-h-80 overflow-y-auto">
+                                              {FILM_GAP_PULLER_COUNT_OPTIONS.map((option) => (
+                                                <SelectItem key={option} value={option}>
+                                                  {option}
+                                                </SelectItem>
+                                              ))}
+                                            </SelectContent>
+                                          </Select>
+                                        </div>
+                                        {filmEditDraft.gapPullerCount === "1" ? (
+                                          <div>
+                                            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">One Puller Concept</div>
+                                            <Select value={filmEditDraft.gapOnePullerConcept} onValueChange={(value: Exclude<FilmGapOnePullerConcept, "">) => setFilmEditDraft((prev) => ({ ...prev, gapOnePullerConcept: value }))}>
+                                              <SelectTrigger>
+                                                <SelectValue />
+                                              </SelectTrigger>
+                                              <SelectContent className="max-h-80 overflow-y-auto">
+                                                {FILM_GAP_ONE_PULLER_CONCEPT_OPTIONS.map((option) => (
+                                                  <SelectItem key={option} value={option}>
+                                                    {option}
+                                                  </SelectItem>
+                                                ))}
+                                              </SelectContent>
+                                            </Select>
+                                          </div>
+                                        ) : null}
+                                        {filmEditDraft.gapPullerCount === "2" ? (
+                                          <div>
+                                            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Two Puller Concept</div>
+                                            <Select value={filmEditDraft.gapTwoPullerConcept} onValueChange={(value: Exclude<FilmGapTwoPullerConcept, "">) => setFilmEditDraft((prev) => ({ ...prev, gapTwoPullerConcept: value }))}>
+                                              <SelectTrigger>
+                                                <SelectValue />
+                                              </SelectTrigger>
+                                              <SelectContent className="max-h-80 overflow-y-auto">
+                                                {FILM_GAP_TWO_PULLER_CONCEPT_OPTIONS.map((option) => (
+                                                  <SelectItem key={option} value={option}>
+                                                    {option}
+                                                  </SelectItem>
+                                                ))}
+                                              </SelectContent>
+                                            </Select>
+                                          </div>
+                                        ) : null}
+                                      </>
+                                    ) : null}
+                                    {filmEditDraft.runScheme === "man" ? (
+                                      <div>
+                                        <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Man Concept</div>
+                                        <Select value={filmEditDraft.manConcept} onValueChange={(value: Exclude<FilmManConcept, "">) => setFilmEditDraft((prev) => ({ ...prev, manConcept: value }))}>
+                                          <SelectTrigger>
+                                            <SelectValue />
+                                          </SelectTrigger>
+                                          <SelectContent className="max-h-80 overflow-y-auto">
+                                            {FILM_MAN_CONCEPT_OPTIONS.map((option) => (
+                                              <SelectItem key={option} value={option}>
+                                                {option}
+                                              </SelectItem>
+                                            ))}
+                                          </SelectContent>
+                                        </Select>
+                                      </div>
+                                    ) : null}
+                                  </>
+                                ) : null}
+                                <div className="grid grid-cols-2 gap-3">
+                                  <div>
+                                    <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Quiz Start (sec)</div>
+                                    <Input
+                                      value={filmEditDraft.quizStartSeconds}
+                                      placeholder="0.00"
+                                      onChange={(e) => setFilmEditDraft((prev) => ({ ...prev, quizStartSeconds: e.target.value }))}
+                                    />
+                                  </div>
+                                  <div>
+                                    <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Quiz End (sec)</div>
+                                    <Input
+                                      value={filmEditDraft.quizEndSeconds}
+                                      placeholder="1.50"
+                                      onChange={(e) => setFilmEditDraft((prev) => ({ ...prev, quizEndSeconds: e.target.value }))}
+                                    />
+                                  </div>
+                                </div>
+                                {selectedFilmClip ? (
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      className="rounded-xl"
+                                      onClick={() =>
+                                        setFilmEditDraft((prev) => ({
+                                          ...prev,
+                                          quizStartSeconds: filmStudyCurrentTime.toFixed(2),
+                                        }))
+                                      }
+                                    >
+                                      Use Current for Start
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      className="rounded-xl"
+                                      onClick={() =>
+                                        setFilmEditDraft((prev) => ({
+                                          ...prev,
+                                          quizEndSeconds: filmStudyCurrentTime.toFixed(2),
+                                        }))
+                                      }
+                                    >
+                                      Use Current for End
+                                    </Button>
+                                  </div>
+                                ) : null}
+                                <Button className="rounded-xl" onClick={saveFilmMetadata}>
+                                  Save Metadata
+                                </Button>
+                              </div>
+                            </div>
+                          ) : null}
+                        </>
+                      ) : null}
+                    </div>
+                  ) : null}
+
                   {filmViewMode === "quiz" && showFilmQuizFeedback && selectedFilmClip ? (
                     <div className="overflow-hidden rounded-2xl border bg-white">
                       <div className="border-b bg-slate-50 px-4 py-3">
@@ -4237,15 +4995,22 @@ const existingStats =
                                   <SelectLabel className="sticky top-0 z-10 bg-white/95 backdrop-blur">
                                     {group.label}
                                   </SelectLabel>
-                                  {group.buckets.map((bucketGroup) => (
-                                    <React.Fragment key={`${group.runPass}-${bucketGroup.bucket}`}>
-                                      <div className="px-2 py-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                                        {bucketGroup.bucket}
+                                  {group.sections.map((sectionGroup) => (
+                                    <React.Fragment key={`${group.runPass}-${sectionGroup.section}`}>
+                                      <div className="sticky top-7 z-10 px-2 py-1.5 text-xs font-bold uppercase tracking-[0.18em] text-slate-700 bg-white/95 backdrop-blur">
+                                        {sectionGroup.section}
                                       </div>
-                                      {bucketGroup.options.map((option) => (
-                                        <SelectItem key={option.value} value={option.value}>
-                                          {option.label}
-                                        </SelectItem>
+                                      {sectionGroup.buckets.map((bucketGroup) => (
+                                        <React.Fragment key={`${group.runPass}-${sectionGroup.section}-${bucketGroup.bucket}`}>
+                                          <div className="px-4 py-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                            {bucketGroup.bucket}
+                                          </div>
+                                          {bucketGroup.options.map((option) => (
+                                            <SelectItem key={option.value} value={option.value}>
+                                              {option.label}
+                                            </SelectItem>
+                                          ))}
+                                        </React.Fragment>
                                       ))}
                                     </React.Fragment>
                                   ))}
@@ -4262,7 +5027,7 @@ const existingStats =
                       <div className="rounded-xl border bg-slate-50 p-3">
                         <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Film Quiz</div>
                         <div className="mt-1 text-sm text-slate-700">
-                          Clips are randomized in quiz mode. Answer only <span className="font-semibold">Run / Pass</span> and <span className="font-semibold">Direction</span> for version 1.
+                          Film quiz gives players <span className="font-semibold">0 replays</span>. Pass clips only ask for <span className="font-semibold">Pass</span>, while run clips ask for <span className="font-semibold">Run / Pass</span>, <span className="font-semibold">Scheme</span>, <span className="font-semibold">Direction</span>, and extra zone or gap detail when needed.
                         </div>
                       </div>
                     )}
@@ -4296,29 +5061,17 @@ const existingStats =
                             <div className="text-xs uppercase tracking-wide text-slate-500">Run / Pass</div>
                             <div className="mt-1 font-semibold text-slate-900">{selectedFilmClip.runPass === "run" ? "Run" : "Pass"}</div>
                           </div>
-                          <div className="rounded-lg border bg-white px-3 py-2">
-                            <div className="text-xs uppercase tracking-wide text-slate-500">Direction</div>
-                            <div className="mt-1 font-semibold text-slate-900">{FIELD_LABELS[selectedFilmClip.direction]}</div>
-                          </div>
-                          <div className="rounded-lg border bg-white px-3 py-2">
-                            <div className="text-xs uppercase tracking-wide text-slate-500">Source</div>
-                            <div className="mt-1 font-semibold text-slate-900">{selectedFilmClip.sourceType}</div>
-                          </div>
+                          {selectedFilmClip.runPass === "run" ? (
+                            <div className="rounded-lg border bg-white px-3 py-2">
+                              <div className="text-xs uppercase tracking-wide text-slate-500">Direction</div>
+                              <div className="mt-1 font-semibold text-slate-900">{FIELD_LABELS[selectedFilmClip.direction]}</div>
+                            </div>
+                          ) : null}
                           <div className="rounded-lg border bg-white px-3 py-2">
                             <div className="text-xs uppercase tracking-wide text-slate-500">Bucket</div>
                             <div className="mt-1 font-semibold text-slate-900">{selectedFilmClip.clipBucket}</div>
                           </div>
                         </div>
-                        {selectedFilmClip.runPass === "pass" ? (
-                          <div className="grid gap-2 sm:grid-cols-2">
-                            <div className="rounded-lg border bg-white px-3 py-2">
-                              <div className="text-xs uppercase tracking-wide text-slate-500">Pass Type</div>
-                              <div className="mt-1 font-semibold capitalize text-slate-900">
-                                {selectedFilmClip.passType ? selectedFilmClip.passType.replace("_", " ") : "—"}
-                              </div>
-                            </div>
-                          </div>
-                        ) : null}
                         {selectedFilmClip.runPass === "run" ? (
                           <div className="grid gap-2 sm:grid-cols-2">
                             <div className="rounded-lg border bg-white px-3 py-2">
@@ -4326,12 +5079,18 @@ const existingStats =
                               <div className="mt-1 font-semibold capitalize text-slate-900">{selectedFilmClip.runScheme || "—"}</div>
                             </div>
                             <div className="rounded-lg border bg-white px-3 py-2">
-                              <div className="text-xs uppercase tracking-wide text-slate-500">Concept</div>
+                              <div className="text-xs uppercase tracking-wide text-slate-500">{selectedFilmClip.runScheme === "zone" ? "Zone Type" : "Concept"}</div>
                               <div className="mt-1 font-semibold text-slate-900">
                                 {selectedFilmClip.runScheme === "gap"
                                   ? selectedFilmClip.gapPullerCount === "1"
                                     ? selectedFilmClip.gapOnePullerConcept || "—"
                                     : selectedFilmClip.gapTwoPullerConcept || "—"
+                                  : selectedFilmClip.runScheme === "zone"
+                                    ? selectedFilmClip.zoneType === "split"
+                                      ? "Split"
+                                      : selectedFilmClip.zoneType === "normal"
+                                        ? "Normal"
+                                        : "—"
                                   : selectedFilmClip.runScheme === "man"
                                     ? selectedFilmClip.manConcept || "—"
                                     : `${selectedFilmClip.clipBucket}`}
@@ -4376,36 +5135,152 @@ const existingStats =
                         <div className="grid gap-3">
                           <div>
                             <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-600">Run / Pass</div>
-                            <Input
-                              className="h-12 border-2 border-slate-300 bg-white text-base"
-                              placeholder="Run or Pass"
+                            <Select
                               value={filmQuizAnswers.runPass}
-                              onChange={(e) => setFilmQuizAnswers((prev) => ({ ...prev, runPass: e.target.value }))}
-                            />
+                              onValueChange={(value: "run" | "pass") =>
+                                setFilmQuizAnswers((prev) => ({
+                                  ...prev,
+                                  runPass: value,
+                                  direction: value === "run" ? prev.direction : "",
+                                  runScheme: value === "run" ? prev.runScheme : "",
+                                  zoneType: value === "run" ? prev.zoneType : "",
+                                  gapPullerCount: value === "run" ? prev.gapPullerCount : "",
+                                  pullerConcept: value === "run" ? prev.pullerConcept : "",
+                                }))
+                              }
+                            >
+                              <SelectTrigger className="h-12 border-2 border-slate-300 bg-white text-base">
+                                <SelectValue placeholder="Run or Pass" />
+                              </SelectTrigger>
+                              <SelectContent className="max-h-80 overflow-y-auto">
+                                <SelectItem value="run">Run</SelectItem>
+                                <SelectItem value="pass">Pass</SelectItem>
+                              </SelectContent>
+                            </Select>
                           </div>
-                          <div>
-                            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-600">Direction</div>
-                            <Input
-                              className="h-12 border-2 border-slate-300 bg-white text-base"
-                              placeholder="Left or Right"
-                              value={filmQuizAnswers.direction}
-                              onChange={(e) => setFilmQuizAnswers((prev) => ({ ...prev, direction: e.target.value }))}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") {
-                                  e.preventDefault();
-                                  if (showFilmQuizFeedback) {
-                                    nextFilmQuizClip();
-                                  } else {
-                                    submitFilmQuiz();
-                                  }
+                          {showFilmQuizRunFields ? (
+                            <div>
+                              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-600">Direction</div>
+                              <Select
+                                value={filmQuizAnswers.direction}
+                                onValueChange={(value: Side) => setFilmQuizAnswers((prev) => ({ ...prev, direction: value }))}
+                              >
+                                <SelectTrigger className="h-12 border-2 border-slate-300 bg-white text-base">
+                                  <SelectValue placeholder="Left or Right" />
+                                </SelectTrigger>
+                                <SelectContent className="max-h-80 overflow-y-auto">
+                                  <SelectItem value="left">Left</SelectItem>
+                                  <SelectItem value="right">Right</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          ) : null}
+                          {showFilmQuizRunFields ? (
+                            <div>
+                              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-600">Scheme</div>
+                              <Select
+                                value={filmQuizAnswers.runScheme}
+                                onValueChange={(value: Exclude<FilmRunScheme, "">) =>
+                                  setFilmQuizAnswers((prev) => ({
+                                    ...prev,
+                                    runScheme: value,
+                                    zoneType: value === "zone" ? prev.zoneType : "",
+                                    gapPullerCount: value === "gap" ? prev.gapPullerCount : "",
+                                    pullerConcept: value === "gap" ? prev.pullerConcept : "",
+                                  }))
                                 }
-                              }}
-                            />
-                          </div>
+                              >
+                                <SelectTrigger className="h-12 border-2 border-slate-300 bg-white text-base">
+                                  <SelectValue placeholder="Gap, Zone, or Man" />
+                                </SelectTrigger>
+                                <SelectContent className="max-h-80 overflow-y-auto">
+                                  <SelectItem value="gap">Gap</SelectItem>
+                                  <SelectItem value="zone">Zone</SelectItem>
+                                  <SelectItem value="man">Man</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          ) : null}
+                          {showFilmQuizZoneFields ? (
+                            <div>
+                              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-600">Zone Type</div>
+                              <Select
+                                value={filmQuizAnswers.zoneType}
+                                onValueChange={(value: Exclude<FilmZoneType, "">) => setFilmQuizAnswers((prev) => ({ ...prev, zoneType: value }))}
+                              >
+                                <SelectTrigger className="h-12 border-2 border-slate-300 bg-white text-base">
+                                  <SelectValue placeholder="Normal or Split" />
+                                </SelectTrigger>
+                                <SelectContent className="max-h-80 overflow-y-auto">
+                                  <SelectItem value="normal">Normal</SelectItem>
+                                  <SelectItem value="split">Split</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          ) : null}
+                          {showFilmQuizGapFields ? (
+                            <div>
+                              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-600">Puller Count</div>
+                              <Select
+                                value={filmQuizAnswers.gapPullerCount}
+                                onValueChange={(value: Exclude<FilmGapPullerCount, "">) =>
+                                  setFilmQuizAnswers((prev) => ({
+                                    ...prev,
+                                    gapPullerCount: value,
+                                    pullerConcept: "",
+                                  }))
+                                }
+                              >
+                                <SelectTrigger className="h-12 border-2 border-slate-300 bg-white text-base">
+                                  <SelectValue placeholder="1 or 2" />
+                                </SelectTrigger>
+                                <SelectContent className="max-h-80 overflow-y-auto">
+                                  <SelectItem value="1">1</SelectItem>
+                                  <SelectItem value="2">2</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          ) : null}
+                          {showFilmQuizGapFields ? (
+                            <div>
+                              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-600">Who Pulled / Concept</div>
+                              <Select
+                                value={filmQuizAnswers.pullerConcept}
+                                onValueChange={(value) => setFilmQuizAnswers((prev) => ({ ...prev, pullerConcept: value }))}
+                              >
+                                <SelectTrigger className="h-12 border-2 border-slate-300 bg-white text-base">
+                                  <SelectValue placeholder="Choose concept" />
+                                </SelectTrigger>
+                                <SelectContent className="max-h-80 overflow-y-auto">
+                                  {filmQuizAnswers.gapPullerCount === "1"
+                                    ? FILM_GAP_ONE_PULLER_CONCEPT_OPTIONS.map((option) => (
+                                        <SelectItem key={option} value={option}>
+                                          {option}
+                                        </SelectItem>
+                                      ))
+                                    : filmQuizAnswers.gapPullerCount === "2"
+                                      ? FILM_GAP_TWO_PULLER_CONCEPT_OPTIONS.map((option) => (
+                                          <SelectItem key={option} value={option}>
+                                            {option}
+                                          </SelectItem>
+                                        ))
+                                      : null}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          ) : null}
                         </div>
                         <div className="grid gap-2 sm:grid-cols-2">
-                          <Button className="h-12 rounded-xl text-base" onClick={startFilmQuizClip}>
-                            Start Clip
+                          <Button
+                            className="h-12 rounded-xl text-base"
+                            onClick={startFilmQuizClip}
+                            disabled={(filmQuizStarted && !filmQuizFinished) || filmQuizPlaysUsed >= filmQuizTotalPlaysAllowed || showFilmQuizFeedback}
+                          >
+                            {filmQuizPlaysUsed === 0
+                              ? "Start Clip"
+                              : filmQuizPlaysUsed >= filmQuizTotalPlaysAllowed
+                                ? "No Replays Left"
+                                : `Replay Clip (${filmQuizReplaysRemaining} left)`}
                           </Button>
                           <Button
                             variant="outline"
@@ -4416,25 +5291,29 @@ const existingStats =
                             Check Answers
                           </Button>
                         </div>
-                        <Button
-                          variant="outline"
-                          className="h-12 w-full rounded-xl text-base"
-                          onClick={() => {
-                            setShowFilmQuizAnswers(true);
-                            setShowFilmQuizFeedback(true);
-                          }}
-                        >
-                          Show Answers
-                        </Button>
                         {showFilmQuizAnswers && selectedFilmClip ? (
                           <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
                             <div><span className="font-semibold">Run / Pass:</span> {selectedFilmClip.runPass === "run" ? "Run" : "Pass"}</div>
-                            <div><span className="font-semibold">Direction:</span> {FIELD_LABELS[selectedFilmClip.direction]}</div>
+                            {selectedFilmClip.runPass === "run" ? (
+                              <div><span className="font-semibold">Direction:</span> {FIELD_LABELS[selectedFilmClip.direction]}</div>
+                            ) : null}
+                            {filmQuizNeedsRunScheme ? (
+                              <div><span className="font-semibold">Scheme:</span> {selectedFilmClip.runScheme ? selectedFilmClip.runScheme.charAt(0).toUpperCase() + selectedFilmClip.runScheme.slice(1) : "—"}</div>
+                            ) : null}
+                            {filmQuizNeedsZoneType ? (
+                              <div><span className="font-semibold">Zone Type:</span> {selectedFilmClip.zoneType === "split" ? "Split" : selectedFilmClip.zoneType === "normal" ? "Normal" : "—"}</div>
+                            ) : null}
+                            {filmQuizNeedsGapDetails ? (
+                              <>
+                                <div><span className="font-semibold">Pullers:</span> {selectedFilmClip.gapPullerCount || "—"}</div>
+                                <div><span className="font-semibold">Who Pulled / Concept:</span> {selectedFilmGapConcept || "—"}</div>
+                              </>
+                            ) : null}
                           </div>
                         ) : null}
                         {showFilmQuizFeedback ? (
                           <>
-                            <div className="text-sm font-semibold text-slate-700">Score: {filmQuizScore} / 2</div>
+                            <div className="text-sm font-semibold text-slate-700">Score: {filmQuizScore} / {filmQuizQuestionCount}</div>
                             {lastScoreSummary.film ? (
                               <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
                                 <span className="font-semibold">Points earned:</span> {lastScoreSummary.film.awarded}
@@ -4445,7 +5324,31 @@ const existingStats =
                             ) : null}
                             <div className="space-y-2 text-sm">
                               <div className="flex items-center justify-between rounded-lg border p-3"><span>Run / Pass</span>{filmQuizResult.runPass ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <XCircle className="h-4 w-4 text-red-600" />}</div>
-                              <div className="flex items-center justify-between rounded-lg border p-3"><span>Direction</span>{filmQuizResult.direction ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <XCircle className="h-4 w-4 text-red-600" />}</div>
+                              {!filmQuizIsPass ? (
+                                <div className="flex items-center justify-between rounded-lg border p-3"><span>Direction</span>{filmQuizResult.direction ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <XCircle className="h-4 w-4 text-red-600" />}</div>
+                              ) : null}
+                              {filmQuizNeedsRunScheme ? (
+                                <div className="flex items-center justify-between rounded-lg border p-3"><span>Scheme</span>{filmQuizResult.runScheme ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <XCircle className="h-4 w-4 text-red-600" />}</div>
+                              ) : null}
+                              {filmQuizNeedsZoneType ? (
+                                <div className="flex items-center justify-between rounded-lg border p-3"><span>Zone Type</span>{filmQuizResult.zoneType ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <XCircle className="h-4 w-4 text-red-600" />}</div>
+                              ) : null}
+                              {filmQuizNeedsGapDetails ? (
+                                <div className="flex items-center justify-between rounded-lg border p-3"><span>Puller Count</span>{filmQuizResult.gapPullerCount ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <XCircle className="h-4 w-4 text-red-600" />}</div>
+                              ) : null}
+                              {filmQuizNeedsGapDetails ? (
+                                <div className="flex items-center justify-between rounded-lg border p-3"><span>Who Pulled / Concept</span>{filmQuizResult.pullerConcept ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <XCircle className="h-4 w-4 text-red-600" />}</div>
+                              ) : null}
+                            </div>
+                            <Button
+                              variant="outline"
+                              className="h-12 w-full rounded-xl text-base"
+                              onClick={() => setShowFilmQuizAnswers((prev) => !prev)}
+                            >
+                              {showFilmQuizAnswers ? "Hide Answers" : "Show Answers"}
+                            </Button>
+                            <div className="rounded-xl border border-slate-200 bg-white p-3 text-center text-sm text-slate-700">
+                              Press <span className="font-semibold">Enter</span> to move onto next clip.
                             </div>
                             {selectedFilmClip ? (
                               <div className="space-y-3 rounded-xl border border-sky-200 bg-sky-50 p-3">
@@ -4455,29 +5358,17 @@ const existingStats =
                                     <div className="text-xs uppercase tracking-wide text-slate-500">Run / Pass</div>
                                     <div className="mt-1 font-semibold text-slate-900">{selectedFilmClip.runPass === "run" ? "Run" : "Pass"}</div>
                                   </div>
-                                  <div className="rounded-lg border bg-white px-3 py-2">
-                                    <div className="text-xs uppercase tracking-wide text-slate-500">Direction</div>
-                                    <div className="mt-1 font-semibold text-slate-900">{FIELD_LABELS[selectedFilmClip.direction]}</div>
-                                  </div>
-                                  <div className="rounded-lg border bg-white px-3 py-2">
-                                    <div className="text-xs uppercase tracking-wide text-slate-500">Source</div>
-                                    <div className="mt-1 font-semibold text-slate-900">{selectedFilmClip.sourceType}</div>
-                                  </div>
+                                  {selectedFilmClip.runPass === "run" ? (
+                                    <div className="rounded-lg border bg-white px-3 py-2">
+                                      <div className="text-xs uppercase tracking-wide text-slate-500">Direction</div>
+                                      <div className="mt-1 font-semibold text-slate-900">{FIELD_LABELS[selectedFilmClip.direction]}</div>
+                                    </div>
+                                  ) : null}
                                   <div className="rounded-lg border bg-white px-3 py-2">
                                     <div className="text-xs uppercase tracking-wide text-slate-500">Bucket</div>
                                     <div className="mt-1 font-semibold text-slate-900">{selectedFilmClip.clipBucket}</div>
                                   </div>
                                 </div>
-                                {selectedFilmClip.runPass === "pass" ? (
-                                  <div className="grid gap-2 sm:grid-cols-2">
-                                    <div className="rounded-lg border bg-white px-3 py-2">
-                                      <div className="text-xs uppercase tracking-wide text-slate-500">Pass Type</div>
-                                      <div className="mt-1 font-semibold capitalize text-slate-900">
-                                        {selectedFilmClip.passType ? selectedFilmClip.passType.replace("_", " ") : "—"}
-                                      </div>
-                                    </div>
-                                  </div>
-                                ) : null}
                                 {selectedFilmClip.runPass === "run" ? (
                                   <div className="grid gap-2 sm:grid-cols-2">
                                     <div className="rounded-lg border bg-white px-3 py-2">
@@ -4485,12 +5376,18 @@ const existingStats =
                                       <div className="mt-1 font-semibold capitalize text-slate-900">{selectedFilmClip.runScheme || "—"}</div>
                                     </div>
                                     <div className="rounded-lg border bg-white px-3 py-2">
-                                      <div className="text-xs uppercase tracking-wide text-slate-500">Concept</div>
+                                      <div className="text-xs uppercase tracking-wide text-slate-500">{selectedFilmClip.runScheme === "zone" ? "Zone Type" : "Concept"}</div>
                                       <div className="mt-1 font-semibold text-slate-900">
                                         {selectedFilmClip.runScheme === "gap"
                                           ? selectedFilmClip.gapPullerCount === "1"
                                             ? selectedFilmClip.gapOnePullerConcept || "—"
                                             : selectedFilmClip.gapTwoPullerConcept || "—"
+                                          : selectedFilmClip.runScheme === "zone"
+                                            ? selectedFilmClip.zoneType === "split"
+                                              ? "Split"
+                                              : selectedFilmClip.zoneType === "normal"
+                                                ? "Normal"
+                                                : "—"
                                           : selectedFilmClip.runScheme === "man"
                                             ? selectedFilmClip.manConcept || "—"
                                             : `${selectedFilmClip.clipBucket}`}
@@ -4531,518 +5428,6 @@ const existingStats =
                     ) : null}
                   </div>
 
-                  {currentUser?.isAdmin && showFilmAdminTools ? (
-                    <div className="space-y-3 rounded-2xl border bg-white p-4 text-sm text-slate-600">
-                      <div className="text-sm font-semibold text-slate-900">Add Study Clip</div>
-                        <div className="grid gap-3">
-                        <div>
-                          <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Source</div>
-                          <Select value={filmDraft.sourceType} onValueChange={(value: FilmSourceType) => setFilmDraft((prev) => ({ ...prev, sourceType: value }))}>
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent className="max-h-80 overflow-y-auto">
-                              {FILM_SOURCE_OPTIONS.map((option) => (
-                                <SelectItem key={option} value={option}>
-                                  {option}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div className="grid grid-cols-2 gap-3">
-                          <div>
-                            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Run / Pass</div>
-                            <Select value={filmDraft.runPass} onValueChange={(value: "run" | "pass") => setFilmDraft((prev) => ({ ...prev, runPass: value }))}>
-                              <SelectTrigger>
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent className="max-h-80 overflow-y-auto">
-                                <SelectItem value="run">Run</SelectItem>
-                                <SelectItem value="pass">Pass</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-                          <div>
-                            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Direction</div>
-                            <Select value={filmDraft.direction} onValueChange={(value: Side) => setFilmDraft((prev) => ({ ...prev, direction: value }))}>
-                              <SelectTrigger>
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent className="max-h-80 overflow-y-auto">
-                                <SelectItem value="left">Left</SelectItem>
-                                <SelectItem value="right">Right</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-                        </div>
-                        <div className="rounded-xl border bg-slate-50 p-3">
-                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Clip Bucket</div>
-                          <div className="mt-1 text-sm font-semibold text-slate-900">{deriveFilmClipBucket(filmDraft)}</div>
-                        </div>
-                        {filmDraft.runPass === "pass" ? (
-                          <div>
-                            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Pass Type</div>
-                            <Select value={filmDraft.passType} onValueChange={(value: Exclude<FilmPassType, "">) => setFilmDraft((prev) => ({ ...prev, passType: value }))}>
-                              <SelectTrigger>
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent className="max-h-80 overflow-y-auto">
-                                {FILM_PASS_TYPE_OPTIONS.map((option) => (
-                                  <SelectItem key={option} value={option}>
-                                    {option === "drop_back" ? "Drop Back" : "Boot"}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </div>
-                        ) : null}
-                        {filmDraft.runPass === "run" ? (
-                          <>
-                            <div>
-                              <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Run Scheme</div>
-                              <Select value={filmDraft.runScheme} onValueChange={(value: Exclude<FilmRunScheme, "">) => setFilmDraft((prev) => ({
-                                ...prev,
-                                runScheme: value,
-                                gapPullerCount: value === "gap" ? prev.gapPullerCount : "",
-                                gapOnePullerConcept: value === "gap" ? prev.gapOnePullerConcept : "",
-                                gapTwoPullerConcept: value === "gap" ? prev.gapTwoPullerConcept : "",
-                                manConcept: value === "man" ? prev.manConcept : "",
-                              }))}>
-                                <SelectTrigger>
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent className="max-h-80 overflow-y-auto">
-                                  {FILM_RUN_SCHEME_OPTIONS.map((option) => (
-                                    <SelectItem key={option} value={option}>
-                                      {option.charAt(0).toUpperCase() + option.slice(1)}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            </div>
-                            {filmDraft.runScheme === "gap" ? (
-                              <>
-                                <div>
-                                  <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Puller Count</div>
-                                  <Select value={filmDraft.gapPullerCount} onValueChange={(value: Exclude<FilmGapPullerCount, "">) => setFilmDraft((prev) => ({
-                                    ...prev,
-                                    gapPullerCount: value,
-                                    gapOnePullerConcept: value === "1" ? prev.gapOnePullerConcept : "",
-                                    gapTwoPullerConcept: value === "2" ? prev.gapTwoPullerConcept : "",
-                                  }))}>
-                                    <SelectTrigger>
-                                      <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent className="max-h-80 overflow-y-auto">
-                                      {FILM_GAP_PULLER_COUNT_OPTIONS.map((option) => (
-                                        <SelectItem key={option} value={option}>
-                                          {option}
-                                        </SelectItem>
-                                      ))}
-                                    </SelectContent>
-                                  </Select>
-                                </div>
-                                {filmDraft.gapPullerCount === "1" ? (
-                                  <div>
-                                    <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">One Puller Concept</div>
-                                    <Select value={filmDraft.gapOnePullerConcept} onValueChange={(value: Exclude<FilmGapOnePullerConcept, "">) => setFilmDraft((prev) => ({ ...prev, gapOnePullerConcept: value }))}>
-                                      <SelectTrigger>
-                                        <SelectValue />
-                                      </SelectTrigger>
-                                      <SelectContent className="max-h-80 overflow-y-auto">
-                                        {FILM_GAP_ONE_PULLER_CONCEPT_OPTIONS.map((option) => (
-                                          <SelectItem key={option} value={option}>
-                                            {option}
-                                          </SelectItem>
-                                        ))}
-                                      </SelectContent>
-                                    </Select>
-                                  </div>
-                                ) : null}
-                                {filmDraft.gapPullerCount === "2" ? (
-                                  <div>
-                                    <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Two Puller Concept</div>
-                                    <Select value={filmDraft.gapTwoPullerConcept} onValueChange={(value: Exclude<FilmGapTwoPullerConcept, "">) => setFilmDraft((prev) => ({ ...prev, gapTwoPullerConcept: value }))}>
-                                      <SelectTrigger>
-                                        <SelectValue />
-                                      </SelectTrigger>
-                                      <SelectContent className="max-h-80 overflow-y-auto">
-                                        {FILM_GAP_TWO_PULLER_CONCEPT_OPTIONS.map((option) => (
-                                          <SelectItem key={option} value={option}>
-                                            {option}
-                                          </SelectItem>
-                                        ))}
-                                      </SelectContent>
-                                    </Select>
-                                  </div>
-                                ) : null}
-                              </>
-                            ) : null}
-                            {filmDraft.runScheme === "man" ? (
-                              <div>
-                                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Man Concept</div>
-                                <Select value={filmDraft.manConcept} onValueChange={(value: Exclude<FilmManConcept, "">) => setFilmDraft((prev) => ({ ...prev, manConcept: value }))}>
-                                  <SelectTrigger>
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                  <SelectContent className="max-h-80 overflow-y-auto">
-                                    {FILM_MAN_CONCEPT_OPTIONS.map((option) => (
-                                      <SelectItem key={option} value={option}>
-                                        {option}
-                                      </SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
-                              </div>
-                            ) : null}
-                          </>
-                        ) : null}
-                        <div>
-                          <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Study Clip URL</div>
-                          <Input
-                            value={filmDraft.remoteStudyUrl}
-                            placeholder="Public MP4 URL for the full study clip"
-                            onChange={(e) => setFilmDraft((prev) => ({ ...prev, remoteStudyUrl: e.target.value }))}
-                          />
-                        </div>
-                        <div>
-                          <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Quiz Clip URL</div>
-                          <Input
-                            value={filmDraft.remoteQuizUrl}
-                            placeholder="Optional public MP4 URL for the cut quiz version"
-                            onChange={(e) => setFilmDraft((prev) => ({ ...prev, remoteQuizUrl: e.target.value }))}
-                          />
-                        </div>
-                        <div className="grid grid-cols-2 gap-3">
-                          <div>
-                            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Quiz Start (sec)</div>
-                            <Input
-                              value={filmDraft.quizStartSeconds}
-                              placeholder="0.00"
-                              onChange={(e) => setFilmDraft((prev) => ({ ...prev, quizStartSeconds: e.target.value }))}
-                            />
-                          </div>
-                          <div>
-                            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Quiz End (sec)</div>
-                            <Input
-                              value={filmDraft.quizEndSeconds}
-                              placeholder="1.50"
-                              onChange={(e) => setFilmDraft((prev) => ({ ...prev, quizEndSeconds: e.target.value }))}
-                            />
-                          </div>
-                        </div>
-                        {filmViewMode === "study" && selectedFilmClip ? (
-                          <div className="grid grid-cols-2 gap-2">
-                            <Button
-                              type="button"
-                              variant="outline"
-                              className="rounded-xl"
-                              onClick={() =>
-                                setFilmDraft((prev) => ({
-                                  ...prev,
-                                  quizStartSeconds: filmStudyCurrentTime.toFixed(2),
-                                }))
-                              }
-                            >
-                              Use Current for Start
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              className="rounded-xl"
-                              onClick={() =>
-                                setFilmDraft((prev) => ({
-                                  ...prev,
-                                  quizEndSeconds: filmStudyCurrentTime.toFixed(2),
-                                }))
-                              }
-                            >
-                              Use Current for End
-                            </Button>
-                          </div>
-                        ) : null}
-                        <div>
-                          <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Upload Study Clip</div>
-                          <Input
-                            key={`film-study-file-${filmUploadResetKey}`}
-                            type="file"
-                            accept="video/mp4,video/quicktime,video/webm"
-                            onChange={(e) =>
-                              setFilmDraft((prev) => ({
-                                ...prev,
-                                studyFile: e.target.files?.[0] ?? null,
-                              }))
-                            }
-                          />
-                        </div>
-                        <div>
-                          <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Upload Quiz Clip</div>
-                          <Input
-                            key={`film-quiz-file-${filmUploadResetKey}`}
-                            type="file"
-                            accept="video/mp4,video/quicktime,video/webm"
-                            onChange={(e) =>
-                              setFilmDraft((prev) => ({
-                                ...prev,
-                                quizFile: e.target.files?.[0] ?? null,
-                              }))
-                            }
-                          />
-                        </div>
-                        <Button className="rounded-xl" onClick={addFilmClip}>
-                          Save Clip
-                        </Button>
-                        {filmSaveNotice ? (
-                          <div
-                            className={
-                              filmSaveNotice.tone === "success"
-                                ? "rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900"
-                                : "rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900"
-                            }
-                          >
-                            {filmSaveNotice.message}
-                            <div
-                              className={
-                                filmSaveNotice.tone === "success"
-                                  ? "mt-1 text-xs text-emerald-700"
-                                  : "mt-1 text-xs text-rose-700"
-                              }
-                            >
-                              {filmSaveNotice.tone === "success"
-                                ? "The upload form has been reset and is ready for the next clip."
-                                : "Nothing was saved, so the current metadata and files are still in place."}
-                            </div>
-                          </div>
-                        ) : null}
-                        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-                          Uploaded files are sent to Supabase Storage and clip metadata is saved to the <span className="font-semibold">film_clips</span> table. Quiz start/end times can trim the study clip for quiz mode without needing a separate uploaded quiz file.
-                        </div>
-                      </div>
-                    </div>
-                  ) : null}
-
-                  {currentUser?.isAdmin && showFilmAdminTools && selectedFilmClip ? (
-                    <div className="space-y-3 rounded-2xl border bg-white p-4 text-sm text-slate-600">
-                      <div className="text-sm font-semibold text-slate-900">Edit Clip Metadata</div>
-                      <div className="grid gap-3">
-                        <div>
-                          <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Source</div>
-                          <Select value={filmEditDraft.sourceType} onValueChange={(value: FilmSourceType) => setFilmEditDraft((prev) => ({ ...prev, sourceType: value }))}>
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent className="max-h-80 overflow-y-auto">
-                              {FILM_SOURCE_OPTIONS.map((option) => (
-                                <SelectItem key={option} value={option}>
-                                  {option}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div className="grid grid-cols-2 gap-3">
-                          <div>
-                            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Run / Pass</div>
-                            <Select value={filmEditDraft.runPass} onValueChange={(value: "run" | "pass") => setFilmEditDraft((prev) => ({ ...prev, runPass: value }))}>
-                              <SelectTrigger>
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent className="max-h-80 overflow-y-auto">
-                                <SelectItem value="run">Run</SelectItem>
-                                <SelectItem value="pass">Pass</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-                          <div>
-                            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Direction</div>
-                            <Select value={filmEditDraft.direction} onValueChange={(value: Side) => setFilmEditDraft((prev) => ({ ...prev, direction: value }))}>
-                              <SelectTrigger>
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent className="max-h-80 overflow-y-auto">
-                                <SelectItem value="left">Left</SelectItem>
-                                <SelectItem value="right">Right</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-                        </div>
-                        <div className="rounded-xl border bg-slate-50 p-3">
-                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Clip Bucket</div>
-                          <div className="mt-1 text-sm font-semibold text-slate-900">{deriveFilmClipBucket(filmEditDraft)}</div>
-                        </div>
-                        {filmEditDraft.runPass === "pass" ? (
-                          <div>
-                            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Pass Type</div>
-                            <Select value={filmEditDraft.passType} onValueChange={(value: Exclude<FilmPassType, "">) => setFilmEditDraft((prev) => ({ ...prev, passType: value }))}>
-                              <SelectTrigger>
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent className="max-h-80 overflow-y-auto">
-                                {FILM_PASS_TYPE_OPTIONS.map((option) => (
-                                  <SelectItem key={option} value={option}>
-                                    {option === "drop_back" ? "Drop Back" : "Boot"}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </div>
-                        ) : null}
-                        {filmEditDraft.runPass === "run" ? (
-                          <>
-                            <div>
-                              <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Run Scheme</div>
-                              <Select value={filmEditDraft.runScheme} onValueChange={(value: Exclude<FilmRunScheme, "">) => setFilmEditDraft((prev) => ({
-                                ...prev,
-                                runScheme: value,
-                                gapPullerCount: value === "gap" ? prev.gapPullerCount : "",
-                                gapOnePullerConcept: value === "gap" ? prev.gapOnePullerConcept : "",
-                                gapTwoPullerConcept: value === "gap" ? prev.gapTwoPullerConcept : "",
-                                manConcept: value === "man" ? prev.manConcept : "",
-                              }))}>
-                                <SelectTrigger>
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent className="max-h-80 overflow-y-auto">
-                                  {FILM_RUN_SCHEME_OPTIONS.map((option) => (
-                                    <SelectItem key={option} value={option}>
-                                      {option.charAt(0).toUpperCase() + option.slice(1)}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            </div>
-                            {filmEditDraft.runScheme === "gap" ? (
-                              <>
-                                <div>
-                                  <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Puller Count</div>
-                                  <Select value={filmEditDraft.gapPullerCount} onValueChange={(value: Exclude<FilmGapPullerCount, "">) => setFilmEditDraft((prev) => ({
-                                    ...prev,
-                                    gapPullerCount: value,
-                                    gapOnePullerConcept: value === "1" ? prev.gapOnePullerConcept : "",
-                                    gapTwoPullerConcept: value === "2" ? prev.gapTwoPullerConcept : "",
-                                  }))}>
-                                    <SelectTrigger>
-                                      <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent className="max-h-80 overflow-y-auto">
-                                      {FILM_GAP_PULLER_COUNT_OPTIONS.map((option) => (
-                                        <SelectItem key={option} value={option}>
-                                          {option}
-                                        </SelectItem>
-                                      ))}
-                                    </SelectContent>
-                                  </Select>
-                                </div>
-                                {filmEditDraft.gapPullerCount === "1" ? (
-                                  <div>
-                                    <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">One Puller Concept</div>
-                                    <Select value={filmEditDraft.gapOnePullerConcept} onValueChange={(value: Exclude<FilmGapOnePullerConcept, "">) => setFilmEditDraft((prev) => ({ ...prev, gapOnePullerConcept: value }))}>
-                                      <SelectTrigger>
-                                        <SelectValue />
-                                      </SelectTrigger>
-                                      <SelectContent className="max-h-80 overflow-y-auto">
-                                        {FILM_GAP_ONE_PULLER_CONCEPT_OPTIONS.map((option) => (
-                                          <SelectItem key={option} value={option}>
-                                            {option}
-                                          </SelectItem>
-                                        ))}
-                                      </SelectContent>
-                                    </Select>
-                                  </div>
-                                ) : null}
-                                {filmEditDraft.gapPullerCount === "2" ? (
-                                  <div>
-                                    <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Two Puller Concept</div>
-                                    <Select value={filmEditDraft.gapTwoPullerConcept} onValueChange={(value: Exclude<FilmGapTwoPullerConcept, "">) => setFilmEditDraft((prev) => ({ ...prev, gapTwoPullerConcept: value }))}>
-                                      <SelectTrigger>
-                                        <SelectValue />
-                                      </SelectTrigger>
-                                      <SelectContent className="max-h-80 overflow-y-auto">
-                                        {FILM_GAP_TWO_PULLER_CONCEPT_OPTIONS.map((option) => (
-                                          <SelectItem key={option} value={option}>
-                                            {option}
-                                          </SelectItem>
-                                        ))}
-                                      </SelectContent>
-                                    </Select>
-                                  </div>
-                                ) : null}
-                              </>
-                            ) : null}
-                            {filmEditDraft.runScheme === "man" ? (
-                              <div>
-                                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Man Concept</div>
-                                <Select value={filmEditDraft.manConcept} onValueChange={(value: Exclude<FilmManConcept, "">) => setFilmEditDraft((prev) => ({ ...prev, manConcept: value }))}>
-                                  <SelectTrigger>
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                  <SelectContent className="max-h-80 overflow-y-auto">
-                                    {FILM_MAN_CONCEPT_OPTIONS.map((option) => (
-                                      <SelectItem key={option} value={option}>
-                                        {option}
-                                      </SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
-                              </div>
-                            ) : null}
-                          </>
-                        ) : null}
-                        <div className="grid grid-cols-2 gap-3">
-                          <div>
-                            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Quiz Start (sec)</div>
-                            <Input
-                              value={filmEditDraft.quizStartSeconds}
-                              placeholder="0.00"
-                              onChange={(e) => setFilmEditDraft((prev) => ({ ...prev, quizStartSeconds: e.target.value }))}
-                            />
-                          </div>
-                          <div>
-                            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Quiz End (sec)</div>
-                            <Input
-                              value={filmEditDraft.quizEndSeconds}
-                              placeholder="1.50"
-                              onChange={(e) => setFilmEditDraft((prev) => ({ ...prev, quizEndSeconds: e.target.value }))}
-                            />
-                          </div>
-                        </div>
-                        {filmViewMode === "study" && selectedFilmClip ? (
-                          <div className="grid grid-cols-2 gap-2">
-                            <Button
-                              type="button"
-                              variant="outline"
-                              className="rounded-xl"
-                              onClick={() =>
-                                setFilmEditDraft((prev) => ({
-                                  ...prev,
-                                  quizStartSeconds: filmStudyCurrentTime.toFixed(2),
-                                }))
-                              }
-                            >
-                              Use Current for Start
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              className="rounded-xl"
-                              onClick={() =>
-                                setFilmEditDraft((prev) => ({
-                                  ...prev,
-                                  quizEndSeconds: filmStudyCurrentTime.toFixed(2),
-                                }))
-                              }
-                            >
-                              Use Current for End
-                            </Button>
-                          </div>
-                        ) : null}
-                        <Button className="rounded-xl" onClick={saveFilmMetadata}>
-                          Save Metadata
-                        </Button>
-                      </div>
-                    </div>
-                  ) : null}
                 </div>
               </div>
             ) : mode === "quiz" ? (
