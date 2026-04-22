@@ -14,7 +14,7 @@ type FrontMode = "4-3" | "4-4";
 type AlignmentViewMode = "study" | "quiz";
 type OffenseBuildViewMode = "study" | "quiz";
 type FilmViewMode = "study" | "quiz";
-type FilmSubmode = "read_key";
+type FilmSubmode = "read_key" | "formation_key" | "team_key";
 type Side = "left" | "right";
 type PlaybookKey = "Foothill" | "Pro" | "Wing T";
 type Family = "Spread" | "I" | "12p" | "Wing T";
@@ -96,6 +96,7 @@ type ScoreSummary = {
 
 type FilmQuizAnswers = {
   runPass: string;
+  passType: string;
   direction: string;
   runScheme: string;
   zoneType: string;
@@ -110,10 +111,10 @@ type FilmSaveStatus = {
 
 type FilmSourceType = "Personal" | "Drive" | "Hudl" | "Other";
 type FilmRunScheme = "gap" | "zone" | "man" | "";
-type FilmZoneType = "normal" | "split" | "";
-type FilmPassType = "";
+type FilmZoneType = "normal" | "split" | "jet" | "";
+type FilmPassType = "normal" | "screen" | "play_action" | "";
 type FilmGapPullerCount = "1" | "2" | "";
-type FilmGapOnePullerConcept = "Power" | "Dart (Tackle Power)" | "G Lead" | "Trap" | "Center Pull" | "";
+type FilmGapOnePullerConcept = "Power" | "Dart (Tackle Power)" | "G Lead" | "Trap" | "Center Pull" | "Pin N Pull" | "";
 type FilmGapTwoPullerConcept = "GT" | "GY/GH" | "CG/CT" | "Buck Sweep" | "";
 type FilmManConcept = "Duo" | "Lead" | "";
 
@@ -121,6 +122,8 @@ type FilmClip = {
   id: string;
   title: string;
   clipBucket: string;
+  formationKey: string;
+  teamTag: string;
   sourceType: FilmSourceType;
   runPass: "run" | "pass";
   direction: Side;
@@ -144,6 +147,8 @@ type FilmClip = {
 
 type FilmClipDraft = {
   sourceType: FilmSourceType;
+  formationKey: string;
+  teamTag: string;
   runPass: "run" | "pass";
   direction: Side;
   passType: FilmPassType;
@@ -185,12 +190,12 @@ const VIEW_STATE_STORAGE_KEY = "formation-recognition-view-state";
 const FILM_CLIPS_STORAGE_KEY = "formation-recognition-film-clips";
 const FILM_BUCKET = "film-clips";
 const FILM_RUN_SCHEME_OPTIONS: Exclude<FilmRunScheme, "">[] = ["gap", "zone", "man"];
-const FILM_ZONE_TYPE_OPTIONS: Exclude<FilmZoneType, "">[] = ["normal", "split"];
+const FILM_ZONE_TYPE_OPTIONS: Exclude<FilmZoneType, "">[] = ["normal", "split", "jet"];
+const FILM_PASS_TYPE_OPTIONS: Exclude<FilmPassType, "">[] = ["normal", "screen", "play_action"];
 const FILM_GAP_PULLER_COUNT_OPTIONS: Exclude<FilmGapPullerCount, "">[] = ["1", "2"];
-const FILM_GAP_ONE_PULLER_CONCEPT_OPTIONS: Exclude<FilmGapOnePullerConcept, "">[] = ["Power", "Dart (Tackle Power)", "G Lead", "Trap", "Center Pull"];
+const FILM_GAP_ONE_PULLER_CONCEPT_OPTIONS: Exclude<FilmGapOnePullerConcept, "">[] = ["Power", "Dart (Tackle Power)", "G Lead", "Trap", "Center Pull", "Pin N Pull"];
 const FILM_GAP_TWO_PULLER_CONCEPT_OPTIONS: Exclude<FilmGapTwoPullerConcept, "">[] = ["GT", "GY/GH", "CG/CT", "Buck Sweep"];
 const FILM_MAN_CONCEPT_OPTIONS: Exclude<FilmManConcept, "">[] = ["Duo", "Lead"];
-
 const PLAYBOOK_OPTIONS: PlaybookKey[] = ["Foothill", "Pro", "Wing T"];
 const PERSONNEL_OPTIONS = ["Any", "11", "12", "21"] as const;
 const ALIGNMENT_BASE_CALLS = ["Doubles", "Trips", "Trey", "Troop", "Bunch", "B Trips", "B Trey", "B Doubles", "Quad", "Dog"] as const;
@@ -217,6 +222,11 @@ const PRO_CALLS = [
   "I Dot Right", "I Dot Left", "I Far Right", "I Far Left", "I Near Right", "I Near Left",
   "I Slot Right", "I Slot Left", "I Slot Far Right", "I Slot Far Left", "I Slot Near Right", "I Slot Near Left",
   "Ace Right", "Ace Left", "Ace Trey Right", "Ace Trey Left", "Flank Right", "Flank Left",
+] as const;
+const FILM_FORMATION_KEY_TAG_GROUPS = [
+  { label: "Foothill", options: [...ALIGNMENT_CALLS] },
+  { label: "Pro", options: [...PRO_CALLS] },
+  { label: "Wing T", options: [...WING_T_CALLS] },
 ] as const;
 const DEFENDER_TOKENS = ["N", "T", "SDE", "WDE", "M", "W", "Ni", "FC", "BC", "FS", "BS"] as const;
 const OFFENSE_TOKENS = ["QB", "RB", "X", "Y", "H", "Z"] as const;
@@ -2171,11 +2181,15 @@ function deriveFilmClipBucket(metadata: {
   const sideLabel = formatFilmDirection(metadata.direction);
 
   if (metadata.runPass === "pass") {
+    if (metadata.passType === "screen") return "Screen Pass";
+    if (metadata.passType === "play_action") return "Play Action Pass";
+    if (metadata.passType === "normal") return "Normal Pass";
     return "Pass";
   }
 
   if (metadata.runScheme === "zone") {
     if (metadata.zoneType === "split") return `Split Zone ${sideLabel}`;
+    if (metadata.zoneType === "jet") return `Jet Sweep ${sideLabel}`;
     return `Zone ${sideLabel}`;
   }
 
@@ -2238,6 +2252,8 @@ export default function FormationRecognitionWorkingApp() {
   const [customAlignmentLandmarks, setCustomAlignmentLandmarks] = useState<Record<string, Landmark[]>>({});
   const [filmClips, setFilmClips] = useState<FilmClip[]>(DEFAULT_FILM_CLIPS);
   const [selectedFilmClipId, setSelectedFilmClipId] = useState<string>("");
+  const [filmFormationFilter, setFilmFormationFilter] = useState<string>("all");
+  const [filmTeamFilter, setFilmTeamFilter] = useState<string>("all");
   const [filmStarted, setFilmStarted] = useState(false);
   const [filmPlaybackNonce, setFilmPlaybackNonce] = useState(0);
   const [filmUploadResetKey, setFilmUploadResetKey] = useState(0);
@@ -2245,6 +2261,7 @@ export default function FormationRecognitionWorkingApp() {
   const [showFilmAdminTools, setShowFilmAdminTools] = useState(false);
   const [filmQuizAnswers, setFilmQuizAnswers] = useState<FilmQuizAnswers>({
     runPass: "",
+    passType: "",
     direction: "",
     runScheme: "",
     zoneType: "",
@@ -2260,6 +2277,8 @@ export default function FormationRecognitionWorkingApp() {
   const [filmStudyDuration, setFilmStudyDuration] = useState(0);
   const [filmDraft, setFilmDraft] = useState<FilmClipDraft>({
     sourceType: "Other",
+    formationKey: "",
+    teamTag: "",
     runPass: "run",
     direction: "right",
     passType: "",
@@ -2278,6 +2297,8 @@ export default function FormationRecognitionWorkingApp() {
   });
   const [filmEditDraft, setFilmEditDraft] = useState<Omit<FilmClipDraft, "remoteStudyUrl" | "remoteQuizUrl" | "studyFile" | "quizFile">>({
     sourceType: "Other",
+    formationKey: "",
+    teamTag: "",
     runPass: "run",
     direction: "right",
     passType: "",
@@ -2330,6 +2351,8 @@ export default function FormationRecognitionWorkingApp() {
         offenseBuildViewMode?: OffenseBuildViewMode;
         filmViewMode?: FilmViewMode;
         filmSubmode?: FilmSubmode;
+        filmFormationFilter?: string;
+        filmTeamFilter?: string;
         frontMode?: FrontMode;
         selectedPlaybooks?: PlaybookKey[];
         personnelFilter?: string;
@@ -2366,8 +2389,16 @@ export default function FormationRecognitionWorkingApp() {
         setFilmViewMode(savedViewState.filmViewMode);
       }
 
-      if (savedViewState.filmSubmode === "read_key") {
+      if (savedViewState.filmSubmode === "read_key" || savedViewState.filmSubmode === "formation_key" || savedViewState.filmSubmode === "team_key") {
         setFilmSubmode(savedViewState.filmSubmode);
+      }
+
+      if (typeof savedViewState.filmFormationFilter === "string") {
+        setFilmFormationFilter(savedViewState.filmFormationFilter);
+      }
+
+      if (typeof savedViewState.filmTeamFilter === "string") {
+        setFilmTeamFilter(savedViewState.filmTeamFilter);
       }
 
       if (savedViewState.frontMode && ["4-3", "4-4"].includes(savedViewState.frontMode)) {
@@ -2424,6 +2455,8 @@ export default function FormationRecognitionWorkingApp() {
           offenseBuildViewMode,
           filmViewMode,
           filmSubmode,
+          filmFormationFilter,
+          filmTeamFilter,
           frontMode,
           selectedPlaybooks,
           personnelFilter,
@@ -2433,7 +2466,7 @@ export default function FormationRecognitionWorkingApp() {
         }),
       );
     } catch {}
-  }, [mode, alignmentViewMode, offenseBuildViewMode, filmViewMode, filmSubmode, frontMode, selectedPlaybooks, personnelFilter, index, enhancedLandmarks, selectedFilmClipId]);
+  }, [mode, alignmentViewMode, offenseBuildViewMode, filmViewMode, filmSubmode, filmFormationFilter, filmTeamFilter, frontMode, selectedPlaybooks, personnelFilter, index, enhancedLandmarks, selectedFilmClipId]);
 
   useEffect(() => {
     try {
@@ -2447,6 +2480,8 @@ export default function FormationRecognitionWorkingApp() {
           typeof clip.id === "string" &&
           typeof clip.title === "string" &&
           typeof clip.clipBucket === "string" &&
+          typeof clip.formationKey === "string" &&
+          typeof clip.teamTag === "string" &&
           Boolean(clip.sourceType) &&
           (clip.runPass === "run" || clip.runPass === "pass") &&
           (clip.direction === "left" || clip.direction === "right") &&
@@ -2469,7 +2504,7 @@ export default function FormationRecognitionWorkingApp() {
       if (!currentUser) return;
 
       const supabase = createClient();
-      const baseSelect = "id, title, clip_bucket, source_type, source_label, run_pass, direction, pass_type, run_scheme, gap_puller_count, gap_one_puller_concept, gap_two_puller_concept, man_concept, study_url, quiz_url, quiz_start_seconds, quiz_end_seconds, study_storage_path, quiz_storage_path, study_file_name, quiz_file_name";
+      const baseSelect = "id, title, clip_bucket, formation_key, team_tag, source_type, source_label, run_pass, direction, pass_type, run_scheme, gap_puller_count, gap_one_puller_concept, gap_two_puller_concept, man_concept, study_url, quiz_url, quiz_start_seconds, quiz_end_seconds, study_storage_path, quiz_storage_path, study_file_name, quiz_file_name";
       const primaryResult = await supabase
         .from("film_clips")
         .select(`${baseSelect}, zone_type`)
@@ -2478,10 +2513,10 @@ export default function FormationRecognitionWorkingApp() {
       let data = primaryResult.data as any[] | null;
       let error = primaryResult.error;
 
-      if (error?.code === "PGRST204" || error?.message?.includes("zone_type")) {
+      if (error?.code === "PGRST204" || error?.message?.includes("zone_type") || error?.message?.includes("formation_key") || error?.message?.includes("team_tag")) {
         const fallbackResult = await supabase
           .from("film_clips")
-          .select(baseSelect)
+          .select("id, title, clip_bucket, source_type, source_label, run_pass, direction, pass_type, run_scheme, gap_puller_count, gap_one_puller_concept, gap_two_puller_concept, man_concept, study_url, quiz_url, quiz_start_seconds, quiz_end_seconds, study_storage_path, quiz_storage_path, study_file_name, quiz_file_name")
           .eq("submode", "read_key")
           .order("created_at", { ascending: false });
         data = fallbackResult.data as any[] | null;
@@ -2501,15 +2536,39 @@ export default function FormationRecognitionWorkingApp() {
       const remoteClips: FilmClip[] = (data ?? []).flatMap((row) => {
         if (!row.study_url || (row.run_pass !== "run" && row.run_pass !== "pass")) return [];
         if (row.direction !== "left" && row.direction !== "right") return [];
+        const normalizedPassType: FilmPassType =
+          row.run_pass === "pass"
+            ? FILM_PASS_TYPE_OPTIONS.includes(row.pass_type) ? row.pass_type : "normal"
+            : "";
+        const normalizedClipBucket =
+          row.run_pass === "pass" && (!row.clip_bucket || row.clip_bucket === "Pass")
+            ? deriveFilmClipBucket({
+                runPass: row.run_pass,
+                direction: "right",
+                passType: normalizedPassType,
+                runScheme: "",
+                zoneType: "",
+                gapPullerCount: "",
+                gapOnePullerConcept: "",
+                gapTwoPullerConcept: "",
+                manConcept: "",
+              })
+            : row.clip_bucket ?? row.title ?? "Unsorted";
+        const normalizedTitle =
+          row.run_pass === "pass" && (!row.title || row.title === "Pass")
+            ? normalizedClipBucket
+            : row.title ?? normalizedClipBucket ?? "Untitled Clip";
         return [
           {
             id: row.id,
-            title: row.title ?? row.clip_bucket ?? "Untitled Clip",
-            clipBucket: row.clip_bucket ?? row.title ?? "Unsorted",
+            title: normalizedTitle,
+            clipBucket: normalizedClipBucket,
+            formationKey: typeof row.formation_key === "string" ? row.formation_key : "",
+            teamTag: typeof row.team_tag === "string" ? row.team_tag : "",
             sourceType: row.source_type || row.source_label || "Other",
             runPass: row.run_pass,
             direction: row.run_pass === "pass" ? "right" : row.direction,
-            passType: "",
+            passType: normalizedPassType,
             runScheme: FILM_RUN_SCHEME_OPTIONS.includes(row.run_scheme) ? row.run_scheme : "",
             zoneType:
               row.zone_type === "split_zone"
@@ -2879,6 +2938,45 @@ const existingStats =
       })
       .filter((group) => group.options.length > 0);
   }, [pool]);
+  const activeFilmClips = useMemo(() => {
+    if (filmViewMode !== "study") return filmClips;
+    if (filmSubmode === "formation_key") {
+      if (filmFormationFilter === "all") return filmClips;
+      return filmClips.filter((clip) => clip.formationKey === filmFormationFilter);
+    }
+    if (filmSubmode === "team_key") {
+      if (filmTeamFilter === "all") return filmClips;
+      return filmClips.filter((clip) => clip.teamTag === filmTeamFilter);
+    }
+    return filmClips;
+  }, [filmClips, filmViewMode, filmSubmode, filmFormationFilter, filmTeamFilter]);
+  const filmFormationKeyOptions = useMemo(() => {
+    const grouped = new Map<string, string[]>();
+
+    filmClips
+      .map((clip) => clip.formationKey.trim())
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b))
+      .forEach((formationKey) => {
+        const matchingGroup = FILM_FORMATION_KEY_TAG_GROUPS.find((group) => group.options.some((option) => option === formationKey));
+        const groupLabel = matchingGroup?.label ?? "Other";
+        const next = grouped.get(groupLabel) ?? [];
+        if (!next.includes(formationKey)) next.push(formationKey);
+        grouped.set(groupLabel, next);
+      });
+
+    return Array.from(grouped.entries()).map(([label, options]) => ({
+      label,
+      options,
+    }));
+  }, [filmClips]);
+  const filmTeamTagOptions = useMemo(() => {
+    return filmClips
+      .map((clip) => clip.teamTag.trim())
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b))
+      .filter((teamTag, index, arr) => arr.indexOf(teamTag) === index);
+  }, [filmClips]);
   const filmClipGroups = useMemo(() => {
     type ClipOption = { value: string; label: string };
     type BucketGroup = { bucket: string; options: ClipOption[] };
@@ -2893,9 +2991,14 @@ const existingStats =
       return "Other Runs";
     };
 
-    const getPassSection = (_clip: FilmClip) => "Pass";
+    const getPassSection = (clip: FilmClip) => {
+      if (clip.passType === "screen") return "Screen";
+      if (clip.passType === "play_action") return "Play Action";
+      if (clip.passType === "normal") return "Normal";
+      return "Pass";
+    };
 
-    filmClips.forEach((clip) => {
+    activeFilmClips.forEach((clip) => {
       const sectionLabel = clip.runPass === "run" ? getRunSection(clip) : getPassSection(clip);
       const runPassSections = grouped.get(clip.runPass) ?? new Map<string, Map<string, ClipOption[]>>();
       const sectionBuckets = runPassSections.get(sectionLabel) ?? new Map<string, ClipOption[]>();
@@ -2913,7 +3016,7 @@ const existingStats =
     });
 
     const runSectionOrder = ["Zone", "Man", "Gap", "Other Runs"];
-    const passSectionOrder = ["Pass"];
+    const passSectionOrder = ["Normal", "Screen", "Play Action", "Pass"];
 
     return (["run", "pass"] as const)
       .map((runPass) => {
@@ -2937,10 +3040,10 @@ const existingStats =
         };
       })
       .filter((group) => group.sections.length > 0);
-  }, [filmClips]);
+  }, [activeFilmClips]);
   const selectedFilmClip = useMemo(
-    () => filmClips.find((clip) => clip.id === selectedFilmClipId) ?? filmClips[0] ?? null,
-    [filmClips, selectedFilmClipId],
+    () => activeFilmClips.find((clip) => clip.id === selectedFilmClipId) ?? activeFilmClips[0] ?? null,
+    [activeFilmClips, selectedFilmClipId],
   );
 
   useEffect(() => {
@@ -3012,6 +3115,7 @@ const existingStats =
   useEffect(() => {
     setFilmQuizAnswers({
       runPass: "",
+      passType: "",
       direction: "",
       runScheme: "",
       zoneType: "",
@@ -3026,32 +3130,45 @@ const existingStats =
   }, [selectedFilmClipId]);
 
   useEffect(() => {
+    if ((filmSubmode === "formation_key" || filmSubmode === "team_key") && filmViewMode !== "study") {
+      setFilmViewMode("study");
+    }
+  }, [filmSubmode, filmViewMode]);
+
+  useEffect(() => {
     if (mode !== "film" || !filmClips.length) return;
 
-    const signature = `${mode}:${filmViewMode}`;
+    const signature = `${mode}:${filmSubmode}:${filmViewMode}:${filmSubmode === "formation_key" ? filmFormationFilter : filmSubmode === "team_key" ? filmTeamFilter : "all"}`;
+    const clipPool = filmViewMode === "quiz" ? filmClips : activeFilmClips;
+    if (!clipPool.length) {
+      if (selectedFilmClipId) setSelectedFilmClipId("");
+      return;
+    }
     const hasValidSelection = Boolean(
-      selectedFilmClipId && filmClips.some((clip) => clip.id === selectedFilmClipId),
+      selectedFilmClipId && clipPool.some((clip) => clip.id === selectedFilmClipId),
     );
     const shouldRandomize =
       lastFilmRandomizeSignatureRef.current !== signature || !hasValidSelection;
 
     if (shouldRandomize) {
       const currentIndex = selectedFilmClipId
-        ? filmClips.findIndex((clip) => clip.id === selectedFilmClipId)
+        ? clipPool.findIndex((clip) => clip.id === selectedFilmClipId)
         : undefined;
       const nextIndex =
         filmViewMode === "quiz"
-          ? getRandomPoolIndex(filmClips.length, currentIndex >= 0 ? currentIndex : undefined)
-          : getRandomPoolIndex(filmClips.length);
-      setSelectedFilmClipId(filmClips[nextIndex].id);
+          ? getRandomPoolIndex(clipPool.length, currentIndex >= 0 ? currentIndex : undefined)
+          : getRandomPoolIndex(clipPool.length);
+      setSelectedFilmClipId(clipPool[nextIndex].id);
       lastFilmRandomizeSignatureRef.current = signature;
     }
-  }, [mode, filmViewMode, filmClips, selectedFilmClipId]);
+  }, [mode, filmSubmode, filmViewMode, filmFormationFilter, filmTeamFilter, filmClips, activeFilmClips, selectedFilmClipId]);
 
   useEffect(() => {
     if (!selectedFilmClip) return;
     setFilmEditDraft({
       sourceType: selectedFilmClip.sourceType,
+      formationKey: selectedFilmClip.formationKey ?? "",
+      teamTag: selectedFilmClip.teamTag ?? "",
       runPass: selectedFilmClip.runPass,
       direction: selectedFilmClip.direction,
       passType: selectedFilmClip.passType,
@@ -3226,6 +3343,7 @@ const existingStats =
     setSelectedFilmClipId(filmClips[nextIndex].id);
     setFilmQuizAnswers({
       runPass: "",
+      passType: "",
       direction: "",
       runScheme: "",
       zoneType: "",
@@ -3336,10 +3454,12 @@ const existingStats =
             id: clipId,
             title,
             clipBucket,
+            formationKey: filmDraft.formationKey,
+            teamTag: filmDraft.teamTag.trim(),
             sourceType,
             runPass: filmDraft.runPass,
             direction: filmDraft.runPass === "pass" ? "right" : filmDraft.direction,
-            passType: "",
+            passType: filmDraft.runPass === "pass" ? filmDraft.passType : "",
             runScheme: filmDraft.runPass === "run" ? filmDraft.runScheme : "",
             zoneType: filmDraft.runPass === "run" && filmDraft.runScheme === "zone" ? filmDraft.zoneType : "",
             gapPullerCount: filmDraft.runPass === "run" && filmDraft.runScheme === "gap" ? filmDraft.gapPullerCount : "",
@@ -3363,16 +3483,18 @@ const existingStats =
             quizFileName: quizAsset.fileName ?? quizFile?.name,
           };
 
-          const { error: insertError } = await supabase.from("film_clips").insert({
+          let { error: insertError } = await supabase.from("film_clips").insert({
             id: clipId,
             title,
             clip_bucket: nextClip.clipBucket,
+            formation_key: nextClip.formationKey || null,
+            team_tag: nextClip.teamTag || null,
             source_type: nextClip.sourceType,
             source_label: nextClip.sourceType,
             submode: "read_key",
             run_pass: nextClip.runPass,
             direction: nextClip.direction,
-            pass_type: null,
+            pass_type: nextClip.passType || null,
             run_scheme: nextClip.runScheme || null,
             zone_type: nextClip.zoneType || null,
             gap_puller_count: nextClip.gapPullerCount ? Number(nextClip.gapPullerCount) : null,
@@ -3389,6 +3511,36 @@ const existingStats =
             quiz_file_name: nextClip.quizFileName ?? null,
             created_by: currentUser.id,
           });
+
+          if (insertError?.code === "PGRST204" || insertError?.message?.includes("formation_key") || insertError?.message?.includes("team_tag")) {
+            const fallbackResult = await supabase.from("film_clips").insert({
+              id: clipId,
+              title,
+              clip_bucket: nextClip.clipBucket,
+              source_type: nextClip.sourceType,
+              source_label: nextClip.sourceType,
+              submode: "read_key",
+              run_pass: nextClip.runPass,
+              direction: nextClip.direction,
+              pass_type: nextClip.passType || null,
+              run_scheme: nextClip.runScheme || null,
+              zone_type: nextClip.zoneType || null,
+              gap_puller_count: nextClip.gapPullerCount ? Number(nextClip.gapPullerCount) : null,
+              gap_one_puller_concept: nextClip.gapOnePullerConcept || null,
+              gap_two_puller_concept: nextClip.gapTwoPullerConcept || null,
+              man_concept: nextClip.manConcept || null,
+              study_url: nextClip.studyUrl,
+              quiz_url: nextClip.quizUrl,
+              quiz_start_seconds: nextClip.quizStartSeconds,
+              quiz_end_seconds: nextClip.quizEndSeconds,
+              study_storage_path: nextClip.studyStoragePath,
+              quiz_storage_path: nextClip.quizStoragePath,
+              study_file_name: nextClip.studyFileName ?? null,
+              quiz_file_name: nextClip.quizFileName ?? null,
+              created_by: currentUser.id,
+            });
+            insertError = fallbackResult.error;
+          }
 
           if (insertError) throw insertError;
 
@@ -3438,10 +3590,12 @@ const existingStats =
           id: `film-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
           title,
           clipBucket,
+          formationKey: filmDraft.formationKey,
+          teamTag: filmDraft.teamTag.trim(),
           sourceType,
           runPass: filmDraft.runPass,
           direction: filmDraft.runPass === "pass" ? "right" : filmDraft.direction,
-          passType: "",
+          passType: filmDraft.runPass === "pass" ? filmDraft.passType : "",
           runScheme: filmDraft.runPass === "run" ? filmDraft.runScheme : "",
           zoneType: filmDraft.runPass === "run" && filmDraft.runScheme === "zone" ? filmDraft.zoneType : "",
           gapPullerCount: filmDraft.runPass === "run" && filmDraft.runScheme === "gap" ? filmDraft.gapPullerCount : "",
@@ -3477,6 +3631,8 @@ const existingStats =
       setFilmPlaybackNonce(0);
       setFilmDraft({
         sourceType: "Hudl",
+        formationKey: "",
+        teamTag: "",
         runPass: "run",
         direction: "right",
         passType: "",
@@ -3515,10 +3671,12 @@ const existingStats =
         ...selectedFilmClip,
         title: clipBucket,
         clipBucket,
+        formationKey: filmEditDraft.formationKey,
+        teamTag: filmEditDraft.teamTag.trim(),
         sourceType: filmEditDraft.sourceType,
         runPass: filmEditDraft.runPass,
         direction: filmEditDraft.runPass === "pass" ? "right" : filmEditDraft.direction,
-        passType: "",
+        passType: filmEditDraft.runPass === "pass" ? filmEditDraft.passType : "",
         runScheme: filmEditDraft.runPass === "run" ? filmEditDraft.runScheme : "",
         zoneType: filmEditDraft.runPass === "run" && filmEditDraft.runScheme === "zone" ? filmEditDraft.zoneType : "",
         gapPullerCount: filmEditDraft.runPass === "run" && filmEditDraft.runScheme === "gap" ? filmEditDraft.gapPullerCount : "",
@@ -3541,11 +3699,13 @@ const existingStats =
           const updatePayload = {
             title: nextClip.title,
             clip_bucket: nextClip.clipBucket,
+            formation_key: nextClip.formationKey || null,
+            team_tag: nextClip.teamTag || null,
             source_type: nextClip.sourceType,
             source_label: nextClip.sourceType,
             run_pass: nextClip.runPass,
             direction: nextClip.direction,
-            pass_type: null,
+            pass_type: nextClip.passType || null,
             run_scheme: nextClip.runScheme || null,
             zone_type: nextClip.zoneType || null,
             gap_puller_count: nextClip.gapPullerCount ? Number(nextClip.gapPullerCount) : null,
@@ -3560,8 +3720,8 @@ const existingStats =
             .update(updatePayload)
             .eq("id", selectedFilmClip.id);
 
-          if (error?.code === "PGRST204" || error?.message?.includes("zone_type")) {
-            const { zone_type: _zoneType, ...fallbackPayload } = updatePayload;
+          if (error?.code === "PGRST204" || error?.message?.includes("zone_type") || error?.message?.includes("formation_key") || error?.message?.includes("team_tag")) {
+            const { zone_type: _zoneType, formation_key: _formationKey, team_tag: _teamTag, ...fallbackPayload } = updatePayload;
             const fallbackResult = await supabase
               .from("film_clips")
               .update(fallbackPayload)
@@ -3724,6 +3884,7 @@ const existingStats =
     passStrength: FIELD_LABELS[displayFormation.passStrength],
   };
   const filmQuizIsPass = selectedFilmClip?.runPass === "pass";
+  const filmQuizNeedsPassType = filmQuizIsPass;
   const selectedFilmGapConcept = selectedFilmClip?.gapPullerCount === "1"
     ? selectedFilmClip.gapOnePullerConcept
     : selectedFilmClip?.gapPullerCount === "2"
@@ -3734,6 +3895,9 @@ const existingStats =
   const filmQuizNeedsGapDetails = filmQuizNeedsRunScheme && selectedFilmClip?.runScheme === "gap";
   const filmQuizChecks = [
     normalize(filmQuizAnswers.runPass) === normalize(selectedFilmClip?.runPass === "run" ? "Run" : "Pass"),
+    ...(filmQuizNeedsPassType
+      ? [normalize(filmQuizAnswers.passType) === normalize(selectedFilmClip?.passType ?? "")]
+      : []),
     ...(filmQuizNeedsRunScheme
       ? [normalize(filmQuizAnswers.runScheme) === normalize(selectedFilmClip?.runScheme ?? "")]
       : []),
@@ -3752,6 +3916,9 @@ const existingStats =
   ];
   const filmQuizResult = {
     runPass: normalize(filmQuizAnswers.runPass) === normalize(selectedFilmClip?.runPass === "run" ? "Run" : "Pass"),
+    passType: filmQuizNeedsPassType
+      ? normalize(filmQuizAnswers.passType) === normalize(selectedFilmClip?.passType ?? "")
+      : true,
     direction: filmQuizIsPass
       ? true
       : normalizeStrength(filmQuizAnswers.direction) === normalize(selectedFilmClip?.direction ?? ""),
@@ -3779,6 +3946,7 @@ const existingStats =
       ? selectedFilmClip.studyUrl
       : selectedFilmClip?.quizUrl || selectedFilmClip?.studyUrl || "";
   const showFilmQuizRunFields = normalize(filmQuizAnswers.runPass) === "run";
+  const showFilmQuizPassFields = normalize(filmQuizAnswers.runPass) === "pass";
   const showFilmQuizZoneFields = showFilmQuizRunFields && normalize(filmQuizAnswers.runScheme) === "zone";
   const showFilmQuizGapFields = showFilmQuizRunFields && normalize(filmQuizAnswers.runScheme) === "gap";
 
@@ -4371,6 +4539,8 @@ const existingStats =
                         </SelectTrigger>
                         <SelectContent className="max-h-80 overflow-y-auto">
                           <SelectItem value="read_key">Read Key</SelectItem>
+                          <SelectItem value="formation_key">Formation Key</SelectItem>
+                          <SelectItem value="team_key">Team Key</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -4381,7 +4551,9 @@ const existingStats =
                         </SelectTrigger>
                         <SelectContent className="max-h-80 overflow-y-auto">
                           <SelectItem value="study">Study</SelectItem>
-                          <SelectItem value="quiz">Quiz</SelectItem>
+                          {filmSubmode === "read_key" ? (
+                            <SelectItem value="quiz">Quiz</SelectItem>
+                          ) : null}
                         </SelectContent>
                       </Select>
                     </div>
@@ -4471,6 +4643,35 @@ const existingStats =
                             <div className="grid gap-3">
                               <div className="grid grid-cols-2 gap-3">
                                 <div>
+                                  <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Formation Key</div>
+                                  <Select value={filmDraft.formationKey || "__none"} onValueChange={(value) => setFilmDraft((prev) => ({ ...prev, formationKey: value === "__none" ? "" : value }))}>
+                                    <SelectTrigger>
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent className="max-h-80 overflow-y-auto">
+                                      <SelectItem value="__none">No Formation Key</SelectItem>
+                                      {FILM_FORMATION_KEY_TAG_GROUPS.map((group) => (
+                                        <SelectGroup key={group.label}>
+                                          <SelectLabel>{group.label}</SelectLabel>
+                                          {group.options.map((option) => (
+                                            <SelectItem key={`${group.label}-${option}`} value={option}>
+                                              {option}
+                                            </SelectItem>
+                                          ))}
+                                        </SelectGroup>
+                                      ))}
+                                    </SelectContent>
+                                    </Select>
+                                  </div>
+                                <div>
+                                  <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Team Tag</div>
+                                  <Input
+                                    value={filmDraft.teamTag}
+                                    placeholder="Optional team name"
+                                    onChange={(e) => setFilmDraft((prev) => ({ ...prev, teamTag: e.target.value }))}
+                                  />
+                                </div>
+                                <div>
                                   <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Run / Pass</div>
                                   <Select
                                     value={filmDraft.runPass}
@@ -4479,7 +4680,7 @@ const existingStats =
                                         ...prev,
                                         runPass: value,
                                         direction: value === "run" ? prev.direction : "right",
-                                        passType: "",
+                                        passType: value === "pass" ? prev.passType || "normal" : "",
                                         runScheme: value === "run" ? prev.runScheme : "",
                                         zoneType: value === "run" ? prev.zoneType : "",
                                         gapPullerCount: value === "run" ? prev.gapPullerCount : "",
@@ -4513,6 +4714,21 @@ const existingStats =
                                   </div>
                                 ) : null}
                               </div>
+                              {filmDraft.runPass === "pass" ? (
+                                <div>
+                                  <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Pass Type</div>
+                                    <Select value={filmDraft.passType} onValueChange={(value: Exclude<FilmPassType, "">) => setFilmDraft((prev) => ({ ...prev, passType: value }))}>
+                                      <SelectTrigger>
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent className="max-h-80 overflow-y-auto">
+                                        <SelectItem value="normal">Normal</SelectItem>
+                                        <SelectItem value="screen">Screen</SelectItem>
+                                        <SelectItem value="play_action">Play Action</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+                              ) : null}
                               <div className="rounded-xl border bg-slate-50 p-3">
                                 <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Clip Bucket</div>
                                 <div className="mt-1 text-sm font-semibold text-slate-900">{deriveFilmClipBucket(filmDraft)}</div>
@@ -4552,6 +4768,7 @@ const existingStats =
                                         <SelectContent className="max-h-80 overflow-y-auto">
                                           <SelectItem value="normal">Normal</SelectItem>
                                           <SelectItem value="split">Split</SelectItem>
+                                          <SelectItem value="jet">Jet Sweep</SelectItem>
                                         </SelectContent>
                                       </Select>
                                     </div>
@@ -4732,6 +4949,35 @@ const existingStats =
                               <div className="grid gap-3">
                                 <div className="grid grid-cols-2 gap-3">
                                   <div>
+                                    <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Formation Key</div>
+                                    <Select value={filmEditDraft.formationKey || "__none"} onValueChange={(value) => setFilmEditDraft((prev) => ({ ...prev, formationKey: value === "__none" ? "" : value }))}>
+                                      <SelectTrigger>
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent className="max-h-80 overflow-y-auto">
+                                        <SelectItem value="__none">No Formation Key</SelectItem>
+                                        {FILM_FORMATION_KEY_TAG_GROUPS.map((group) => (
+                                          <SelectGroup key={group.label}>
+                                            <SelectLabel>{group.label}</SelectLabel>
+                                            {group.options.map((option) => (
+                                              <SelectItem key={`${group.label}-${option}`} value={option}>
+                                                {option}
+                                              </SelectItem>
+                                            ))}
+                                          </SelectGroup>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+                                  <div>
+                                    <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Team Tag</div>
+                                    <Input
+                                      value={filmEditDraft.teamTag ?? ""}
+                                      placeholder="Optional team name"
+                                      onChange={(e) => setFilmEditDraft((prev) => ({ ...prev, teamTag: e.target.value }))}
+                                    />
+                                  </div>
+                                  <div>
                                     <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Run / Pass</div>
                                     <Select
                                       value={filmEditDraft.runPass}
@@ -4740,7 +4986,7 @@ const existingStats =
                                           ...prev,
                                           runPass: value,
                                           direction: value === "run" ? prev.direction : "right",
-                                          passType: "",
+                                          passType: value === "pass" ? prev.passType || "normal" : "",
                                           runScheme: value === "run" ? prev.runScheme : "",
                                           zoneType: value === "run" ? prev.zoneType : "",
                                           gapPullerCount: value === "run" ? prev.gapPullerCount : "",
@@ -4774,6 +5020,21 @@ const existingStats =
                                     </div>
                                   ) : null}
                                 </div>
+                                {filmEditDraft.runPass === "pass" ? (
+                                  <div>
+                                    <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Pass Type</div>
+                                    <Select value={filmEditDraft.passType} onValueChange={(value: Exclude<FilmPassType, "">) => setFilmEditDraft((prev) => ({ ...prev, passType: value }))}>
+                                      <SelectTrigger>
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent className="max-h-80 overflow-y-auto">
+                                        <SelectItem value="normal">Normal</SelectItem>
+                                        <SelectItem value="screen">Screen</SelectItem>
+                                        <SelectItem value="play_action">Play Action</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+                                ) : null}
                                 <div className="rounded-xl border bg-slate-50 p-3">
                                   <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Clip Bucket</div>
                                   <div className="mt-1 text-sm font-semibold text-slate-900">{deriveFilmClipBucket(filmEditDraft)}</div>
@@ -4813,6 +5074,7 @@ const existingStats =
                                           <SelectContent className="max-h-80 overflow-y-auto">
                                             <SelectItem value="normal">Normal</SelectItem>
                                             <SelectItem value="split">Split</SelectItem>
+                                            <SelectItem value="jet">Jet Sweep</SelectItem>
                                           </SelectContent>
                                         </Select>
                                       </div>
@@ -4975,65 +5237,127 @@ const existingStats =
                 <div className="space-y-4">
                   <div className="space-y-3 rounded-2xl border bg-white p-4 text-sm text-slate-600">
                     {filmViewMode === "study" ? (
-                      <div>
-                        <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Clip</div>
-                        <Select
-                          value={selectedFilmClip?.id ?? ""}
-                          onValueChange={(value) => {
-                            setSelectedFilmClipId(value);
-                            setFilmStarted(false);
-                          }}
-                          disabled={!filmClipGroups.length}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder={filmClipGroups.length ? "Select a clip" : "No clips added yet"} />
-                          </SelectTrigger>
-                          <SelectContent className="max-h-80 overflow-y-auto">
-                            {filmClipGroups.map((group) => (
-                              <React.Fragment key={group.runPass}>
-                                <SelectGroup>
-                                  <SelectLabel className="sticky top-0 z-10 bg-white/95 backdrop-blur">
-                                    {group.label}
-                                  </SelectLabel>
-                                  {group.sections.map((sectionGroup) => (
-                                    <React.Fragment key={`${group.runPass}-${sectionGroup.section}`}>
-                                      <div className="sticky top-7 z-10 px-2 py-1.5 text-xs font-bold uppercase tracking-[0.18em] text-slate-700 bg-white/95 backdrop-blur">
-                                        {sectionGroup.section}
-                                      </div>
-                                      {sectionGroup.buckets.map((bucketGroup) => (
-                                        <React.Fragment key={`${group.runPass}-${sectionGroup.section}-${bucketGroup.bucket}`}>
-                                          <div className="px-4 py-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                                            {bucketGroup.bucket}
-                                          </div>
-                                          {bucketGroup.options.map((option) => (
-                                            <SelectItem key={option.value} value={option.value}>
-                                              {option.label}
-                                            </SelectItem>
-                                          ))}
-                                        </React.Fragment>
+                      <>
+                        {filmSubmode === "formation_key" ? (
+                          <div>
+                            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Formation Key</div>
+                            <Select value={filmFormationFilter} onValueChange={setFilmFormationFilter}>
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent className="max-h-80 overflow-y-auto">
+                                <SelectItem value="all">All Tagged Formations</SelectItem>
+                                {filmFormationKeyOptions.length ? (
+                                  filmFormationKeyOptions.map((group) => (
+                                    <SelectGroup key={group.label}>
+                                      <SelectLabel>{group.label}</SelectLabel>
+                                      {group.options.map((option) => (
+                                        <SelectItem key={`${group.label}-${option}`} value={option}>
+                                          {option}
+                                        </SelectItem>
                                       ))}
-                                    </React.Fragment>
-                                  ))}
-                                </SelectGroup>
-                                {group.runPass !== filmClipGroups[filmClipGroups.length - 1]?.runPass ? (
-                                  <SelectDivider />
-                                ) : null}
-                              </React.Fragment>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
+                                    </SelectGroup>
+                                  ))
+                                ) : (
+                                  <SelectGroup>
+                                    <SelectLabel>No Formation Keys Yet</SelectLabel>
+                                  </SelectGroup>
+                                )}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        ) : filmSubmode === "team_key" ? (
+                          <div>
+                            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Team</div>
+                            <Select value={filmTeamFilter} onValueChange={setFilmTeamFilter}>
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent className="max-h-80 overflow-y-auto">
+                                <SelectItem value="all">All Tagged Teams</SelectItem>
+                                {filmTeamTagOptions.length ? (
+                                  filmTeamTagOptions.map((teamTag) => (
+                                    <SelectItem key={teamTag} value={teamTag}>
+                                      {teamTag}
+                                    </SelectItem>
+                                  ))
+                                ) : (
+                                  <SelectGroup>
+                                    <SelectLabel>No Team Tags Yet</SelectLabel>
+                                  </SelectGroup>
+                                )}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        ) : null}
+                        <div>
+                          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Clip</div>
+                          <Select
+                            value={selectedFilmClip?.id ?? ""}
+                            onValueChange={(value) => {
+                              setSelectedFilmClipId(value);
+                              setFilmStarted(false);
+                            }}
+                            disabled={!filmClipGroups.length}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder={filmClipGroups.length ? "Select a clip" : "No clips added yet"} />
+                            </SelectTrigger>
+                            <SelectContent className="max-h-80 overflow-y-auto">
+                              {filmClipGroups.map((group) => (
+                                <React.Fragment key={group.runPass}>
+                                  <SelectGroup>
+                                    <SelectLabel className="sticky top-0 z-10 bg-white/95 backdrop-blur">
+                                      {group.label}
+                                    </SelectLabel>
+                                    {group.sections.map((sectionGroup) => (
+                                      <React.Fragment key={`${group.runPass}-${sectionGroup.section}`}>
+                                        <div className="sticky top-7 z-10 px-2 py-1.5 text-xs font-bold uppercase tracking-[0.18em] text-slate-700 bg-white/95 backdrop-blur">
+                                          {sectionGroup.section}
+                                        </div>
+                                        {sectionGroup.buckets.map((bucketGroup) => (
+                                          <React.Fragment key={`${group.runPass}-${sectionGroup.section}-${bucketGroup.bucket}`}>
+                                            <div className="px-4 py-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                              {bucketGroup.bucket}
+                                            </div>
+                                            {bucketGroup.options.map((option) => (
+                                              <SelectItem key={option.value} value={option.value}>
+                                                {option.label}
+                                              </SelectItem>
+                                            ))}
+                                          </React.Fragment>
+                                        ))}
+                                      </React.Fragment>
+                                    ))}
+                                  </SelectGroup>
+                                  {group.runPass !== filmClipGroups[filmClipGroups.length - 1]?.runPass ? (
+                                    <SelectDivider />
+                                  ) : null}
+                                </React.Fragment>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </>
                     ) : (
                       <div className="rounded-xl border bg-slate-50 p-3">
                         <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Film Quiz</div>
                         <div className="mt-1 text-sm text-slate-700">
-                          Film quiz gives players <span className="font-semibold">0 replays</span>. Pass clips only ask for <span className="font-semibold">Pass</span>, while run clips ask for <span className="font-semibold">Run / Pass</span>, <span className="font-semibold">Scheme</span>, <span className="font-semibold">Direction</span>, and extra zone or gap detail when needed.
+                          {filmSubmode === "formation_key"
+                            ? "Formation Key quiz is not built yet. Use study mode to sort clips by tagged formation families."
+                            : filmSubmode === "team_key"
+                              ? "Team Key quiz is not built yet. Use study mode to sort clips by tagged team cutups."
+                            : <>Film quiz gives players <span className="font-semibold">0 replays</span>. Pass clips ask for <span className="font-semibold">Run / Pass</span> and <span className="font-semibold">Pass Type</span>, while run clips ask for <span className="font-semibold">Run / Pass</span>, <span className="font-semibold">Scheme</span>, <span className="font-semibold">Direction</span>, and extra zone or gap detail when needed.</>}
                         </div>
                       </div>
                     )}
 
                       <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
-                        Film Mode is set up for <span className="font-semibold">Read Key</span>. Study mode shows the full clip immediately, while quiz mode hides the preview until the rep starts.
+                        {filmSubmode === "formation_key"
+                          ? <>Film Mode is set up for <span className="font-semibold">Formation Key</span>. Study mode lets coaches sort clips by tagged formations using the same language as the formation and alignment tools.</>
+                          : filmSubmode === "team_key"
+                            ? <>Film Mode is set up for <span className="font-semibold">Team Key</span>. Study mode lets coaches sort clips by tagged opponent or scout-team material.</>
+                          : <>Film Mode is set up for <span className="font-semibold">Read Key</span>. Study mode shows the full clip immediately, while quiz mode hides the preview until the rep starts.</>}
                       </div>
 
                     {filmViewMode === "study" && selectedFilmClip ? (
@@ -5060,6 +5384,20 @@ const existingStats =
                           <div className="rounded-lg border bg-white px-3 py-2">
                             <div className="text-xs uppercase tracking-wide text-slate-500">Run / Pass</div>
                             <div className="mt-1 font-semibold text-slate-900">{selectedFilmClip.runPass === "run" ? "Run" : "Pass"}</div>
+                          </div>
+                          {selectedFilmClip.runPass === "pass" ? (
+                            <div className="rounded-lg border bg-white px-3 py-2">
+                              <div className="text-xs uppercase tracking-wide text-slate-500">Pass Type</div>
+                              <div className="mt-1 font-semibold text-slate-900">{selectedFilmClip.passType === "screen" ? "Screen" : selectedFilmClip.passType === "play_action" ? "Play Action" : selectedFilmClip.passType === "normal" ? "Normal" : "—"}</div>
+                            </div>
+                          ) : null}
+                          <div className="rounded-lg border bg-white px-3 py-2">
+                            <div className="text-xs uppercase tracking-wide text-slate-500">Formation Key</div>
+                            <div className="mt-1 font-semibold text-slate-900">{selectedFilmClip.formationKey || "—"}</div>
+                          </div>
+                          <div className="rounded-lg border bg-white px-3 py-2">
+                            <div className="text-xs uppercase tracking-wide text-slate-500">Team Tag</div>
+                            <div className="mt-1 font-semibold text-slate-900">{selectedFilmClip.teamTag || "—"}</div>
                           </div>
                           {selectedFilmClip.runPass === "run" ? (
                             <div className="rounded-lg border bg-white px-3 py-2">
@@ -5088,6 +5426,8 @@ const existingStats =
                                   : selectedFilmClip.runScheme === "zone"
                                     ? selectedFilmClip.zoneType === "split"
                                       ? "Split"
+                                      : selectedFilmClip.zoneType === "jet"
+                                        ? "Jet Sweep"
                                       : selectedFilmClip.zoneType === "normal"
                                         ? "Normal"
                                         : "—"
@@ -5141,6 +5481,7 @@ const existingStats =
                                 setFilmQuizAnswers((prev) => ({
                                   ...prev,
                                   runPass: value,
+                                  passType: value === "pass" ? prev.passType : "",
                                   direction: value === "run" ? prev.direction : "",
                                   runScheme: value === "run" ? prev.runScheme : "",
                                   zoneType: value === "run" ? prev.zoneType : "",
@@ -5158,6 +5499,24 @@ const existingStats =
                               </SelectContent>
                             </Select>
                           </div>
+                          {showFilmQuizPassFields ? (
+                            <div>
+                              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-600">Pass Type</div>
+                              <Select
+                                value={filmQuizAnswers.passType}
+                                onValueChange={(value: Exclude<FilmPassType, "">) => setFilmQuizAnswers((prev) => ({ ...prev, passType: value }))}
+                              >
+                                <SelectTrigger className="h-12 border-2 border-slate-300 bg-white text-base">
+                                  <SelectValue placeholder="Normal, Screen, or Play Action" />
+                                </SelectTrigger>
+                                <SelectContent className="max-h-80 overflow-y-auto">
+                                  <SelectItem value="normal">Normal</SelectItem>
+                                  <SelectItem value="screen">Screen</SelectItem>
+                                  <SelectItem value="play_action">Play Action</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          ) : null}
                           {showFilmQuizRunFields ? (
                             <div>
                               <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-600">Direction</div>
@@ -5209,11 +5568,12 @@ const existingStats =
                                 onValueChange={(value: Exclude<FilmZoneType, "">) => setFilmQuizAnswers((prev) => ({ ...prev, zoneType: value }))}
                               >
                                 <SelectTrigger className="h-12 border-2 border-slate-300 bg-white text-base">
-                                  <SelectValue placeholder="Normal or Split" />
+                                  <SelectValue placeholder="Normal, Split, or Jet Sweep" />
                                 </SelectTrigger>
                                 <SelectContent className="max-h-80 overflow-y-auto">
                                   <SelectItem value="normal">Normal</SelectItem>
                                   <SelectItem value="split">Split</SelectItem>
+                                  <SelectItem value="jet">Jet Sweep</SelectItem>
                                 </SelectContent>
                               </Select>
                             </div>
@@ -5294,6 +5654,9 @@ const existingStats =
                         {showFilmQuizAnswers && selectedFilmClip ? (
                           <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
                             <div><span className="font-semibold">Run / Pass:</span> {selectedFilmClip.runPass === "run" ? "Run" : "Pass"}</div>
+                            {filmQuizNeedsPassType ? (
+                              <div><span className="font-semibold">Pass Type:</span> {selectedFilmClip.passType === "screen" ? "Screen" : selectedFilmClip.passType === "play_action" ? "Play Action" : selectedFilmClip.passType === "normal" ? "Normal" : "—"}</div>
+                            ) : null}
                             {selectedFilmClip.runPass === "run" ? (
                               <div><span className="font-semibold">Direction:</span> {FIELD_LABELS[selectedFilmClip.direction]}</div>
                             ) : null}
@@ -5301,7 +5664,7 @@ const existingStats =
                               <div><span className="font-semibold">Scheme:</span> {selectedFilmClip.runScheme ? selectedFilmClip.runScheme.charAt(0).toUpperCase() + selectedFilmClip.runScheme.slice(1) : "—"}</div>
                             ) : null}
                             {filmQuizNeedsZoneType ? (
-                              <div><span className="font-semibold">Zone Type:</span> {selectedFilmClip.zoneType === "split" ? "Split" : selectedFilmClip.zoneType === "normal" ? "Normal" : "—"}</div>
+                              <div><span className="font-semibold">Zone Type:</span> {selectedFilmClip.zoneType === "split" ? "Split" : selectedFilmClip.zoneType === "jet" ? "Jet Sweep" : selectedFilmClip.zoneType === "normal" ? "Normal" : "—"}</div>
                             ) : null}
                             {filmQuizNeedsGapDetails ? (
                               <>
@@ -5324,6 +5687,9 @@ const existingStats =
                             ) : null}
                             <div className="space-y-2 text-sm">
                               <div className="flex items-center justify-between rounded-lg border p-3"><span>Run / Pass</span>{filmQuizResult.runPass ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <XCircle className="h-4 w-4 text-red-600" />}</div>
+                              {filmQuizNeedsPassType ? (
+                                <div className="flex items-center justify-between rounded-lg border p-3"><span>Pass Type</span>{filmQuizResult.passType ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <XCircle className="h-4 w-4 text-red-600" />}</div>
+                              ) : null}
                               {!filmQuizIsPass ? (
                                 <div className="flex items-center justify-between rounded-lg border p-3"><span>Direction</span>{filmQuizResult.direction ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <XCircle className="h-4 w-4 text-red-600" />}</div>
                               ) : null}
@@ -5358,6 +5724,12 @@ const existingStats =
                                     <div className="text-xs uppercase tracking-wide text-slate-500">Run / Pass</div>
                                     <div className="mt-1 font-semibold text-slate-900">{selectedFilmClip.runPass === "run" ? "Run" : "Pass"}</div>
                                   </div>
+                                  {selectedFilmClip.runPass === "pass" ? (
+                                    <div className="rounded-lg border bg-white px-3 py-2">
+                                      <div className="text-xs uppercase tracking-wide text-slate-500">Pass Type</div>
+                                      <div className="mt-1 font-semibold text-slate-900">{selectedFilmClip.passType === "screen" ? "Screen" : selectedFilmClip.passType === "play_action" ? "Play Action" : selectedFilmClip.passType === "normal" ? "Normal" : "—"}</div>
+                                    </div>
+                                  ) : null}
                                   {selectedFilmClip.runPass === "run" ? (
                                     <div className="rounded-lg border bg-white px-3 py-2">
                                       <div className="text-xs uppercase tracking-wide text-slate-500">Direction</div>
@@ -5385,6 +5757,8 @@ const existingStats =
                                           : selectedFilmClip.runScheme === "zone"
                                             ? selectedFilmClip.zoneType === "split"
                                               ? "Split"
+                                              : selectedFilmClip.zoneType === "jet"
+                                                ? "Jet Sweep"
                                               : selectedFilmClip.zoneType === "normal"
                                                 ? "Normal"
                                                 : "—"
