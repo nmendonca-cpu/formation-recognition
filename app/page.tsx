@@ -9,12 +9,17 @@ import { CheckCircle2, Clock3, Shuffle, Trophy, User, XCircle } from "lucide-rea
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
-type AppMode = "study" | "alignment" | "offense_build" | "film" | "quiz" | "editor" | "account";
+type AppMode = "study" | "alignment" | "offense_build" | "film" | "quiz" | "editor" | "account" | "leaderboard" | "concept";
+type AppSection = "offense" | "defense" | "admin";
+type LeaderboardMode = "quiz" | "offense_build" | "alignment" | "film" | "concept";
+type LeaderboardSection = "offense" | "defense";
 type FrontMode = "4-3" | "4-4";
 type AlignmentViewMode = "study" | "quiz";
 type OffenseBuildViewMode = "study" | "quiz";
 type FilmViewMode = "study" | "quiz";
 type FilmSubmode = "read_key" | "formation_key" | "team_key";
+type FormationTrainerViewMode = "study" | "quiz";
+type PassConceptViewMode = "study" | "quiz";
 type Side = "left" | "right";
 type PlaybookKey = "Foothill" | "Pro" | "Wing T";
 type Family = "Spread" | "I" | "12p" | "Wing T";
@@ -51,6 +56,60 @@ type Landmark = {
   layer: LandmarkLayer;
 };
 
+type RouteOverlay = {
+  id: string;
+  label: string;
+  color: string;
+  path: { x: number; y: number }[];
+  labelX?: number;
+  labelY?: number;
+};
+
+type YardReferenceLine = {
+  id: string;
+  yards: number;
+  label?: string;
+};
+
+type PassConceptPlayerId = "X" | "H" | "Y" | "Z";
+type PassConceptBoardKind = "2x2" | "3x1";
+type PassConceptFamilyFilter = "2x2" | "3x1" | "all";
+type PassConceptQuizMode = "build" | "identify";
+
+type TwoByTwoConcept = {
+  id: string;
+  name: string;
+  outsideRoute: (typeof PASS_CONCEPT_ROUTE_OPTIONS)[number];
+  insideRoute: (typeof PASS_CONCEPT_ROUTE_OPTIONS)[number];
+  detail?: string;
+};
+
+type ThreeByOneConcept = {
+  id: string;
+  name: string;
+  routes: Partial<Record<PassConceptPlayerId, (typeof PASS_CONCEPT_ROUTE_OPTIONS)[number]>>;
+  detail?: string;
+};
+
+type PassConceptCard = {
+  label: string;
+  name: string;
+  assignments: { player: PassConceptPlayerId; roleLabel: string; route: string }[];
+  detail?: string;
+};
+
+type PassConceptDefinition = {
+  boardKind: PassConceptBoardKind;
+  formation: string;
+  title: string;
+  conceptName: string;
+  frontsideConceptName?: string;
+  backsideConceptName?: string;
+  routes: Partial<Record<PassConceptPlayerId, string>>;
+  activePlayers: PassConceptPlayerId[];
+  cards: PassConceptCard[];
+};
+
 type CheckResult = {
   incorrectIds: string[];
   ghosts: PlayerDot[];
@@ -71,6 +130,7 @@ type UserStats = {
   offense_build: ModeScoreStats;
   alignment: ModeScoreStats;
   film: ModeScoreStats;
+  concept: ModeScoreStats;
 };
 
 type UserRecord = {
@@ -79,6 +139,7 @@ type UserRecord = {
   name: string;
   teamCode: string;
   isAdmin: boolean;
+  avatarUrl?: string | null;
   stats: UserStats;
 };
 
@@ -86,6 +147,9 @@ type LeaderboardEntry = {
   id: string;
   name: string;
   teamCode: string;
+  avatarUrl?: string | null;
+  email?: string | null;
+  isAdmin?: boolean;
   stats: UserStats;
 };
 
@@ -105,9 +169,11 @@ type FilmQuizAnswers = {
 };
 
 type FilmSaveStatus = {
-  tone: "success" | "error";
+  tone: "success" | "error" | "warning";
   message: string;
 };
+
+type FilmAdminPanelMode = "upload" | "edit";
 
 type FilmSourceType = "Personal" | "Drive" | "Hudl" | "Other";
 type FilmRunScheme = "gap" | "zone" | "man" | "";
@@ -143,6 +209,8 @@ type FilmClip = {
   kind: "remote" | "local" | "supabase";
   studyFileName?: string;
   quizFileName?: string;
+  studyFileSize?: number | null;
+  quizFileSize?: number | null;
 };
 
 type FilmClipDraft = {
@@ -177,18 +245,26 @@ type CustomLandmarkDraft = {
 
 type AnswerOverrideMap = Record<string, { x: number; y: number }>;
 
-const MODE_OPTIONS: { value: AppMode; label: string; title: string }[] = [
-  { value: "study", label: "Formation Trainer", title: "FORMATION TRAINER" },
-  { value: "alignment", label: "Alignment Mode", title: "DEFENSIVE ALIGNMENT" },
-  { value: "offense_build", label: "Offensive Mode", title: "OFFENSIVE FORMATION" },
-  { value: "film", label: "Film Mode", title: "FILM MODE" },
-  { value: "quiz", label: "Quiz Mode", title: "QUIZ MODE" },
-  { value: "editor", label: "Formation Editor", title: "FORMATION EDITOR" },
-  { value: "account", label: "Account / Leaderboard", title: "ACCOUNT / LEADERBOARD" },
+const APP_SECTION_OPTIONS: { value: AppSection; label: string }[] = [
+  { value: "offense", label: "Offense" },
+  { value: "defense", label: "Defense" },
+  { value: "admin", label: "Admin" },
+];
+
+const MODE_OPTIONS: { value: AppMode; label: string; title: string; section: AppSection; hiddenFromNav?: boolean }[] = [
+  { value: "study", label: "Formation Trainer", title: "FORMATION TRAINER", section: "defense" },
+  { value: "offense_build", label: "Formation Trainer", title: "OFFENSIVE FORMATION", section: "offense" },
+  { value: "concept", label: "Pass Concept", title: "PASS CONCEPT MODE", section: "offense" },
+  { value: "alignment", label: "Alignment Mode", title: "DEFENSIVE ALIGNMENT", section: "defense" },
+  { value: "film", label: "Film Mode", title: "FILM MODE", section: "defense" },
+  { value: "editor", label: "Formation Editor", title: "FORMATION EDITOR", section: "admin" },
+  { value: "account", label: "Account", title: "ACCOUNT", section: "admin", hiddenFromNav: true },
+  { value: "leaderboard", label: "Leaderboard", title: "LEADERBOARD", section: "admin", hiddenFromNav: true },
 ];
 const VIEW_STATE_STORAGE_KEY = "formation-recognition-view-state";
 const FILM_CLIPS_STORAGE_KEY = "formation-recognition-film-clips";
 const FILM_BUCKET = "film-clips";
+const AVATAR_BUCKET = "profile-pics";
 const FILM_RUN_SCHEME_OPTIONS: Exclude<FilmRunScheme, "">[] = ["gap", "zone", "man"];
 const FILM_ZONE_TYPE_OPTIONS: Exclude<FilmZoneType, "">[] = ["normal", "split", "jet"];
 const FILM_PASS_TYPE_OPTIONS: Exclude<FilmPassType, "">[] = ["normal", "screen", "play_action"];
@@ -196,6 +272,173 @@ const FILM_GAP_PULLER_COUNT_OPTIONS: Exclude<FilmGapPullerCount, "">[] = ["1", "
 const FILM_GAP_ONE_PULLER_CONCEPT_OPTIONS: Exclude<FilmGapOnePullerConcept, "">[] = ["Power", "Dart (Tackle Power)", "G Lead", "Trap", "Center Pull", "Pin N Pull"];
 const FILM_GAP_TWO_PULLER_CONCEPT_OPTIONS: Exclude<FilmGapTwoPullerConcept, "">[] = ["GT", "GY/GH", "CG/CT", "Buck Sweep"];
 const FILM_MAN_CONCEPT_OPTIONS: Exclude<FilmManConcept, "">[] = ["Duo", "Lead"];
+const PASS_CONCEPT_ROUTE_OPTIONS = [
+  "Hitch",
+  "Corner",
+  "Fade",
+  "12 Yard Out",
+  "5 Yard Out",
+  "5 Yard In",
+  "Shallow Cross",
+  "Seam",
+  "Dig",
+  "Post",
+  "Bender",
+  "Wheel",
+  "Matt Curl",
+  "Flat",
+  "Slant",
+  "Quick Out",
+  "Fadestop",
+] as const;
+const TWO_BY_TWO_CONCEPTS: TwoByTwoConcept[] = [
+  { id: "spartan", name: "Spartan", outsideRoute: "Hitch", insideRoute: "Corner" },
+  { id: "wolf", name: "Wolf", outsideRoute: "Fade", insideRoute: "12 Yard Out" },
+  { id: "quinn", name: "Quinn", outsideRoute: "Fade", insideRoute: "5 Yard Out" },
+  { id: "vegas", name: "Vegas", outsideRoute: "Fade", insideRoute: "Seam" },
+  { id: "dagger", name: "Dagger", outsideRoute: "Dig", insideRoute: "Seam" },
+  { id: "falcon", name: "Falcon", outsideRoute: "Post", insideRoute: "Bender", detail: "Deep crosser for the inside route." },
+  { id: "malone", name: "Malone", outsideRoute: "Post", insideRoute: "Wheel" },
+  { id: "matt", name: "Matt", outsideRoute: "Matt Curl", insideRoute: "Flat", detail: "Curl: 8-yard stem, 45-degree post stem to 12, then back to the ball at 10." },
+  { id: "matt-smoke", name: "Matt Smoke", outsideRoute: "Matt Curl", insideRoute: "Wheel" },
+  { id: "dusty", name: "Dusty", outsideRoute: "Slant", insideRoute: "Slant", detail: "Double slant: 4 yards vertical, then 45-degree cut inside." },
+  { id: "duncan", name: "Duncan", outsideRoute: "Slant", insideRoute: "Quick Out", detail: "Quick out is a speed cut rolled out by 5 yards max." },
+  { id: "harry", name: "Harry", outsideRoute: "Hitch", insideRoute: "Hitch" },
+  { id: "hector", name: "Hector", outsideRoute: "Hitch", insideRoute: "Seam" },
+  { id: "must", name: "Must", outsideRoute: "Fadestop", insideRoute: "Seam", detail: "Fadestop pushes to 15 and comes back to 12." },
+];
+const THREE_BY_ONE_CONCEPTS: ThreeByOneConcept[] = [
+  {
+    id: "h-wolf",
+    name: "H Wolf",
+    routes: { Z: "Fade", H: "12 Yard Out", Y: "Quick Out" },
+    detail: "Tagged H gets the 12-yard out. #3 runs the quick out.",
+  },
+  {
+    id: "z-wolf",
+    name: "Y Wolf",
+    routes: { Z: "Fade", H: "5 Yard Out", Y: "12 Yard Out" },
+    detail: "Tagged Y gets the 12-yard out. H runs the 5-yard out.",
+  },
+  {
+    id: "h-grizz",
+    name: "H Grizz",
+    routes: { Z: "Post", H: "Dig", Y: "5 Yard In" },
+    detail: "Tagged H gets the dig. #3 works the 5-yard in.",
+  },
+  {
+    id: "z-grizz",
+    name: "Y Grizz",
+    routes: { Z: "Post", H: "5 Yard In", Y: "Dig" },
+    detail: "Tagged Y gets the dig. H works the 5-yard in.",
+  },
+  {
+    id: "vegas-z",
+    name: "Vegas",
+    routes: { Z: "Fade", H: "Seam", Y: "Bender" },
+    detail: "Trips version from the deck: outside fade, middle seam, tagged Z on the bender.",
+  },
+  {
+    id: "dagger-z",
+    name: "Dagger",
+    routes: { Z: "Dig", H: "Seam", Y: "Bender" },
+    detail: "Trips Dagger from the deck: X dig, middle seam, tagged Z on the bender.",
+  },
+  {
+    id: "td-special",
+    name: "TD Special",
+    routes: { Z: "Slant", H: "Slant", Y: "Quick Out" },
+    detail: "Both outside eligibles work slant stems while #3 speed-cuts out.",
+  },
+  {
+    id: "scrape",
+    name: "Scrape",
+    routes: { Z: "5 Yard In", H: "Seam", Y: "Bender" },
+    detail: "Outside settles on the 5-yard in with seam plus bender stacked inside.",
+  },
+];
+const DEFAULT_ROUTE_TEMPLATES: Record<(typeof PASS_CONCEPT_ROUTE_OPTIONS)[number], { lateral: number; depth: number }[]> = {
+  Hitch: [
+    { lateral: 0, depth: 7 },
+    { lateral: -2.1, depth: 5.8 },
+  ],
+  Corner: [
+    { lateral: 0, depth: 10 },
+    { lateral: 4.8, depth: 13.4 },
+    { lateral: 10.2, depth: 18.6 },
+  ],
+  Fade: [
+    { lateral: 0.15, depth: 20 },
+  ],
+  "12 Yard Out": [
+    { lateral: 0.1, depth: 12 },
+    { lateral: 18.2, depth: 12 },
+  ],
+  "5 Yard Out": [
+    { lateral: 0.1, depth: 5.2 },
+    { lateral: 18.2, depth: 5.2 },
+  ],
+  "5 Yard In": [
+    { lateral: 0.1, depth: 5.2 },
+    { lateral: -12.8, depth: 5.2 },
+  ],
+  "Shallow Cross": [
+    { lateral: -3.2, depth: 4.6 },
+    { lateral: -9.4, depth: 5.15 },
+    { lateral: -18.6, depth: 5.15 },
+  ],
+  Seam: [
+    { lateral: 0.15, depth: 20 },
+  ],
+  Dig: [
+    { lateral: 0, depth: 12 },
+    { lateral: -12.2, depth: 12 },
+  ],
+  Post: [
+    { lateral: 0.2, depth: 8.2 },
+    { lateral: -3.8, depth: 14.6 },
+    { lateral: -8.9, depth: 20 },
+  ],
+  Bender: [
+    { lateral: 0, depth: 9.5 },
+    { lateral: -2.2, depth: 12.4 },
+    { lateral: -6.8, depth: 15.1 },
+    { lateral: -11.8, depth: 16.6 },
+    { lateral: -15.2, depth: 17.2 },
+  ],
+  Wheel: [
+    { lateral: 2.1, depth: 4.1 },
+    { lateral: 8.6, depth: 5.2 },
+    { lateral: 12.8, depth: 8.4 },
+    { lateral: 13.8, depth: 20 },
+  ],
+  "Matt Curl": [
+    { lateral: 0.2, depth: 7.7 },
+    { lateral: -4.2, depth: 12.9 },
+    { lateral: -5.6, depth: 10.8 },
+  ],
+  Flat: [
+    { lateral: 2.0, depth: 4.1 },
+    { lateral: 6.6, depth: 5.1 },
+    { lateral: 17.2, depth: 5.1 },
+  ],
+  Slant: [
+    { lateral: 0, depth: 4.2 },
+    { lateral: -7.4, depth: 10.6 },
+  ],
+  "Quick Out": [
+    { lateral: 0, depth: 3 },
+    { lateral: 2.3, depth: 4.6 },
+    { lateral: 6.8, depth: 5.15 },
+    { lateral: 12.0, depth: 5.15 },
+    { lateral: 16.0, depth: 5.15 },
+  ],
+  Fadestop: [
+    { lateral: 2.2, depth: 4.6 },
+    { lateral: 2.4, depth: 15.2 },
+    { lateral: 6.2, depth: 12.4 },
+  ],
+};
 const PLAYBOOK_OPTIONS: PlaybookKey[] = ["Foothill", "Pro", "Wing T"];
 const PERSONNEL_OPTIONS = ["Any", "11", "12", "21"] as const;
 const ALIGNMENT_BASE_CALLS = ["Doubles", "Trips", "Trey", "Troop", "Bunch", "B Trips", "B Trey", "B Doubles", "Quad", "Dog"] as const;
@@ -222,11 +465,6 @@ const PRO_CALLS = [
   "I Dot Right", "I Dot Left", "I Far Right", "I Far Left", "I Near Right", "I Near Left",
   "I Slot Right", "I Slot Left", "I Slot Far Right", "I Slot Far Left", "I Slot Near Right", "I Slot Near Left",
   "Ace Right", "Ace Left", "Ace Trey Right", "Ace Trey Left", "Flank Right", "Flank Left",
-] as const;
-const FILM_FORMATION_KEY_TAG_GROUPS = [
-  { label: "Foothill", options: [...ALIGNMENT_CALLS] },
-  { label: "Pro", options: [...PRO_CALLS] },
-  { label: "Wing T", options: [...WING_T_CALLS] },
 ] as const;
 const DEFENDER_TOKENS = ["N", "T", "SDE", "WDE", "M", "W", "Ni", "FC", "BC", "FS", "BS"] as const;
 const OFFENSE_TOKENS = ["QB", "RB", "X", "Y", "H", "Z"] as const;
@@ -259,6 +497,7 @@ const DEFAULT_STATS: UserStats = {
   offense_build: { ...DEFAULT_MODE_STATS },
   alignment: { ...DEFAULT_MODE_STATS },
   film: { ...DEFAULT_MODE_STATS },
+  concept: { ...DEFAULT_MODE_STATS },
 };
 
 const ADMIN_EMAILS = [
@@ -277,6 +516,32 @@ function normalizeStrength(value: string) {
   return v;
 }
 
+function normalizeFilmFormationFamily(value: string) {
+  return value
+    .replace(/\b(left|right|king|queen)\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+const FILM_FORMATION_KEY_TAG_GROUPS = [
+  {
+    label: "Foothill",
+    options: Array.from(new Set(ALIGNMENT_CALLS.map((call) => normalizeFilmFormationFamily(call)))).sort((a, b) => a.localeCompare(b)),
+  },
+  {
+    label: "Pro",
+    options: Array.from(new Set(PRO_CALLS.map((call) => normalizeFilmFormationFamily(call)))).sort((a, b) => a.localeCompare(b)),
+  },
+  {
+    label: "Wing T",
+    options: Array.from(new Set(WING_T_CALLS.map((call) => normalizeFilmFormationFamily(call)))).sort((a, b) => a.localeCompare(b)),
+  },
+  {
+    label: "Custom",
+    options: ["Grenade", "Heavy"],
+  },
+] as const;
+
 function getQuizFormationFamily(name: string) {
   const isEmpty = name.includes("Empty");
   const base = name
@@ -289,6 +554,10 @@ function getQuizFormationFamily(name: string) {
 
 function getModeTitle(mode: AppMode) {
   return MODE_OPTIONS.find((m) => m.value === mode)?.title ?? "FORMATION TRAINER";
+}
+
+function getSectionForMode(mode: AppMode): AppSection {
+  return MODE_OPTIONS.find((m) => m.value === mode)?.section ?? "offense";
 }
 
 function clamp(value: number, min: number, max: number) {
@@ -1875,6 +2144,192 @@ function nearestLandmark(x: number, y: number, points: Landmark[]) {
   }, points[0]);
 }
 
+function buildRoutePath(
+  player: PlayerDot,
+  routeName: string,
+  previewLosY: number,
+  yardsToPct: number,
+  side: Side,
+) {
+  const start = { x: player.x, y: player.y - 2.2 };
+  const outsideDir = side === "right" ? 1 : -1;
+  const atDepth = (yards: number) => previewLosY + yards * yardsToPct;
+  const defaultTemplate = DEFAULT_ROUTE_TEMPLATES[routeName as keyof typeof DEFAULT_ROUTE_TEMPLATES];
+  const template = defaultTemplate ?? [{ lateral: 0, depth: 10 }];
+
+  return [
+    start,
+    ...template.map((point) => ({
+      x: start.x + point.lateral * outsideDir,
+      y: atDepth(point.depth),
+    })),
+  ];
+}
+
+function buildTwoByTwoPassConceptPreview(
+  frontsideConcept: TwoByTwoConcept,
+  backsideConcept: TwoByTwoConcept,
+): PassConceptDefinition & { formationPlayers: PlayerDot[]; routesPreview: RouteOverlay[]; yardLines: YardReferenceLine[]; losY: number } {
+  const previewLosY = 28;
+  const yardsToPct = 3;
+  const formation = buildFoothillFormation("Quad King Left", false);
+  const receiverDepths: Record<string, number> = {
+    X: previewLosY,
+    Y: previewLosY,
+    H: previewLosY - 7,
+    Z: previewLosY - 7,
+  };
+  const previewPlayers = formation.players
+    .filter((player) => ["X", "H", "Y", "Z"].includes(player.id))
+    .map((player) => ({
+      ...player,
+      y: receiverDepths[player.id] ?? player.y,
+    }));
+  const byId = Object.fromEntries(previewPlayers.map((player) => [player.id, player])) as Record<string, PlayerDot>;
+  const routesByPlayer: Record<PassConceptPlayerId, string> = {
+    X: frontsideConcept.outsideRoute,
+    H: frontsideConcept.insideRoute,
+    Z: backsideConcept.outsideRoute,
+    Y: backsideConcept.insideRoute,
+  };
+
+  const routes: RouteOverlay[] = [
+    {
+      id: `${frontsideConcept.id}-x-${routesByPlayer.X.toLowerCase().replace(/\s+/g, "-")}`,
+      label: routesByPlayer.X,
+      color: "#f6d36b",
+      path: buildRoutePath(byId.X, routesByPlayer.X, previewLosY, yardsToPct, "right"),
+      labelX: byId.X.x,
+      labelY: byId.X.y - 8.5,
+    },
+    {
+      id: `${frontsideConcept.id}-h-${routesByPlayer.H.toLowerCase().replace(/\s+/g, "-")}`,
+      label: routesByPlayer.H,
+      color: "#f2b35d",
+      path: buildRoutePath(byId.H, routesByPlayer.H, previewLosY, yardsToPct, "right"),
+      labelX: byId.H.x,
+      labelY: byId.H.y - 8.5,
+    },
+    {
+      id: `${backsideConcept.id}-y-${routesByPlayer.Y.toLowerCase().replace(/\s+/g, "-")}`,
+      label: routesByPlayer.Y,
+      color: "#7be0d4",
+      path: buildRoutePath(byId.Y, routesByPlayer.Y, previewLosY, yardsToPct, "left"),
+      labelX: byId.Y.x,
+      labelY: byId.Y.y - 8.5,
+    },
+    {
+      id: `${backsideConcept.id}-z-${routesByPlayer.Z.toLowerCase().replace(/\s+/g, "-")}`,
+      label: routesByPlayer.Z,
+      color: "#89c6ff",
+      path: buildRoutePath(byId.Z, routesByPlayer.Z, previewLosY, yardsToPct, "left"),
+      labelX: byId.Z.x,
+      labelY: byId.Z.y - 8.5,
+    },
+  ];
+
+  const yardLines: YardReferenceLine[] = [
+    { id: "yard-0", yards: 0 },
+    { id: "yard-5", yards: 5 },
+    { id: "yard-10", yards: 10, label: "10" },
+    { id: "yard-15", yards: 15 },
+    { id: "yard-20", yards: 20, label: "20" },
+  ];
+
+  return {
+    boardKind: "2x2",
+    formation: formation.name,
+    title: `${frontsideConcept.name} / ${backsideConcept.name}`,
+    conceptName: `${frontsideConcept.name} / ${backsideConcept.name}`,
+    frontsideConceptName: frontsideConcept.name,
+    backsideConceptName: backsideConcept.name,
+    routes: routesByPlayer,
+    activePlayers: ["X", "H", "Y", "Z"],
+    cards: [
+      {
+        label: "Frontside",
+        name: frontsideConcept.name,
+        assignments: [
+          { player: "X", roleLabel: "#1", route: routesByPlayer.X },
+          { player: "H", roleLabel: "#2", route: routesByPlayer.H },
+        ],
+        detail: frontsideConcept.detail,
+      },
+      {
+        label: "Backside",
+        name: backsideConcept.name,
+        assignments: [
+          { player: "Z", roleLabel: "#1", route: routesByPlayer.Z },
+          { player: "Y", roleLabel: "#2", route: routesByPlayer.Y },
+        ],
+        detail: backsideConcept.detail,
+      },
+    ],
+    formationPlayers: previewPlayers,
+    routesPreview: routes,
+    yardLines,
+    losY: previewLosY,
+  };
+}
+
+function buildThreeByOnePassConceptPreview(
+  concept: ThreeByOneConcept,
+): PassConceptDefinition & { formationPlayers: PlayerDot[]; routesPreview: RouteOverlay[]; yardLines: YardReferenceLine[]; losY: number } {
+  const previewLosY = 28;
+  const yardsToPct = 3;
+  const previewPlayers: PlayerDot[] = [
+    { id: "Y", x: 58, y: previewLosY },
+    { id: "H", x: 72, y: previewLosY - 7 },
+    { id: "Z", x: 86, y: previewLosY - 7 },
+  ];
+  const byId = Object.fromEntries(previewPlayers.map((player) => [player.id, player])) as Record<string, PlayerDot>;
+  const activePlayers = (["Z", "H", "Y"] as PassConceptPlayerId[]).filter((playerId) => Boolean(concept.routes[playerId]));
+  const routes: RouteOverlay[] = activePlayers.map((playerId) => ({
+    id: `${concept.id}-${playerId.toLowerCase()}-${String(concept.routes[playerId]).toLowerCase().replace(/\s+/g, "-")}`,
+    label: String(concept.routes[playerId]),
+    color:
+      playerId === "Z" ? "#f6d36b"
+      : playerId === "H" ? "#f2b35d"
+      : "#89c6ff",
+    path: buildRoutePath(byId[playerId], String(concept.routes[playerId]), previewLosY, yardsToPct, "right"),
+    labelX: byId[playerId].x,
+    labelY: byId[playerId].y - 8.5,
+  }));
+  const yardLines: YardReferenceLine[] = [
+    { id: "yard-0", yards: 0 },
+    { id: "yard-5", yards: 5 },
+    { id: "yard-10", yards: 10, label: "10" },
+    { id: "yard-15", yards: 15 },
+    { id: "yard-20", yards: 20, label: "20" },
+  ];
+
+  return {
+    boardKind: "3x1",
+    formation: "Trips",
+    title: concept.name,
+    conceptName: concept.name,
+    frontsideConceptName: concept.name,
+    routes: concept.routes,
+    activePlayers,
+    cards: [
+      {
+        label: "Trips Side",
+        name: concept.name,
+        assignments: [
+          ...(concept.routes.Z ? [{ player: "Z" as PassConceptPlayerId, roleLabel: "#1", route: concept.routes.Z }] : []),
+          ...(concept.routes.H ? [{ player: "H" as PassConceptPlayerId, roleLabel: "#2", route: concept.routes.H }] : []),
+          ...(concept.routes.Y ? [{ player: "Y" as PassConceptPlayerId, roleLabel: "#3", route: concept.routes.Y }] : []),
+        ],
+        detail: concept.detail,
+      },
+    ],
+    formationPlayers: previewPlayers,
+    routesPreview: routes,
+    yardLines,
+    losY: previewLosY,
+  };
+}
+
 function Circle({ player, color = "bg-orange-600", text = "text-white", border = "border-white/30" }: {
   player: PlayerDot;
   color?: string;
@@ -1891,9 +2346,49 @@ function Circle({ player, color = "bg-orange-600", text = "text-white", border =
   );
 }
 
+function AvatarBadge({
+  name,
+  avatarUrl,
+  className = "h-12 w-12",
+  textClassName = "text-sm",
+}: {
+  name: string;
+  avatarUrl?: string | null;
+  className?: string;
+  textClassName?: string;
+}) {
+  const initials = name
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("") || "U";
+
+  if (avatarUrl) {
+    return (
+      <img
+        src={avatarUrl}
+        alt={`${name} avatar`}
+        className={`rounded-full border border-slate-300 object-cover ${className}`}
+      />
+    );
+  }
+
+  return (
+    <div className={`flex items-center justify-center rounded-full border border-slate-300 bg-slate-100 font-black text-slate-700 ${className} ${textClassName}`}>
+      {initials}
+    </div>
+  );
+}
+
 function TrainingField({
   enhancedLandmarks = false,
   offensePlayers,
+  routeOverlays = [],
+  yardReferenceLines = [],
+  yardReferenceScale = 1.6,
+  subtleHashMarks = false,
+  losReferenceY = LOS_Y,
   offenseLandmarks = [],
   defensePlayers = [],
   defenseLandmarks = [],
@@ -1915,6 +2410,11 @@ function TrainingField({
 }: {
   enhancedLandmarks?: boolean;
   offensePlayers: PlayerDot[];
+  routeOverlays?: RouteOverlay[];
+  yardReferenceLines?: YardReferenceLine[];
+  yardReferenceScale?: number;
+  subtleHashMarks?: boolean;
+  losReferenceY?: number;
   offenseLandmarks?: Landmark[];
   defensePlayers?: PlayerDot[];
   defenseLandmarks?: Landmark[];
@@ -1938,7 +2438,7 @@ function TrainingField({
   const maybeFlipY = (y: number, enabled: boolean) => (enabled ? 100 - y : y);
   const fieldWide = editableDefense;
   const hashXs = [getHash("left", fieldWide), getHash("right", fieldWide)];
-  const losY = flipOffense ? 100 - LOS_Y : LOS_Y;
+  const losY = flipOffense ? 100 - losReferenceY : losReferenceY;
   const hashMarkRows = [13, 28, 43, 61, 76, 91];
   const sidelineInset = 1.5;
   const numberInset = 12;
@@ -2004,13 +2504,42 @@ function TrainingField({
           {hashMarkRows.map((row) => (
             <div
               key={`hash-${idx}-${row}`}
-              className="absolute left-1/2 h-[6px] w-[24px] -translate-x-1/2 -translate-y-1/2 rounded-[1px] bg-white/60"
+              className={`absolute left-1/2 -translate-x-1/2 -translate-y-1/2 rounded-[1px] ${subtleHashMarks ? "h-[4px] w-[20px] bg-white/32" : "h-[6px] w-[24px] bg-white/60"}`}
               style={{ left: `${x}%`, top: `${row}%` }}
             />
           ))}
         </React.Fragment>
       ))}
       <div className="absolute left-0 right-0 border-t-2 border-dashed border-white/70" style={{ top: `${losY}%` }} />
+      {yardReferenceLines.map((line) => {
+        const sourceY = losReferenceY + line.yards * yardReferenceScale;
+        const top = maybeFlipY(sourceY, flipOffense);
+
+        return (
+          <React.Fragment key={line.id}>
+            <div
+              className="absolute left-[6%] right-[6%] border-t border-white/18"
+              style={{ top: `${top}%` }}
+            />
+            {line.label ? (
+              <>
+                <div
+                  className="absolute -translate-y-1/2 text-[10px] font-bold uppercase tracking-[0.18em] text-white/55"
+                  style={{ left: "7.5%", top: `${top}%` }}
+                >
+                  +{line.label}
+                </div>
+                <div
+                  className="absolute -translate-x-full -translate-y-1/2 text-[10px] font-bold uppercase tracking-[0.18em] text-white/55"
+                  style={{ left: "92.5%", top: `${top}%` }}
+                >
+                  +{line.label}
+                </div>
+              </>
+            ) : null}
+          </React.Fragment>
+        );
+      })}
       {getLineXs(editableDefense).map((x, idx) => (
         <div key={idx} className="absolute bottom-[10%] top-[10%] w-px bg-sky-200/25" style={{ left: `${x}%` }} />
       ))}
@@ -2047,6 +2576,64 @@ function TrainingField({
           </div>
         );
       })}
+
+      {routeOverlays.length ? (
+        <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+          <defs>
+            {routeOverlays.map((route) => (
+              <marker
+                key={`marker-${route.id}`}
+                id={`marker-${route.id}`}
+                markerWidth="5"
+                markerHeight="5"
+                refX="3.6"
+                refY="2.5"
+                orient="auto"
+              >
+                <path d="M0,0 L5,2.5 L0,5 z" fill={route.color} />
+              </marker>
+            ))}
+          </defs>
+          {routeOverlays.map((route) => (
+            <g key={route.id}>
+              <polyline
+                points={route.path.map((point) => `${point.x},${maybeFlipY(point.y, flipOffense)}`).join(" ")}
+                fill="none"
+                stroke={route.color}
+                strokeWidth="0.7"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                markerEnd={`url(#marker-${route.id})`}
+                opacity="0.95"
+              />
+              {route.labelX !== undefined && route.labelY !== undefined ? (
+                <>
+                  <rect
+                    x={route.labelX - 2.8}
+                    y={maybeFlipY(route.labelY, flipOffense) - 2.45}
+                    width="7.2"
+                    height="4.2"
+                    rx="1.15"
+                    fill="rgba(15,23,42,0.68)"
+                  />
+                  <text
+                    x={route.labelX + 0.8}
+                    y={maybeFlipY(route.labelY, flipOffense)}
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                    fontSize="1.25"
+                    letterSpacing="0.04em"
+                    fontWeight="700"
+                    fill="white"
+                  >
+                    {route.label}
+                  </text>
+                </>
+              ) : null}
+            </g>
+          ))}
+        </svg>
+      ) : null}
 
       {offenseGhosts.map((p) => (
         <div key={`og-${p.id}`} className="absolute -translate-x-1/2 -translate-y-1/2" style={{ left: `${clamp(p.x + offenseGhostOffset, 2, 98)}%`, top: `${maybeFlipY(p.y, flipOffense)}%` }}>
@@ -2167,6 +2754,35 @@ function formatVideoTimestamp(totalSeconds: number) {
   return `${minutes}:${String(seconds).padStart(2, "0")}.${String(hundredths).padStart(2, "0")}`;
 }
 
+function inferLegacyFilmRunMetadata(
+  clipBucket: string,
+  runScheme: FilmRunScheme,
+  zoneType: FilmZoneType,
+) {
+  const normalizedBucket = clipBucket.trim().toLowerCase();
+  const bucketImpliesZone = normalizedBucket.includes("zone") || normalizedBucket.includes("jet sweep");
+  const nextRunScheme: FilmRunScheme = runScheme ? runScheme : bucketImpliesZone ? "zone" : "";
+
+  if (nextRunScheme !== "zone") {
+    return {
+      runScheme: nextRunScheme,
+      zoneType,
+    };
+  }
+
+  const nextZoneType: FilmZoneType =
+    normalizedBucket.includes("jet sweep")
+      ? "jet"
+      : normalizedBucket.includes("split zone")
+        ? "split"
+        : zoneType;
+
+  return {
+    runScheme: nextRunScheme,
+    zoneType: nextZoneType,
+  };
+}
+
 function deriveFilmClipBucket(metadata: {
   runPass: "run" | "pass";
   direction: Side;
@@ -2227,6 +2843,9 @@ export default function FormationRecognitionWorkingApp() {
   const pendingAlignmentStudyFormationRef = useRef<string | null>(null);
   const [enhancedLandmarks, setEnhancedLandmarks] = useState(true);
   const [frontMode, setFrontMode] = useState<FrontMode>("4-3");
+  const [formationTrainerViewMode, setFormationTrainerViewMode] = useState<FormationTrainerViewMode>("study");
+  const [passConceptViewMode, setPassConceptViewMode] = useState<PassConceptViewMode>("study");
+  const [passConceptQuizMode, setPassConceptQuizMode] = useState<PassConceptQuizMode>("build");
   const [alignmentViewMode, setAlignmentViewMode] = useState<AlignmentViewMode>("study");
   const [offenseBuildViewMode, setOffenseBuildViewMode] = useState<OffenseBuildViewMode>("quiz");
   const [filmViewMode, setFilmViewMode] = useState<FilmViewMode>("study");
@@ -2234,13 +2853,32 @@ export default function FormationRecognitionWorkingApp() {
   const [mode, setMode] = useState<AppMode>("study");
   const [currentUser, setCurrentUser] = useState<UserRecord | null>(null);
   const [leaderboardEntries, setLeaderboardEntries] = useState<LeaderboardEntry[]>([]);
-  const [lastScoreSummary, setLastScoreSummary] = useState<Partial<Record<"quiz" | "offense_build" | "alignment" | "film", ScoreSummary>>>({});
+  const [lastScoreSummary, setLastScoreSummary] = useState<Partial<Record<"quiz" | "offense_build" | "alignment" | "film" | "concept", ScoreSummary>>>({});
   const [scoredAttemptKey, setScoredAttemptKey] = useState<string | null>(null);
   const [attemptStartedAt, setAttemptStartedAt] = useState<number>(Date.now());
   const [selectedPlaybooks, setSelectedPlaybooks] = useState<PlaybookKey[]>(["Foothill", "Pro", "Wing T"]);
   const [personnelFilter, setPersonnelFilter] = useState<string>("Any");
+  const [appSection, setAppSection] = useState<AppSection>("offense");
+  const [selectedLeaderboardSection, setSelectedLeaderboardSection] = useState<LeaderboardSection>("defense");
+  const [selectedLeaderboardMode, setSelectedLeaderboardMode] = useState<LeaderboardMode>("quiz");
+  const [passConceptFamilyFilter, setPassConceptFamilyFilter] = useState<PassConceptFamilyFilter>("2x2");
+  const [passConceptBoardKind, setPassConceptBoardKind] = useState<PassConceptBoardKind>("2x2");
+  const [selectedFrontsideConceptId, setSelectedFrontsideConceptId] = useState<string>("spartan");
+  const [selectedBacksideConceptId, setSelectedBacksideConceptId] = useState<string>("dagger");
+  const [selectedThreeByOneConceptId, setSelectedThreeByOneConceptId] = useState<string>("h-wolf");
   const [index, setIndex] = useState(0);
   const [quizAnswers, setQuizAnswers] = useState<QuizAnswers>({ formation: "", runStrength: "", passStrength: "" });
+  const [passConceptAnswers, setPassConceptAnswers] = useState<Record<PassConceptPlayerId, string>>({
+    X: "",
+    H: "",
+    Y: "",
+    Z: "",
+  });
+  const [passConceptNameAnswer, setPassConceptNameAnswer] = useState("");
+  const [passConceptFrontsideNameAnswer, setPassConceptFrontsideNameAnswer] = useState("");
+  const [passConceptBacksideNameAnswer, setPassConceptBacksideNameAnswer] = useState("");
+  const [showPassConceptFeedback, setShowPassConceptFeedback] = useState(false);
+  const [showPassConceptAnswers, setShowPassConceptAnswers] = useState(false);
   const [showQuizFeedback, setShowQuizFeedback] = useState(false);
   const [showQuizAnswers, setShowQuizAnswers] = useState(false);
   const [quizReadyForNext, setQuizReadyForNext] = useState(false);
@@ -2258,7 +2896,11 @@ export default function FormationRecognitionWorkingApp() {
   const [filmPlaybackNonce, setFilmPlaybackNonce] = useState(0);
   const [filmUploadResetKey, setFilmUploadResetKey] = useState(0);
   const [filmSaveNotice, setFilmSaveNotice] = useState<FilmSaveStatus | null>(null);
+  const [pendingDuplicateFilmSignature, setPendingDuplicateFilmSignature] = useState<string | null>(null);
+  const [avatarUploadNotice, setAvatarUploadNotice] = useState<FilmSaveStatus | null>(null);
+  const [avatarUploadResetKey, setAvatarUploadResetKey] = useState(0);
   const [showFilmAdminTools, setShowFilmAdminTools] = useState(false);
+  const [filmAdminPanelMode, setFilmAdminPanelMode] = useState<FilmAdminPanelMode>("upload");
   const [filmQuizAnswers, setFilmQuizAnswers] = useState<FilmQuizAnswers>({
     runPass: "",
     passType: "",
@@ -2335,6 +2977,7 @@ export default function FormationRecognitionWorkingApp() {
     offense_build: { ...DEFAULT_MODE_STATS },
     alignment: { ...DEFAULT_MODE_STATS },
     film: { ...DEFAULT_MODE_STATS },
+    concept: { ...DEFAULT_MODE_STATS },
   });
 
   useEffect(() => {
@@ -2347,6 +2990,10 @@ export default function FormationRecognitionWorkingApp() {
 
       const savedViewState = JSON.parse(rawViewState) as {
         mode?: AppMode;
+        appSection?: AppSection;
+        formationTrainerViewMode?: FormationTrainerViewMode;
+        passConceptViewMode?: PassConceptViewMode;
+        passConceptQuizMode?: PassConceptQuizMode;
         alignmentViewMode?: AlignmentViewMode;
         offenseBuildViewMode?: OffenseBuildViewMode;
         filmViewMode?: FilmViewMode;
@@ -2356,6 +3003,13 @@ export default function FormationRecognitionWorkingApp() {
         frontMode?: FrontMode;
         selectedPlaybooks?: PlaybookKey[];
         personnelFilter?: string;
+        selectedLeaderboardSection?: LeaderboardSection;
+        selectedLeaderboardMode?: LeaderboardMode;
+        passConceptFamilyFilter?: PassConceptFamilyFilter;
+        passConceptBoardKind?: PassConceptBoardKind;
+        selectedFrontsideConceptId?: string;
+        selectedBacksideConceptId?: string;
+        selectedThreeByOneConceptId?: string;
         index?: number;
         enhancedLandmarks?: boolean;
         studyFormation?: string;
@@ -2363,9 +3017,40 @@ export default function FormationRecognitionWorkingApp() {
         selectedFilmClipId?: string;
       };
 
-      if (savedViewState.mode && MODE_OPTIONS.some((option) => option.value === savedViewState.mode)) {
-        setMode(savedViewState.mode);
+      if (savedViewState.mode === "quiz") {
+        setMode("study");
+        setAppSection("offense");
+        setFormationTrainerViewMode("quiz");
         skipNextModeRandomizeRef.current = true;
+      } else if (savedViewState.mode && MODE_OPTIONS.some((option) => option.value === savedViewState.mode)) {
+        setMode(savedViewState.mode);
+        setAppSection(savedViewState.appSection ?? getSectionForMode(savedViewState.mode));
+        skipNextModeRandomizeRef.current = true;
+      }
+
+      if (savedViewState.appSection && APP_SECTION_OPTIONS.some((option) => option.value === savedViewState.appSection)) {
+        setAppSection(savedViewState.appSection);
+      }
+
+      if (
+        savedViewState.formationTrainerViewMode &&
+        ["study", "quiz"].includes(savedViewState.formationTrainerViewMode)
+      ) {
+        setFormationTrainerViewMode(savedViewState.formationTrainerViewMode);
+      }
+
+      if (
+        savedViewState.passConceptViewMode &&
+        ["study", "quiz"].includes(savedViewState.passConceptViewMode)
+      ) {
+        setPassConceptViewMode(savedViewState.passConceptViewMode);
+      }
+
+      if (
+        typeof savedViewState.passConceptQuizMode === "string" &&
+        ["build", "identify"].includes(savedViewState.passConceptQuizMode)
+      ) {
+        setPassConceptQuizMode(savedViewState.passConceptQuizMode as PassConceptQuizMode);
       }
 
       if (
@@ -2419,8 +3104,48 @@ export default function FormationRecognitionWorkingApp() {
         setPersonnelFilter(savedViewState.personnelFilter);
       }
 
+      if (
+        typeof savedViewState.selectedLeaderboardSection === "string" &&
+        ["offense", "defense"].includes(savedViewState.selectedLeaderboardSection)
+      ) {
+        setSelectedLeaderboardSection(savedViewState.selectedLeaderboardSection as LeaderboardSection);
+      }
+
+      if (
+        typeof savedViewState.selectedLeaderboardMode === "string" &&
+        ["quiz", "offense_build", "alignment", "film", "concept"].includes(savedViewState.selectedLeaderboardMode)
+      ) {
+        setSelectedLeaderboardMode(savedViewState.selectedLeaderboardMode as LeaderboardMode);
+      }
+
+      if (
+        typeof savedViewState.passConceptFamilyFilter === "string" &&
+        ["2x2", "3x1", "all"].includes(savedViewState.passConceptFamilyFilter)
+      ) {
+        setPassConceptFamilyFilter(savedViewState.passConceptFamilyFilter as PassConceptFamilyFilter);
+      }
+
+      if (
+        typeof savedViewState.passConceptBoardKind === "string" &&
+        ["2x2", "3x1"].includes(savedViewState.passConceptBoardKind)
+      ) {
+        setPassConceptBoardKind(savedViewState.passConceptBoardKind as PassConceptBoardKind);
+      }
+
       if (typeof savedViewState.index === "number" && Number.isFinite(savedViewState.index)) {
         setIndex(Math.max(0, Math.floor(savedViewState.index)));
+      }
+
+      if (typeof savedViewState.selectedFrontsideConceptId === "string" && TWO_BY_TWO_CONCEPTS.some((concept) => concept.id === savedViewState.selectedFrontsideConceptId)) {
+        setSelectedFrontsideConceptId(savedViewState.selectedFrontsideConceptId);
+      }
+
+      if (typeof savedViewState.selectedBacksideConceptId === "string" && TWO_BY_TWO_CONCEPTS.some((concept) => concept.id === savedViewState.selectedBacksideConceptId)) {
+        setSelectedBacksideConceptId(savedViewState.selectedBacksideConceptId);
+      }
+
+      if (typeof savedViewState.selectedThreeByOneConceptId === "string" && THREE_BY_ONE_CONCEPTS.some((concept) => concept.id === savedViewState.selectedThreeByOneConceptId)) {
+        setSelectedThreeByOneConceptId(savedViewState.selectedThreeByOneConceptId);
       }
 
       if (typeof savedViewState.enhancedLandmarks === "boolean") {
@@ -2438,6 +3163,7 @@ export default function FormationRecognitionWorkingApp() {
       if (typeof savedViewState.selectedFilmClipId === "string") {
         setSelectedFilmClipId(savedViewState.selectedFilmClipId);
       }
+
     } catch {}
 
     didHydrateViewStateRef.current = true;
@@ -2450,7 +3176,11 @@ export default function FormationRecognitionWorkingApp() {
       window.localStorage.setItem(
         VIEW_STATE_STORAGE_KEY,
         JSON.stringify({
+          appSection,
           mode,
+          formationTrainerViewMode,
+          passConceptViewMode,
+          passConceptQuizMode,
           alignmentViewMode,
           offenseBuildViewMode,
           filmViewMode,
@@ -2460,13 +3190,20 @@ export default function FormationRecognitionWorkingApp() {
           frontMode,
           selectedPlaybooks,
           personnelFilter,
+          selectedLeaderboardSection,
+          selectedLeaderboardMode,
+          passConceptFamilyFilter,
+          passConceptBoardKind,
+          selectedFrontsideConceptId,
+          selectedBacksideConceptId,
+          selectedThreeByOneConceptId,
           index,
           enhancedLandmarks,
           selectedFilmClipId,
         }),
       );
     } catch {}
-  }, [mode, alignmentViewMode, offenseBuildViewMode, filmViewMode, filmSubmode, filmFormationFilter, filmTeamFilter, frontMode, selectedPlaybooks, personnelFilter, index, enhancedLandmarks, selectedFilmClipId]);
+  }, [appSection, mode, formationTrainerViewMode, passConceptViewMode, passConceptQuizMode, alignmentViewMode, offenseBuildViewMode, filmViewMode, filmSubmode, filmFormationFilter, filmTeamFilter, frontMode, selectedPlaybooks, personnelFilter, selectedLeaderboardSection, selectedLeaderboardMode, passConceptFamilyFilter, passConceptBoardKind, selectedFrontsideConceptId, selectedBacksideConceptId, selectedThreeByOneConceptId, index, enhancedLandmarks, selectedFilmClipId]);
 
   useEffect(() => {
     try {
@@ -2504,7 +3241,7 @@ export default function FormationRecognitionWorkingApp() {
       if (!currentUser) return;
 
       const supabase = createClient();
-      const baseSelect = "id, title, clip_bucket, formation_key, team_tag, source_type, source_label, run_pass, direction, pass_type, run_scheme, gap_puller_count, gap_one_puller_concept, gap_two_puller_concept, man_concept, study_url, quiz_url, quiz_start_seconds, quiz_end_seconds, study_storage_path, quiz_storage_path, study_file_name, quiz_file_name";
+      const baseSelect = "id, title, clip_bucket, formation_key, team_tag, source_type, source_label, run_pass, direction, pass_type, run_scheme, gap_puller_count, gap_one_puller_concept, gap_two_puller_concept, man_concept, study_url, quiz_url, quiz_start_seconds, quiz_end_seconds, study_storage_path, quiz_storage_path, study_file_name, quiz_file_name, study_file_size, quiz_file_size";
       const primaryResult = await supabase
         .from("film_clips")
         .select(`${baseSelect}, zone_type`)
@@ -2558,24 +3295,31 @@ export default function FormationRecognitionWorkingApp() {
           row.run_pass === "pass" && (!row.title || row.title === "Pass")
             ? normalizedClipBucket
             : row.title ?? normalizedClipBucket ?? "Untitled Clip";
+        const normalizedRunScheme = FILM_RUN_SCHEME_OPTIONS.includes(row.run_scheme) ? row.run_scheme : "";
+        const normalizedZoneType =
+          row.zone_type === "split_zone"
+            ? "split"
+            : FILM_ZONE_TYPE_OPTIONS.includes(row.zone_type)
+              ? row.zone_type
+              : "";
+        const inferredRunMetadata = inferLegacyFilmRunMetadata(
+          normalizedClipBucket,
+          normalizedRunScheme,
+          normalizedZoneType,
+        );
         return [
           {
             id: row.id,
             title: normalizedTitle,
             clipBucket: normalizedClipBucket,
-            formationKey: typeof row.formation_key === "string" ? row.formation_key : "",
+            formationKey: typeof row.formation_key === "string" ? normalizeFilmFormationFamily(row.formation_key) : "",
             teamTag: typeof row.team_tag === "string" ? row.team_tag : "",
             sourceType: row.source_type || row.source_label || "Other",
             runPass: row.run_pass,
             direction: row.run_pass === "pass" ? "right" : row.direction,
             passType: normalizedPassType,
-            runScheme: FILM_RUN_SCHEME_OPTIONS.includes(row.run_scheme) ? row.run_scheme : "",
-            zoneType:
-              row.zone_type === "split_zone"
-                ? "split"
-                : FILM_ZONE_TYPE_OPTIONS.includes(row.zone_type)
-                  ? row.zone_type
-                  : "",
+            runScheme: inferredRunMetadata.runScheme,
+            zoneType: inferredRunMetadata.zoneType,
             gapPullerCount: FILM_GAP_PULLER_COUNT_OPTIONS.includes(String(row.gap_puller_count) as Exclude<FilmGapPullerCount, "">)
               ? (String(row.gap_puller_count) as Exclude<FilmGapPullerCount, "">)
               : "",
@@ -2595,6 +3339,8 @@ export default function FormationRecognitionWorkingApp() {
             kind: "supabase",
             studyFileName: row.study_file_name ?? undefined,
             quizFileName: row.quiz_file_name ?? undefined,
+            studyFileSize: typeof row.study_file_size === "number" ? row.study_file_size : null,
+            quizFileSize: typeof row.quiz_file_size === "number" ? row.quiz_file_size : null,
           },
         ];
       });
@@ -2626,9 +3372,20 @@ export default function FormationRecognitionWorkingApp() {
 
     const { data: profileData } = await supabase
   .from("profiles")
-  .select("display_name, school, seconds_used")
+  .select("display_name, school, seconds_used, avatar_url")
   .eq("id", user.id)
   .single();
+
+    if (user.email) {
+      const { error: emailBackfillError } = await supabase
+        .from("profiles")
+        .update({ email: user.email.toLowerCase() })
+        .eq("id", user.id);
+
+      if (emailBackfillError && emailBackfillError.code !== "PGRST204" && !emailBackfillError.message?.includes("email")) {
+        console.error("Failed to backfill profile email", emailBackfillError);
+      }
+    }
 
 const { data: scoreRows } = await supabase
   .from("mode_scores")
@@ -2646,17 +3403,18 @@ const { data: scoreRows } = await supabase
       "Foothill";
 
     setCurrentUser((prev) => {
-      const baseStats: UserStats = {
+  const baseStats: UserStats = {
   ...DEFAULT_STATS,
   quiz: { ...DEFAULT_MODE_STATS },
   offense_build: { ...DEFAULT_MODE_STATS },
   alignment: { ...DEFAULT_MODE_STATS },
   film: { ...DEFAULT_MODE_STATS },
+  concept: { ...DEFAULT_MODE_STATS },
 };
 
 if (Array.isArray(scoreRows)) {
   for (const row of scoreRows) {
-    if (row.mode === "quiz" || row.mode === "offense_build" || row.mode === "alignment" || row.mode === "film") {
+    if (row.mode === "quiz" || row.mode === "offense_build" || row.mode === "alignment" || row.mode === "film" || row.mode === "concept") {
       baseStats[row.mode] = {
         points: row.points ?? 0,
         attempts: row.attempts ?? 0,
@@ -2673,7 +3431,8 @@ baseStats.totalPoints =
   baseStats.quiz.points +
   baseStats.offense_build.points +
   baseStats.alignment.points +
-  baseStats.film.points;
+  baseStats.film.points +
+  baseStats.concept.points;
 
 const existingStats =
   prev?.id === user.id
@@ -2689,6 +3448,7 @@ const existingStats =
         name: displayName,
         teamCode: school,
         isAdmin: ADMIN_EMAILS.includes(user.email || ""),
+        avatarUrl: profileData?.avatar_url ?? null,
         stats: existingStats,
       };
     });
@@ -2707,10 +3467,30 @@ const existingStats =
       }
 
       const supabase = createClient();
-      const { data: teamProfiles, error: profilesError } = await supabase
+      let teamProfiles: Array<{
+        id: string;
+        display_name: string | null;
+        school: string | null;
+        seconds_used: number | null;
+        avatar_url: string | null;
+        email?: string | null;
+      }> | null = null;
+
+      let { data: profilesWithEmail, error: profilesError } = await supabase
         .from("profiles")
-        .select("id, display_name, school, seconds_used")
+        .select("id, display_name, school, seconds_used, avatar_url, email")
         .eq("school", currentUser.teamCode);
+
+      if (profilesError?.code === "PGRST204" || profilesError?.message?.includes("email")) {
+        const fallbackProfiles = await supabase
+          .from("profiles")
+          .select("id, display_name, school, seconds_used, avatar_url")
+          .eq("school", currentUser.teamCode);
+        profilesWithEmail = fallbackProfiles.data as typeof profilesWithEmail;
+        profilesError = fallbackProfiles.error;
+      }
+
+      teamProfiles = profilesWithEmail as typeof teamProfiles;
 
       if (profilesError) {
         console.error("Failed to load leaderboard profiles", profilesError);
@@ -2743,7 +3523,7 @@ const existingStats =
       }
 
       for (const row of scoreRows ?? []) {
-        if (row.mode !== "quiz" && row.mode !== "offense_build" && row.mode !== "alignment" && row.mode !== "film") {
+        if (row.mode !== "quiz" && row.mode !== "offense_build" && row.mode !== "alignment" && row.mode !== "film" && row.mode !== "concept") {
           continue;
         }
 
@@ -2764,12 +3544,16 @@ const existingStats =
           stats.quiz.points +
           stats.offense_build.points +
           stats.alignment.points +
-          stats.film.points;
+          stats.film.points +
+          stats.concept.points;
 
         return {
           id: profile.id,
           name: profile.display_name || "User",
           teamCode: profile.school || currentUser.teamCode,
+          avatarUrl: profile.avatar_url ?? null,
+          email: profile.email ?? null,
+          isAdmin: ADMIN_EMAILS.includes((profile.email ?? "").toLowerCase()),
           stats,
         };
       });
@@ -2789,6 +3573,9 @@ const existingStats =
         id: currentUser.id,
         name: currentUser.name,
         teamCode: currentUser.teamCode,
+        avatarUrl: currentUser.avatarUrl ?? null,
+        email: currentUser.email,
+        isAdmin: currentUser.isAdmin,
         stats: currentUser.stats,
       };
 
@@ -2801,6 +3588,9 @@ const existingStats =
   }, [currentUser]);
 
   const effectivePlaybooks: PlaybookKey[] = mode === "offense_build" ? ["Foothill"] : selectedPlaybooks;
+  const sectionModeOptions = MODE_OPTIONS.filter((option) => option.section === appSection && !option.hiddenFromNav);
+  const effectivePassConceptBoardKind: PassConceptBoardKind =
+    passConceptFamilyFilter === "all" ? passConceptBoardKind : passConceptFamilyFilter;
 
   const pool = useMemo(() => {
     return ALL_FORMATIONS.filter((f) => effectivePlaybooks.includes(f.playbook) && (personnelFilter === "Any" || f.personnel === personnelFilter));
@@ -2808,6 +3598,45 @@ const existingStats =
   const current = pool[index % Math.max(pool.length, 1)] ?? ALL_FORMATIONS[0];
   const formationKey = `${current.playbook}::${current.name}`;
   const currentFormationIdentity = `${current.playbook}::${current.name}::${current.personnel}`;
+  const selectedFrontsideConcept = TWO_BY_TWO_CONCEPTS.find((concept) => concept.id === selectedFrontsideConceptId) ?? TWO_BY_TWO_CONCEPTS[0];
+  const selectedBacksideConcept = TWO_BY_TWO_CONCEPTS.find((concept) => concept.id === selectedBacksideConceptId) ?? TWO_BY_TWO_CONCEPTS.find((concept) => concept.id === "dagger") ?? TWO_BY_TWO_CONCEPTS[0];
+  const selectedThreeByOneConcept = THREE_BY_ONE_CONCEPTS.find((concept) => concept.id === selectedThreeByOneConceptId) ?? THREE_BY_ONE_CONCEPTS[0];
+  const passConceptPreview = useMemo(
+    () =>
+      effectivePassConceptBoardKind === "2x2"
+        ? buildTwoByTwoPassConceptPreview(selectedFrontsideConcept, selectedBacksideConcept)
+        : buildThreeByOnePassConceptPreview(selectedThreeByOneConcept),
+    [effectivePassConceptBoardKind, selectedFrontsideConcept, selectedBacksideConcept, selectedThreeByOneConcept],
+  );
+  const passConceptDefinition = passConceptPreview;
+  const passConceptQuizRoutePreview = useMemo(() => {
+    if (passConceptViewMode !== "quiz") return [];
+    if (passConceptQuizMode === "identify") return passConceptPreview.routesPreview;
+    if (showPassConceptAnswers) return passConceptPreview.routesPreview;
+
+    return passConceptDefinition.activePlayers.flatMap((playerId) => {
+      const selectedRoute = passConceptAnswers[playerId];
+      const player = passConceptPreview.formationPlayers.find((entry) => entry.id === playerId);
+      if (!selectedRoute || !player) return [];
+
+      const side: Side =
+        passConceptDefinition.boardKind === "2x2"
+          ? (playerId === "X" || playerId === "H" ? "right" : "left")
+          : "right";
+
+      return [{
+        id: `quiz-preview-${playerId}-${selectedRoute.toLowerCase().replace(/\s+/g, "-")}`,
+        label: selectedRoute,
+        color:
+          playerId === "X" || playerId === "Z" ? "#f6d36b"
+          : playerId === "H" ? "#f2b35d"
+          : "#89c6ff",
+        path: buildRoutePath(player, selectedRoute, passConceptPreview.losY, 3, side),
+        labelX: player.x,
+        labelY: player.y - 8.5,
+      }];
+    });
+  }, [passConceptAnswers, passConceptDefinition.activePlayers, passConceptDefinition.boardKind, passConceptPreview, passConceptQuizMode, passConceptViewMode, showPassConceptAnswers]);
   const displayFormation = useMemo(() => {
     let base;
 
@@ -2835,7 +3664,8 @@ const existingStats =
   const leaderboardModeMeta = [
     {
       key: "quiz",
-      title: "Quiz",
+      title: "Formation Trainer",
+      section: "defense",
       shellClass: "border-[#8a856f] bg-[#f8f4e6]",
       headerClass: "from-[#f4ecd5] to-[#ddd2b5]",
       columnClass: "border-[#8a856f] bg-[#e8e0c8] text-[#5a5646]",
@@ -2844,7 +3674,8 @@ const existingStats =
     },
     {
       key: "offense_build",
-      title: "Offensive",
+      title: "Formation Trainer",
+      section: "offense",
       shellClass: "border-[#7e8a74] bg-[#eef3e7]",
       headerClass: "from-[#e7f0da] to-[#cad7bc]",
       columnClass: "border-[#7e8a74] bg-[#dce7cf] text-[#4f5d48]",
@@ -2854,6 +3685,7 @@ const existingStats =
     {
       key: "alignment",
       title: "Alignment",
+      section: "defense",
       shellClass: "border-[#7f857f] bg-[#edf1f0]",
       headerClass: "from-[#e1e6e4] to-[#c9d0cd]",
       columnClass: "border-[#7f857f] bg-[#d8dfdc] text-[#4f5652]",
@@ -2863,16 +3695,28 @@ const existingStats =
     {
       key: "film",
       title: "Film",
+      section: "defense",
       shellClass: "border-[#85766d] bg-[#f3ece8]",
       headerClass: "from-[#efe2da] to-[#d8c4b8]",
       columnClass: "border-[#85766d] bg-[#e5d5cc] text-[#5c514a]",
       stripeOddClass: "border-[#d8cac2] bg-[#fbf6f3]",
       stripeEvenClass: "border-[#d8cac2] bg-[#f1e7e1]",
     },
+    {
+      key: "concept",
+      title: "Pass Concept",
+      section: "offense",
+      shellClass: "border-[#6b7d8a] bg-[#edf4f7]",
+      headerClass: "from-[#e2eef4] to-[#c9dce7]",
+      columnClass: "border-[#6b7d8a] bg-[#d8e7ef] text-[#45555f]",
+      stripeOddClass: "border-[#c7d8e1] bg-[#f7fbfd]",
+      stripeEvenClass: "border-[#c7d8e1] bg-[#ebf4f8]",
+    },
   ] as const;
   const leaderboardBoards = useMemo(() => {
-    return leaderboardModeMeta.map(({ key, title, shellClass, headerClass, columnClass, stripeOddClass, stripeEvenClass }) => {
-      const rankedEntries = [...leaderboardEntries]
+    return leaderboardModeMeta.map(({ key, title, section, shellClass, headerClass, columnClass, stripeOddClass, stripeEvenClass }) => {
+      const rankedEntries = leaderboardEntries
+        .filter((entry) => !entry.isAdmin)
         .sort((a, b) => {
           const pointDiff = b.stats[key].points - a.stats[key].points;
           if (pointDiff !== 0) return pointDiff;
@@ -2897,6 +3741,7 @@ const existingStats =
       return {
         key,
         title,
+        section,
         shellClass,
         headerClass,
         columnClass,
@@ -2907,6 +3752,19 @@ const existingStats =
       };
     });
   }, [leaderboardEntries, currentUser?.id]);
+  const leaderboardSectionOptions = [
+    { value: "offense" as const, label: "Offense" },
+    { value: "defense" as const, label: "Defense" },
+  ];
+  const filteredLeaderboardBoards = leaderboardBoards.filter((board) => board.section === selectedLeaderboardSection);
+  const selectedLeaderboardBoard =
+    filteredLeaderboardBoards.find((board) => board.key === selectedLeaderboardMode) ?? filteredLeaderboardBoards[0] ?? leaderboardBoards[0];
+  useEffect(() => {
+    if (!filteredLeaderboardBoards.some((board) => board.key === selectedLeaderboardMode)) {
+      const fallback = filteredLeaderboardBoards[0];
+      if (fallback) setSelectedLeaderboardMode(fallback.key as LeaderboardMode);
+    }
+  }, [filteredLeaderboardBoards, selectedLeaderboardMode]);
   const formationSelectGroups = useMemo(() => {
     const personnelOrder = Array.from({ length: 12 }, (_, idx) => String(idx + 10));
     const nameCounts = new Map<string, number>();
@@ -2942,7 +3800,7 @@ const existingStats =
     if (filmViewMode !== "study") return filmClips;
     if (filmSubmode === "formation_key") {
       if (filmFormationFilter === "all") return filmClips;
-      return filmClips.filter((clip) => clip.formationKey === filmFormationFilter);
+      return filmClips.filter((clip) => normalizeFilmFormationFamily(clip.formationKey) === filmFormationFilter);
     }
     if (filmSubmode === "team_key") {
       if (filmTeamFilter === "all") return filmClips;
@@ -2954,7 +3812,7 @@ const existingStats =
     const grouped = new Map<string, string[]>();
 
     filmClips
-      .map((clip) => clip.formationKey.trim())
+      .map((clip) => normalizeFilmFormationFamily(clip.formationKey.trim()))
       .filter(Boolean)
       .sort((a, b) => a.localeCompare(b))
       .forEach((formationKey) => {
@@ -2977,6 +3835,25 @@ const existingStats =
       .sort((a, b) => a.localeCompare(b))
       .filter((teamTag, index, arr) => arr.indexOf(teamTag) === index);
   }, [filmClips]);
+  const filmTeamTagSelectOptions = useMemo(() => {
+    const optionSet = new Set<string>();
+
+    if (currentUser?.teamCode?.trim()) {
+      optionSet.add(currentUser.teamCode.trim());
+    }
+
+    filmTeamTagOptions.forEach((teamTag) => optionSet.add(teamTag));
+
+    if (filmDraft.teamTag.trim()) {
+      optionSet.add(filmDraft.teamTag.trim());
+    }
+
+    if (filmEditDraft.teamTag.trim()) {
+      optionSet.add(filmEditDraft.teamTag.trim());
+    }
+
+    return Array.from(optionSet).sort((a, b) => a.localeCompare(b));
+  }, [currentUser?.teamCode, filmDraft.teamTag, filmEditDraft.teamTag, filmTeamTagOptions]);
   const filmClipGroups = useMemo(() => {
     type ClipOption = { value: string; label: string };
     type BucketGroup = { bucket: string; options: ClipOption[] };
@@ -3045,6 +3922,39 @@ const existingStats =
     () => activeFilmClips.find((clip) => clip.id === selectedFilmClipId) ?? activeFilmClips[0] ?? null,
     [activeFilmClips, selectedFilmClipId],
   );
+  const passConceptResult = Object.fromEntries(
+    (["X", "H", "Y", "Z"] as PassConceptPlayerId[]).map((playerId) => [
+      playerId,
+      !passConceptDefinition.activePlayers.includes(playerId)
+        ? true
+        : passConceptAnswers[playerId].trim().toLowerCase() === (passConceptDefinition.routes[playerId] ?? "").toLowerCase(),
+    ]),
+  ) as Record<PassConceptPlayerId, boolean>;
+  const passConceptScore = passConceptDefinition.activePlayers.filter((playerId) => passConceptResult[playerId]).length;
+  const availablePassConceptNames = useMemo(
+    () =>
+      effectivePassConceptBoardKind === "2x2"
+        ? TWO_BY_TWO_CONCEPTS.map((concept) => concept.name)
+        : THREE_BY_ONE_CONCEPTS.map((concept) => concept.name),
+    [effectivePassConceptBoardKind],
+  );
+  const passConceptFrontsideNameResult =
+    passConceptDefinition.boardKind === "2x2"
+      ? passConceptFrontsideNameAnswer.trim().toLowerCase() === (passConceptDefinition.frontsideConceptName ?? "").toLowerCase()
+      : true;
+  const passConceptBacksideNameResult =
+    passConceptDefinition.boardKind === "2x2"
+      ? passConceptBacksideNameAnswer.trim().toLowerCase() === (passConceptDefinition.backsideConceptName ?? "").toLowerCase()
+      : true;
+  const passConceptNameResult =
+    passConceptDefinition.boardKind === "2x2"
+      ? passConceptFrontsideNameResult && passConceptBacksideNameResult
+      : passConceptNameAnswer.trim().toLowerCase() === passConceptDefinition.conceptName.toLowerCase();
+  const passConceptIdentifyScore =
+    passConceptDefinition.boardKind === "2x2"
+      ? Number(passConceptFrontsideNameResult) + Number(passConceptBacksideNameResult)
+      : Number(passConceptNameResult);
+  const passConceptIdentifyQuestionCount = passConceptDefinition.boardKind === "2x2" ? 2 : 1;
 
   useEffect(() => {
     if (!didHydrateViewStateRef.current) return;
@@ -3171,17 +4081,23 @@ const existingStats =
       teamTag: selectedFilmClip.teamTag ?? "",
       runPass: selectedFilmClip.runPass,
       direction: selectedFilmClip.direction,
-      passType: selectedFilmClip.passType,
-      runScheme: selectedFilmClip.runScheme || "zone",
-      zoneType: selectedFilmClip.zoneType || "normal",
-      gapPullerCount: selectedFilmClip.gapPullerCount,
-      gapOnePullerConcept: selectedFilmClip.gapOnePullerConcept,
-      gapTwoPullerConcept: selectedFilmClip.gapTwoPullerConcept,
-      manConcept: selectedFilmClip.manConcept,
+      passType: selectedFilmClip.passType ?? "",
+      runScheme: selectedFilmClip.runScheme ?? "",
+      zoneType: selectedFilmClip.zoneType ?? "",
+      gapPullerCount: selectedFilmClip.gapPullerCount ?? "",
+      gapOnePullerConcept: selectedFilmClip.gapOnePullerConcept ?? "",
+      gapTwoPullerConcept: selectedFilmClip.gapTwoPullerConcept ?? "",
+      manConcept: selectedFilmClip.manConcept ?? "",
       quizStartSeconds: selectedFilmClip.quizStartSeconds?.toString() ?? "",
       quizEndSeconds: selectedFilmClip.quizEndSeconds?.toString() ?? "",
     });
   }, [selectedFilmClip]);
+
+  useEffect(() => {
+    if (pendingDuplicateFilmSignature) {
+      setPendingDuplicateFilmSignature(null);
+    }
+  }, [filmDraft]);
 
   useEffect(() => {
     setShowFilmAdminTools(Boolean(currentUser?.isAdmin));
@@ -3205,6 +4121,9 @@ const existingStats =
     setShowQuizFeedback(false);
     setShowQuizAnswers(false);
     setQuizReadyForNext(false);
+    setShowPassConceptFeedback(false);
+    setShowPassConceptAnswers(false);
+    setPassConceptAnswers({ X: "", H: "", Y: "", Z: "" });
     setShowAlignmentCheck(false);
     setShowOffenseCheck(false);
     setLastScoreSummary({});
@@ -3212,7 +4131,54 @@ const existingStats =
     setQuizAnswers({ formation: "", runStrength: "", passStrength: "" });
     setScoredAttemptKey(null);
     setAttemptStartedAt(Date.now());
-  }, [current.name, mode]);
+  }, [current.name, mode, formationTrainerViewMode]);
+
+  useEffect(() => {
+    if (passConceptFamilyFilter !== "all") {
+      setPassConceptBoardKind(passConceptFamilyFilter);
+    }
+  }, [passConceptFamilyFilter]);
+
+  useEffect(() => {
+    if (passConceptViewMode !== "quiz" || passConceptQuizMode !== "build") return;
+
+    const nextBoardKind: PassConceptBoardKind =
+      passConceptFamilyFilter === "all"
+        ? (Math.random() < 0.5 ? "2x2" : "3x1")
+        : passConceptFamilyFilter;
+
+    setPassConceptBoardKind(nextBoardKind);
+
+    if (nextBoardKind === "2x2") {
+      const nextFrontIndex = getRandomPoolIndex(
+        TWO_BY_TWO_CONCEPTS.length,
+        TWO_BY_TWO_CONCEPTS.findIndex((concept) => concept.id === selectedFrontsideConceptId),
+      );
+      const nextBackIndex = getRandomPoolIndex(
+        TWO_BY_TWO_CONCEPTS.length,
+        TWO_BY_TWO_CONCEPTS.findIndex((concept) => concept.id === selectedBacksideConceptId),
+      );
+      setSelectedFrontsideConceptId(TWO_BY_TWO_CONCEPTS[nextFrontIndex].id);
+      setSelectedBacksideConceptId(TWO_BY_TWO_CONCEPTS[nextBackIndex].id);
+    } else {
+      const nextThreeByOneIndex = getRandomPoolIndex(
+        THREE_BY_ONE_CONCEPTS.length,
+        THREE_BY_ONE_CONCEPTS.findIndex((concept) => concept.id === selectedThreeByOneConceptId),
+      );
+      setSelectedThreeByOneConceptId(THREE_BY_ONE_CONCEPTS[nextThreeByOneIndex].id);
+    }
+  }, [passConceptViewMode, passConceptQuizMode, passConceptFamilyFilter]);
+
+  useEffect(() => {
+    setShowPassConceptFeedback(false);
+    setShowPassConceptAnswers(false);
+    setPassConceptAnswers({ X: "", H: "", Y: "", Z: "" });
+    setPassConceptNameAnswer("");
+    setPassConceptFrontsideNameAnswer("");
+    setPassConceptBacksideNameAnswer("");
+    setScoredAttemptKey(null);
+    setAttemptStartedAt(Date.now());
+  }, [passConceptViewMode, passConceptQuizMode, effectivePassConceptBoardKind, selectedFrontsideConceptId, selectedBacksideConceptId, selectedThreeByOneConceptId]);
 
   useEffect(() => {
     if (!pool.length) return;
@@ -3230,9 +4196,15 @@ const existingStats =
 
     if (mode !== previousMode) {
       shouldRandomize =
+        (mode === "study" && formationTrainerViewMode === "quiz") ||
         mode === "quiz" ||
         mode === "offense_build" ||
         (mode === "alignment" && alignmentViewMode === "quiz");
+    } else if (
+      mode === "study" &&
+      formationTrainerViewMode === "quiz"
+    ) {
+      shouldRandomize = true;
     } else if (
       mode === "alignment" &&
       alignmentViewMode !== previousAlignmentViewMode &&
@@ -3247,7 +4219,7 @@ const existingStats =
 
     previousModeRef.current = mode;
     previousAlignmentViewModeRef.current = alignmentViewMode;
-  }, [mode, alignmentViewMode, pool.length]);
+  }, [mode, formationTrainerViewMode, alignmentViewMode, pool.length]);
 
   useEffect(() => {
     if (!pool.length) return;
@@ -3325,6 +4297,26 @@ const existingStats =
       });
       return;
     }
+    if (mode === "concept") {
+      const nextBoardKind: PassConceptBoardKind =
+        passConceptFamilyFilter === "all"
+          ? (Math.random() < 0.5 ? "2x2" : "3x1")
+          : passConceptFamilyFilter;
+      setPassConceptBoardKind(nextBoardKind);
+      if (nextBoardKind === "2x2") {
+        const nextFrontIndex = getRandomPoolIndex(TWO_BY_TWO_CONCEPTS.length, TWO_BY_TWO_CONCEPTS.findIndex((concept) => concept.id === selectedFrontsideConceptId));
+        const nextBackIndex = getRandomPoolIndex(TWO_BY_TWO_CONCEPTS.length, TWO_BY_TWO_CONCEPTS.findIndex((concept) => concept.id === selectedBacksideConceptId));
+        setSelectedFrontsideConceptId(TWO_BY_TWO_CONCEPTS[nextFrontIndex].id);
+        setSelectedBacksideConceptId(TWO_BY_TWO_CONCEPTS[nextBackIndex].id);
+      } else {
+        const nextThreeByOneIndex = getRandomPoolIndex(THREE_BY_ONE_CONCEPTS.length, THREE_BY_ONE_CONCEPTS.findIndex((concept) => concept.id === selectedThreeByOneConceptId));
+        setSelectedThreeByOneConceptId(THREE_BY_ONE_CONCEPTS[nextThreeByOneIndex].id);
+      }
+      setShowPassConceptFeedback(false);
+      setShowPassConceptAnswers(false);
+      setPassConceptAnswers({ X: "", H: "", Y: "", Z: "" });
+      return;
+    }
     if (!pool.length) return;
     setIndex((prev) => {
       if (pool.length === 1) return 0;
@@ -3333,6 +4325,63 @@ const existingStats =
         next = Math.floor(Math.random() * pool.length);
       }
       return next;
+    });
+  };
+
+  const uploadProfileAvatar = async (file: File | null) => {
+    if (!file || !currentUser) return;
+
+    const allowedTypes = ["image/png", "image/jpeg", "image/webp"];
+    if (!allowedTypes.includes(file.type)) {
+      setAvatarUploadNotice({
+        tone: "error",
+        message: "Use a PNG, JPG, or WEBP image.",
+      });
+      return;
+    }
+
+    const supabase = createClient();
+    const extension = file.name.split(".").pop()?.toLowerCase() || "png";
+    const storagePath = `${currentUser.id}/avatar.${extension}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from(AVATAR_BUCKET)
+      .upload(storagePath, file, { upsert: true, cacheControl: "3600" });
+
+    if (uploadError) {
+      console.error("Failed to upload profile avatar", uploadError);
+      setAvatarUploadNotice({
+        tone: "error",
+        message: "Avatar upload failed. Check bucket setup and try again.",
+      });
+      return;
+    }
+
+    const { data } = supabase.storage.from(AVATAR_BUCKET).getPublicUrl(storagePath);
+    const avatarUrl = `${data.publicUrl}?t=${Date.now()}`;
+
+    const { error: profileError } = await supabase
+      .from("profiles")
+      .update({ avatar_url: avatarUrl })
+      .eq("id", currentUser.id);
+
+    if (profileError) {
+      console.error("Failed to save avatar URL", profileError);
+      setAvatarUploadNotice({
+        tone: "error",
+        message: "Avatar uploaded but profile update failed.",
+      });
+      return;
+    }
+
+    setCurrentUser((prev) => (prev ? { ...prev, avatarUrl } : prev));
+    setLeaderboardEntries((prev) =>
+      prev.map((entry) => (entry.id === currentUser.id ? { ...entry, avatarUrl } : entry)),
+    );
+    setAvatarUploadResetKey((prev) => prev + 1);
+    setAvatarUploadNotice({
+      tone: "success",
+      message: "Profile picture saved.",
     });
   };
 
@@ -3392,6 +4441,39 @@ const existingStats =
     setShowFilmQuizAnswers(false);
   };
 
+  const getFilmDuplicateCandidate = (draft: FilmClipDraft) => {
+    const normalizedFormation = normalizeFilmFormationFamily(draft.formationKey);
+    const normalizedTeam = draft.teamTag.trim().toLowerCase();
+    const normalizedStudyName = draft.studyFile?.name.trim().toLowerCase() ?? "";
+    const normalizedStudySize = draft.studyFile?.size ?? null;
+    const normalizedStudyUrl = draft.remoteStudyUrl.trim().toLowerCase();
+    const expectedDirection = draft.runPass === "pass" ? "right" : draft.direction;
+    const expectedBucket = deriveFilmClipBucket(draft);
+
+    return filmClips.find((clip) => {
+      if (clip.clipBucket !== expectedBucket) return false;
+      if ((clip.formationKey || "") !== normalizedFormation) return false;
+      if ((clip.teamTag || "").trim().toLowerCase() !== normalizedTeam) return false;
+      if (clip.runPass !== draft.runPass) return false;
+      if (clip.direction !== expectedDirection) return false;
+      if ((clip.passType || "") !== (draft.runPass === "pass" ? draft.passType : "")) return false;
+      if ((clip.runScheme || "") !== (draft.runPass === "run" ? draft.runScheme : "")) return false;
+      if ((clip.zoneType || "") !== (draft.runPass === "run" && draft.runScheme === "zone" ? draft.zoneType : "")) return false;
+      if ((clip.gapPullerCount || "") !== (draft.runPass === "run" && draft.runScheme === "gap" ? draft.gapPullerCount : "")) return false;
+      if ((clip.gapOnePullerConcept || "") !== (draft.runPass === "run" && draft.runScheme === "gap" && draft.gapPullerCount === "1" ? draft.gapOnePullerConcept : "")) return false;
+      if ((clip.gapTwoPullerConcept || "") !== (draft.runPass === "run" && draft.runScheme === "gap" && draft.gapPullerCount === "2" ? draft.gapTwoPullerConcept : "")) return false;
+      if ((clip.manConcept || "") !== (draft.runPass === "run" && draft.runScheme === "man" ? draft.manConcept : "")) return false;
+
+      const clipStudyName = clip.studyFileName?.trim().toLowerCase() ?? "";
+      const clipStudySize = typeof clip.studyFileSize === "number" ? clip.studyFileSize : null;
+      const clipStudyUrl = clip.studyUrl.trim().toLowerCase();
+      return Boolean(
+        (normalizedStudyName && normalizedStudySize !== null && clipStudyName && clipStudySize !== null && normalizedStudyName === clipStudyName && normalizedStudySize === clipStudySize) ||
+        (normalizedStudyUrl && clipStudyUrl && normalizedStudyUrl === clipStudyUrl),
+      );
+    });
+  };
+
   const addFilmClip = () => {
     void (async () => {
       const clipBucket = deriveFilmClipBucket(filmDraft);
@@ -3425,6 +4507,19 @@ const existingStats =
         return;
       }
 
+      const duplicateCandidate = getFilmDuplicateCandidate(filmDraft);
+      const duplicateSignature = duplicateCandidate ? `${duplicateCandidate.id}:${duplicateCandidate.studyFileName ?? duplicateCandidate.studyUrl}` : null;
+      if (duplicateCandidate && pendingDuplicateFilmSignature !== duplicateSignature) {
+        setPendingDuplicateFilmSignature(duplicateSignature);
+        setFilmSaveNotice({
+          tone: "warning",
+          message: `This looks like a duplicate of ${duplicateCandidate.clipBucket}${duplicateCandidate.studyFileName ? ` (${duplicateCandidate.studyFileName})` : ""}. Press Save Clip again to confirm.`,
+        });
+        return;
+      }
+
+      setPendingDuplicateFilmSignature(null);
+
       const hasSupabaseUpload = Boolean(currentUser && (studyFile || quizFile));
       if (hasSupabaseUpload) {
         const supabase = createClient();
@@ -3454,7 +4549,7 @@ const existingStats =
             id: clipId,
             title,
             clipBucket,
-            formationKey: filmDraft.formationKey,
+            formationKey: normalizeFilmFormationFamily(filmDraft.formationKey),
             teamTag: filmDraft.teamTag.trim(),
             sourceType,
             runPass: filmDraft.runPass,
@@ -3481,6 +4576,8 @@ const existingStats =
             kind: "supabase",
             studyFileName: studyAsset.fileName ?? studyFile?.name,
             quizFileName: quizAsset.fileName ?? quizFile?.name,
+            studyFileSize: studyFile?.size ?? null,
+            quizFileSize: quizFile?.size ?? null,
           };
 
           let { error: insertError } = await supabase.from("film_clips").insert({
@@ -3509,6 +4606,8 @@ const existingStats =
             quiz_storage_path: nextClip.quizStoragePath,
             study_file_name: nextClip.studyFileName ?? null,
             quiz_file_name: nextClip.quizFileName ?? null,
+            study_file_size: nextClip.studyFileSize ?? null,
+            quiz_file_size: nextClip.quizFileSize ?? null,
             created_by: currentUser.id,
           });
 
@@ -3546,6 +4645,8 @@ const existingStats =
 
           setFilmClips((prev) => [nextClip, ...prev.filter((clip) => clip.id !== nextClip.id)]);
           setSelectedFilmClipId(nextClip.id);
+          setFilmAdminPanelMode("edit");
+          setShowFilmAdminTools(true);
           setFilmSaveNotice({
             tone: "success",
             message: `Saved ${nextClip.clipBucket} to the film library.`,
@@ -3590,7 +4691,7 @@ const existingStats =
           id: `film-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
           title,
           clipBucket,
-          formationKey: filmDraft.formationKey,
+          formationKey: normalizeFilmFormationFamily(filmDraft.formationKey),
           teamTag: filmDraft.teamTag.trim(),
           sourceType,
           runPass: filmDraft.runPass,
@@ -3617,10 +4718,14 @@ const existingStats =
           kind,
           studyFileName,
           quizFileName,
+          studyFileSize: studyFile?.size ?? null,
+          quizFileSize: quizFile?.size ?? null,
         };
 
         setFilmClips((prev) => [nextClip, ...prev]);
         setSelectedFilmClipId(nextClip.id);
+        setFilmAdminPanelMode("edit");
+        setShowFilmAdminTools(true);
         setFilmSaveNotice({
           tone: "success",
           message: `Saved ${nextClip.clipBucket} to the film library.`,
@@ -3629,6 +4734,7 @@ const existingStats =
 
       setFilmStarted(false);
       setFilmPlaybackNonce(0);
+      setPendingDuplicateFilmSignature(null);
       setFilmDraft({
         sourceType: "Hudl",
         formationKey: "",
@@ -3671,7 +4777,7 @@ const existingStats =
         ...selectedFilmClip,
         title: clipBucket,
         clipBucket,
-        formationKey: filmEditDraft.formationKey,
+        formationKey: normalizeFilmFormationFamily(filmEditDraft.formationKey),
         teamTag: filmEditDraft.teamTag.trim(),
         sourceType: filmEditDraft.sourceType,
         runPass: filmEditDraft.runPass,
@@ -3715,21 +4821,31 @@ const existingStats =
             quiz_start_seconds: nextClip.quizStartSeconds,
             quiz_end_seconds: nextClip.quizEndSeconds,
           };
-          let { error } = await supabase
+          let updateResult = await supabase
             .from("film_clips")
             .update(updatePayload)
-            .eq("id", selectedFilmClip.id);
+            .eq("id", selectedFilmClip.id)
+            .select("id")
+            .maybeSingle();
+          let error = updateResult.error;
+          let updatedRow = updateResult.data;
 
           if (error?.code === "PGRST204" || error?.message?.includes("zone_type") || error?.message?.includes("formation_key") || error?.message?.includes("team_tag")) {
             const { zone_type: _zoneType, formation_key: _formationKey, team_tag: _teamTag, ...fallbackPayload } = updatePayload;
-            const fallbackResult = await supabase
+            updateResult = await supabase
               .from("film_clips")
               .update(fallbackPayload)
-              .eq("id", selectedFilmClip.id);
-            error = fallbackResult.error;
+              .eq("id", selectedFilmClip.id)
+              .select("id")
+              .maybeSingle();
+            error = updateResult.error;
+            updatedRow = updateResult.data;
           }
 
           if (error) throw error;
+          if (!updatedRow) {
+            throw new Error("No film clip row was updated. This usually means your Supabase policies do not allow this account to edit that clip.");
+          }
         }
 
         setFilmClips((prev) => prev.map((clip) => (clip.id === nextClip.id ? nextClip : clip)));
@@ -3756,7 +4872,10 @@ const existingStats =
         }
         setFilmSaveNotice({
           tone: "error",
-          message: "Clip update failed. Check the file or URL changes and try again.",
+          message:
+            error instanceof Error && error.message
+              ? `Clip update failed: ${error.message}`
+              : "Clip update failed. Check the file or URL changes and try again.",
         });
       }
     })();
@@ -4010,7 +5129,7 @@ const existingStats =
   router.push("/login");
 };
 
-  const getSpeedBonus = (activeMode: "quiz" | "offense_build" | "alignment" | "film", elapsedMs: number) => {
+  const getSpeedBonus = (activeMode: "quiz" | "offense_build" | "alignment" | "film" | "concept", elapsedMs: number) => {
     const seconds = elapsedMs / 1000;
     if (activeMode === "quiz") {
       if (seconds <= 6) return 30;
@@ -4038,7 +5157,7 @@ const existingStats =
 
   const persistModeScore = async (
     userId: string,
-    activeMode: "quiz" | "offense_build" | "alignment" | "film",
+    activeMode: "quiz" | "offense_build" | "alignment" | "film" | "concept",
     nextModeStats: ModeScoreStats,
   ) => {
     const supabase = createClient();
@@ -4080,7 +5199,7 @@ const existingStats =
   };
 
   const scoreAttempt = (
-    activeMode: "quiz" | "offense_build" | "alignment" | "film",
+    activeMode: "quiz" | "offense_build" | "alignment" | "film" | "concept",
     accuracy: number,
     isCorrect: boolean,
     customAttemptKey?: string,
@@ -4146,6 +5265,44 @@ const existingStats =
   }, [mode, filmViewMode, showFilmQuizFeedback, filmQuizScore, filmQuizQuestionCount, filmQuizIsPerfect, selectedFilmClip?.id]);
 
   useEffect(() => {
+    if (mode !== "concept" || passConceptViewMode !== "quiz" || !showPassConceptFeedback) return;
+
+    const accuracy =
+      passConceptQuizMode === "build"
+        ? passConceptScore / Math.max(1, passConceptDefinition.activePlayers.length)
+        : passConceptIdentifyScore / Math.max(1, passConceptIdentifyQuestionCount);
+    const isCorrect =
+      passConceptQuizMode === "build"
+        ? passConceptScore === passConceptDefinition.activePlayers.length
+        : passConceptIdentifyScore === passConceptIdentifyQuestionCount;
+    const attemptIdentity =
+      passConceptDefinition.boardKind === "2x2"
+        ? `${selectedFrontsideConceptId}::${selectedBacksideConceptId}`
+        : selectedThreeByOneConceptId;
+
+    scoreAttempt(
+      "concept",
+      accuracy,
+      isCorrect,
+      `concept::${passConceptQuizMode}::${passConceptDefinition.boardKind}::${attemptIdentity}`,
+    );
+  }, [
+    mode,
+    passConceptViewMode,
+    showPassConceptFeedback,
+    passConceptQuizMode,
+    passConceptScore,
+    passConceptDefinition.activePlayers.length,
+    passConceptDefinition.boardKind,
+    passConceptIdentifyQuestionCount,
+    passConceptIdentifyScore,
+    passConceptNameResult,
+    selectedFrontsideConceptId,
+    selectedBacksideConceptId,
+    selectedThreeByOneConceptId,
+  ]);
+
+  useEffect(() => {
     if (showOffenseCheck) {
       const total = Object.keys(offenseAnswerKey).length || 1;
       const wrong = offenseCheck.incorrectIds.length;
@@ -4169,8 +5326,8 @@ const existingStats =
 
   if (!authChecked) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-100">
-        <div className="rounded-xl border bg-white px-6 py-4 text-sm text-slate-600 shadow-sm">
+      <div className="flex min-h-screen items-center justify-center bg-transparent">
+        <div className="rounded-2xl border border-[#d8ddcf] bg-white/88 px-6 py-4 text-sm text-slate-600 shadow-[0_18px_50px_rgba(43,81,61,0.08)] backdrop-blur-sm">
           Loading...
         </div>
       </div>
@@ -4178,26 +5335,74 @@ const existingStats =
   }
 
   return (
-    <div className="min-h-screen bg-slate-100 p-4 md:p-6">
+    <div className="min-h-screen bg-transparent p-4 md:p-6">
       <div className="mx-auto max-w-7xl space-y-6">
-        <Card className="rounded-2xl shadow-sm">
-          <CardHeader className="space-y-4">
+        <Card className="overflow-hidden rounded-[28px] border border-[#d5dccf] bg-white/84 shadow-[0_24px_70px_rgba(43,81,61,0.10)] backdrop-blur-sm">
+          <CardHeader className="space-y-4 bg-gradient-to-b from-[#f7faf6] via-[#f9f7f0] to-white">
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-              <CardTitle className="text-3xl font-extrabold tracking-tight text-slate-900 md:text-4xl">{getModeTitle(mode)}</CardTitle>
+              <CardTitle className="text-3xl font-extrabold tracking-tight text-slate-900 md:text-4xl">
+                <span className="bg-gradient-to-r from-[#274836] via-[#355d46] to-[#7f6a2d] bg-clip-text text-transparent">
+                  {getModeTitle(mode)}
+                </span>
+              </CardTitle>
               <div className="flex flex-wrap items-center gap-2">
-                                {authChecked ? (
-  <Button variant="outline" className="rounded-xl" onClick={handleLogout}>
-    Log Out
-  </Button>
-) : null}
+                <Button
+                  variant={mode === "offense_build" ? "default" : "outline"}
+                  className="rounded-xl"
+                  onClick={() => {
+                    setAppSection("offense");
+                    setMode("offense_build");
+                  }}
+                >
+                  Home
+                </Button>
+                {currentUser ? (
+                  <Button variant={mode === "account" ? "default" : "outline"} className="rounded-xl" onClick={() => setMode("account")}>
+                    <User className="mr-2 h-4 w-4" />
+                    Account
+                  </Button>
+                ) : null}
+                <Button variant={mode === "leaderboard" ? "default" : "outline"} className="rounded-xl" onClick={() => setMode("leaderboard")}>
+                  <Trophy className="mr-2 h-4 w-4" />
+                  Leaderboard
+                </Button>
+                {authChecked ? (
+                  <Button variant="outline" className="rounded-xl" onClick={handleLogout}>
+                    Log Out
+                  </Button>
+                ) : null}
 
-                <div className="min-w-[180px]">
-                  <Select value={mode} onValueChange={(value: AppMode) => { setMode(value); }}>
+                <div className="min-w-[150px]">
+                  <Select
+                    value={appSection}
+                    onValueChange={(value: AppSection) => {
+                      setAppSection(value);
+                      const nextMode = MODE_OPTIONS.find((option) => option.section === value)?.value;
+                      if (nextMode) setMode(nextMode);
+                    }}
+                  >
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent className="max-h-80 overflow-y-auto">
-                      {MODE_OPTIONS.map((option) => (
+                      {APP_SECTION_OPTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="min-w-[180px]">
+                  <Select
+                    value={sectionModeOptions.some((option) => option.value === mode) ? mode : (sectionModeOptions[0]?.value ?? "study")}
+                    onValueChange={(value: AppMode) => { setMode(value); setAppSection(getSectionForMode(value)); }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-80 overflow-y-auto">
+                      {sectionModeOptions.map((option) => (
                         <SelectItem key={option.value} value={option.value}>
                           {option.label}
                         </SelectItem>
@@ -4206,10 +5411,12 @@ const existingStats =
                   </Select>
                 </div>
                 <div className="min-w-[220px]">
-                  {mode === "offense_build" ? (
+                  {mode === "leaderboard" ? null : mode === "offense_build" ? (
                     <div className="rounded-md border bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700">Foothill</div>
-                  ) : mode === "film" ? (
-                    <div className="rounded-md border bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700">Film Library</div>
+                  ) : mode === "film" || mode === "concept" ? (
+                    <div className="rounded-md border bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700">
+                      {mode === "film" ? "Film Library" : "Concept Board"}
+                    </div>
                   ) : (
                     <details className="relative">
                       <summary className="cursor-pointer list-none rounded-md border bg-white px-3 py-2 text-sm font-medium text-slate-700">
@@ -4247,7 +5454,7 @@ const existingStats =
                     </details>
                   )}
                 </div>
-                {mode === "offense_build" || mode === "film" ? null : (
+                {mode === "offense_build" || mode === "film" || mode === "concept" || mode === "leaderboard" ? null : (
                   <div className="min-w-[120px]">
                     <Select value={personnelFilter} onValueChange={(value: string) => { setPersonnelFilter(value); setIndex(0); }}>
                       <SelectTrigger>
@@ -4263,21 +5470,13 @@ const existingStats =
                     </Select>
                   </div>
                 )}
-                <Button className="rounded-xl" onClick={nextCall}>
-                  <Shuffle className="mr-2 h-4 w-4" />
-                  {mode === "film" ? "Random Clip" : "Randomize"}
-                </Button>
               </div>
             </div>
-            {mode !== "quiz" && mode !== "account" && (
-              <div className="rounded-xl border bg-white p-4 text-3xl font-extrabold tracking-tight text-slate-900 md:text-4xl">
-                {mode === "film"
-                  ? filmViewMode === "quiz"
-                    ? "Film Quiz"
-                    : selectedFilmClip?.title ?? "FILM MODE"
-                  : displayFormation.name}
+            {(mode === "alignment" || (mode === "study" && formationTrainerViewMode === "study") || (mode === "offense_build" && offenseBuildViewMode === "study")) && (
+              <div className="rounded-2xl border border-[#dde3d8] bg-gradient-to-r from-white via-[#fbfcfa] to-[#f4f4ee] p-4 text-3xl font-extrabold tracking-tight text-slate-900 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] md:text-4xl">
+                {displayFormation.name}
                 <div className="mt-1 text-sm font-semibold uppercase tracking-[0.14em] text-slate-500">
-                  {mode === "film" ? (filmViewMode === "quiz" ? "QUIZ" : "READ KEY") : displayFormation.playbook}
+                  {displayFormation.playbook}
                 </div>
               </div>
             )}
@@ -4295,8 +5494,33 @@ const existingStats =
                 <User className="h-4 w-4" />
                 User
               </div>
-              <div className="text-lg font-semibold text-slate-900">{currentUser.name}</div>
-              <div className="text-sm text-slate-500">Team: {currentUser.teamCode}</div>
+              <div className="mt-2 flex items-center gap-3">
+                <AvatarBadge name={currentUser.name} avatarUrl={currentUser.avatarUrl} />
+                <div className="min-w-0">
+                  <div className="truncate text-lg font-semibold text-slate-900">{currentUser.name}</div>
+                  <div className="text-sm text-slate-500">Team: {currentUser.teamCode}</div>
+                </div>
+              </div>
+              <div className="mt-4">
+                <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Profile Picture</div>
+                <Input
+                  key={avatarUploadResetKey}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  onChange={(e) => void uploadProfileAvatar(e.target.files?.[0] ?? null)}
+                />
+                {avatarUploadNotice ? (
+                  <div
+                    className={`mt-2 rounded-lg border px-3 py-2 text-xs ${
+                      avatarUploadNotice.tone === "success"
+                        ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                        : "border-red-200 bg-red-50 text-red-800"
+                    }`}
+                  >
+                    {avatarUploadNotice.message}
+                  </div>
+                ) : null}
+              </div>
             </div>
 
             <div className="rounded-xl border border-amber-200 bg-gradient-to-br from-amber-50 to-white p-4">
@@ -4306,7 +5530,7 @@ const existingStats =
               </div>
               <div className="text-lg font-semibold text-slate-900">{currentUser.stats.totalPoints}</div>
               <div className="text-sm text-slate-500">
-                Quiz {currentUser.stats.quiz.points} • Offense {currentUser.stats.offense_build.points} • Align {currentUser.stats.alignment.points} • Film {currentUser.stats.film.points}
+                Quiz {currentUser.stats.quiz.points} • Offense {currentUser.stats.offense_build.points} • Concept {currentUser.stats.concept.points} • Align {currentUser.stats.alignment.points} • Film {currentUser.stats.film.points}
               </div>
             </div>
 
@@ -4328,40 +5552,75 @@ const existingStats =
         )}
       </CardContent>
     </Card>
+  </div>
 
+            ) : mode === "leaderboard" ? (
+  <div className="space-y-4">
     <Card className="overflow-hidden rounded-2xl border border-[#35533f] bg-[#2f5b43] shadow-xl">
       <CardHeader className="border-b border-[#496a54] bg-gradient-to-b from-[#3c6b51] to-[#2b513d] pb-3">
         <CardTitle className="text-center text-xl font-black uppercase tracking-[0.22em] text-[#f3ead0]">Mode Leaderboards</CardTitle>
       </CardHeader>
       <CardContent className="bg-[#2f5b43]">
-        <div className="grid gap-4 p-1 xl:grid-cols-4 md:grid-cols-2">
-          {leaderboardBoards.map((board) => (
-            <div key={board.key} className={`overflow-hidden rounded-xl border shadow-[inset_0_1px_0_rgba(255,255,255,0.7)] ${board.shellClass}`}>
-              <div className={`border-b bg-gradient-to-b px-4 py-3 text-center ${board.columnClass.split(" ")[0]} ${board.headerClass}`}>
+        {selectedLeaderboardBoard ? (
+          <div className="space-y-4 p-1">
+            <div className="mx-auto grid max-w-[540px] gap-3 md:grid-cols-2">
+              <Select
+                value={selectedLeaderboardSection}
+                onValueChange={(value: LeaderboardSection) => setSelectedLeaderboardSection(value)}
+              >
+                <SelectTrigger className="bg-white/95">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="max-h-80 overflow-y-auto">
+                  {leaderboardSectionOptions.map((section) => (
+                    <SelectItem key={`leaderboard-section-${section.value}`} value={section.value}>
+                      {section.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select
+                value={selectedLeaderboardBoard.key}
+                onValueChange={(value: LeaderboardMode) => setSelectedLeaderboardMode(value)}
+              >
+                <SelectTrigger className="bg-white/95">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="max-h-80 overflow-y-auto">
+                  {filteredLeaderboardBoards.map((board) => (
+                    <SelectItem key={`leaderboard-${board.key}`} value={board.key}>
+                      {board.title}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className={`overflow-hidden rounded-xl border shadow-[inset_0_1px_0_rgba(255,255,255,0.7)] ${selectedLeaderboardBoard.shellClass}`}>
+              <div className={`border-b bg-gradient-to-b px-4 py-3 text-center ${selectedLeaderboardBoard.columnClass.split(" ")[0]} ${selectedLeaderboardBoard.headerClass}`}>
                 <div className="flex justify-center">
                   <div className="border-b-2 border-[#7b6f42] px-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.24em] text-[#5f5b48]">
-                    {board.title}
+                    {selectedLeaderboardBoard.title}
                   </div>
                 </div>
                 <div className="mt-1 text-lg font-black uppercase tracking-[0.12em] text-[#23241d]">Leaders</div>
               </div>
-              <div className={`grid grid-cols-[48px_minmax(0,1fr)_74px_74px] items-center gap-0 border-b px-2 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] ${board.columnClass}`}>
+              <div className={`grid grid-cols-[42px_minmax(0,1fr)_56px_58px] items-center gap-0 border-b px-2 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] ${selectedLeaderboardBoard.columnClass}`}>
                 <div className="border-r border-[#b7b09a] px-2 text-center">Pos</div>
                 <div className="border-r border-[#b7b09a] px-3">Player</div>
                 <div className="border-r border-[#b7b09a] px-2 text-center">Pts</div>
                 <div className="px-2 text-center">Best</div>
               </div>
               <div>
-                {board.entries.length ? (
-                  board.entries.map((entry, idx) => (
+                {selectedLeaderboardBoard.entries.length ? (
+                  selectedLeaderboardBoard.entries.map((entry, idx) => (
                     <div
-                      key={`${board.key}-${entry.id}`}
+                      key={`${selectedLeaderboardBoard.key}-${entry.id}`}
                       className={
                         entry.id === currentUser?.id
-                          ? "grid grid-cols-[48px_minmax(0,1fr)_74px_74px] items-center gap-0 border-b border-[#5d8d62] bg-[#dff0dd] text-sm last:border-b-0"
+                          ? "grid grid-cols-[42px_minmax(0,1fr)_56px_58px] items-center gap-0 border-b border-[#5d8d62] bg-[#dff0dd] text-sm last:border-b-0"
                           : idx % 2 === 0
-                            ? `grid grid-cols-[48px_minmax(0,1fr)_74px_74px] items-center gap-0 border-b text-sm last:border-b-0 ${board.stripeOddClass}`
-                            : `grid grid-cols-[48px_minmax(0,1fr)_74px_74px] items-center gap-0 border-b text-sm last:border-b-0 ${board.stripeEvenClass}`
+                            ? `grid grid-cols-[42px_minmax(0,1fr)_56px_58px] items-center gap-0 border-b text-sm last:border-b-0 ${selectedLeaderboardBoard.stripeOddClass}`
+                            : `grid grid-cols-[42px_minmax(0,1fr)_56px_58px] items-center gap-0 border-b text-sm last:border-b-0 ${selectedLeaderboardBoard.stripeEvenClass}`
                       }
                     >
                       <div className="border-r border-[#d0c8ae] px-2 py-2 text-center">
@@ -4380,24 +5639,27 @@ const existingStats =
                         </div>
                       </div>
                       <div className="min-w-0 border-r border-[#d0c8ae] px-3 py-2">
-                        <div className="truncate font-semibold uppercase tracking-[0.04em] text-[#23241d]">
-                          {entry.name}
+                        <div className="flex items-center gap-2 min-w-0">
+                          <AvatarBadge name={entry.name} avatarUrl={entry.avatarUrl} className="h-8 w-8" textClassName="text-[10px]" />
+                          <div className="truncate font-semibold uppercase tracking-[0.04em] text-[#23241d]">
+                            {entry.name}
+                          </div>
                         </div>
                         <div className="text-[11px] text-[#6d6857]">
-                          {entry.stats[board.key].attempts > 0
-                            ? `${Math.round((entry.stats[board.key].correct / entry.stats[board.key].attempts) * 100)}% correct`
+                          {entry.stats[selectedLeaderboardBoard.key].attempts > 0
+                            ? `${Math.round((entry.stats[selectedLeaderboardBoard.key].correct / entry.stats[selectedLeaderboardBoard.key].attempts) * 100)}% correct`
                             : "0% correct"}
                           {entry.id === currentUser?.id ? " • You" : ""}
                         </div>
                       </div>
                       <div className="border-r border-[#d0c8ae] px-2 py-2 text-center">
-                        <div className="font-black text-[#202119]">{entry.stats[board.key].points}</div>
+                        <div className="font-black text-[#202119]">{entry.stats[selectedLeaderboardBoard.key].points}</div>
                         <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#78715b]">Pts</div>
                       </div>
                       <div className="px-2 py-2 text-center">
                         <div className="text-[11px] font-semibold text-[#4f4b3f]">
-                          {entry.stats[board.key].bestTimeMs
-                            ? `${(entry.stats[board.key].bestTimeMs / 1000).toFixed(1)}s best`
+                          {entry.stats[selectedLeaderboardBoard.key].bestTimeMs
+                            ? `${(entry.stats[selectedLeaderboardBoard.key].bestTimeMs / 1000).toFixed(1)}s best`
                             : "—"}
                         </div>
                       </div>
@@ -4408,35 +5670,43 @@ const existingStats =
                     No scores yet for this team.
                   </div>
                 )}
-                {board.currentUserEntry ? (
+                {selectedLeaderboardBoard.currentUserEntry ? (
                   <>
-                    <div className="grid grid-cols-[48px_minmax(0,1fr)_74px_74px] items-center gap-0 border-b border-[#d6cfb7] bg-[#ddd4bc] text-[10px] font-bold uppercase tracking-[0.16em] text-[#6a654f] last:border-b-0">
+                    <div className="grid grid-cols-[42px_minmax(0,1fr)_56px_58px] items-center gap-0 border-b border-[#d6cfb7] bg-[#ddd4bc] text-[10px] font-bold uppercase tracking-[0.16em] text-[#6a654f] last:border-b-0">
                       <div className="col-span-4 px-4 py-1.5 text-center">Your Standing</div>
                     </div>
-                    <div className="grid grid-cols-[48px_minmax(0,1fr)_74px_74px] items-center gap-0 border-b border-[#5d8d62] bg-[#dff0dd] text-sm last:border-b-0">
+                    <div className="grid grid-cols-[42px_minmax(0,1fr)_56px_58px] items-center gap-0 border-b border-[#5d8d62] bg-[#dff0dd] text-sm last:border-b-0">
                       <div className="border-r border-[#b5cfb4] px-2 py-2 text-center">
                         <div className="inline-flex h-7 min-w-7 items-center justify-center rounded-full border border-[#5d8d62] bg-[#bfe0bd] px-2 text-[11px] font-black text-[#244127]">
-                          {board.currentUserEntry.leaderboardRank}
+                          {selectedLeaderboardBoard.currentUserEntry.leaderboardRank}
                         </div>
                       </div>
                       <div className="min-w-0 border-r border-[#b5cfb4] px-3 py-2">
-                        <div className="truncate font-semibold uppercase tracking-[0.04em] text-[#23241d]">
-                          {board.currentUserEntry.name}
+                        <div className="flex items-center gap-2 min-w-0">
+                          <AvatarBadge
+                            name={selectedLeaderboardBoard.currentUserEntry.name}
+                            avatarUrl={selectedLeaderboardBoard.currentUserEntry.avatarUrl}
+                            className="h-8 w-8"
+                            textClassName="text-[10px]"
+                          />
+                          <div className="truncate font-semibold uppercase tracking-[0.04em] text-[#23241d]">
+                            {selectedLeaderboardBoard.currentUserEntry.name}
+                          </div>
                         </div>
                         <div className="text-[11px] text-[#4c6a4f]">
-                          {board.currentUserEntry.stats[board.key].attempts > 0
-                            ? `${Math.round((board.currentUserEntry.stats[board.key].correct / board.currentUserEntry.stats[board.key].attempts) * 100)}% correct`
+                          {selectedLeaderboardBoard.currentUserEntry.stats[selectedLeaderboardBoard.key].attempts > 0
+                            ? `${Math.round((selectedLeaderboardBoard.currentUserEntry.stats[selectedLeaderboardBoard.key].correct / selectedLeaderboardBoard.currentUserEntry.stats[selectedLeaderboardBoard.key].attempts) * 100)}% correct`
                             : "0% correct"}{" • You"}
                         </div>
                       </div>
                       <div className="border-r border-[#b5cfb4] px-2 py-2 text-center">
-                        <div className="font-black text-[#202119]">{board.currentUserEntry.stats[board.key].points}</div>
+                        <div className="font-black text-[#202119]">{selectedLeaderboardBoard.currentUserEntry.stats[selectedLeaderboardBoard.key].points}</div>
                         <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#4c6a4f]">Pts</div>
                       </div>
                       <div className="px-2 py-2 text-center">
                         <div className="text-[11px] font-semibold text-[#36513a]">
-                          {board.currentUserEntry.stats[board.key].bestTimeMs
-                            ? `${(board.currentUserEntry.stats[board.key].bestTimeMs / 1000).toFixed(1)}s best`
+                          {selectedLeaderboardBoard.currentUserEntry.stats[selectedLeaderboardBoard.key].bestTimeMs
+                            ? `${(selectedLeaderboardBoard.currentUserEntry.stats[selectedLeaderboardBoard.key].bestTimeMs / 1000).toFixed(1)}s best`
                             : "—"}
                         </div>
                       </div>
@@ -4445,13 +5715,37 @@ const existingStats =
                 ) : null}
               </div>
             </div>
-          ))}
-        </div>
+          </div>
+        ) : null}
       </CardContent>
     </Card>
   </div>
 
             ) : mode === "study" ? (
+              <div className="space-y-4">
+                <div className="flex flex-wrap justify-end gap-2">
+                  <div className="min-w-[140px]">
+                    <Select
+                      value={formationTrainerViewMode}
+                      onValueChange={(value: FormationTrainerViewMode) => {
+                        setFormationTrainerViewMode(value);
+                        setShowQuizFeedback(false);
+                        setShowQuizAnswers(false);
+                        setQuizReadyForNext(false);
+                      }}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-80 overflow-y-auto">
+                        <SelectItem value="study">Study</SelectItem>
+                        <SelectItem value="quiz">Quiz</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                {formationTrainerViewMode === "study" ? (
+              <>
               <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
                 <div className="space-y-4">
                   <TrainingField
@@ -4492,6 +5786,10 @@ const existingStats =
                   </div>
                 </div>
                 <div className="space-y-3 rounded-2xl border bg-white p-4 text-sm text-slate-600">
+                  <Button className="rounded-xl" onClick={nextCall}>
+                    <Shuffle className="mr-2 h-4 w-4" />
+                    Randomize
+                  </Button>
                   <div>
                     <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Formation</div>
                     <Select
@@ -4526,6 +5824,477 @@ const existingStats =
                     </Select>
                   </div>
                   <div>Study the formation menu and recognition information for this look.</div>
+                </div>
+              </div>
+              </>
+                ) : (
+                  <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+                    <div className="space-y-4">
+                      <TrainingField offensePlayers={displayFormation.players} />
+                      <div className="rounded-2xl border-2 border-slate-300 bg-white p-5 shadow-sm">
+                        <div className="mb-4 text-base font-bold text-slate-800">Your Answers</div>
+                        <div className="grid gap-4 md:grid-cols-3">
+                          <div>
+                            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-600">Formation</div>
+                            <Input className="h-12 border-2 border-slate-300 bg-white text-base" placeholder="Trips, Doubles, B Trey..." value={quizAnswers.formation} onChange={(e) => setQuizAnswers((prev) => ({ ...prev, formation: e.target.value }))} />
+                          </div>
+                          <div>
+                            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-600">Run Strength</div>
+                            <Input className="h-12 border-2 border-slate-300 bg-white text-base" placeholder="Left or Right" value={quizAnswers.runStrength} onChange={(e) => setQuizAnswers((prev) => ({ ...prev, runStrength: e.target.value }))} />
+                          </div>
+                          <div>
+                            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-600">Pass Strength</div>
+                            <Input
+                              className="h-12 border-2 border-slate-300 bg-white text-base"
+                              placeholder="Left or Right"
+                              value={quizAnswers.passStrength}
+                              onChange={(e) => setQuizAnswers((prev) => ({ ...prev, passStrength: e.target.value }))}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  if (showQuizFeedback && quizScore === 3 && quizReadyForNext) {
+                                    nextCall();
+                                  } else {
+                                    submitQuiz();
+                                  }
+                                }
+                              }}
+                            />
+                          </div>
+                        </div>
+                        <div className="mt-3 text-xs text-slate-500">
+                          Enter only the formation family for Formation. Example: <span className="font-semibold text-slate-700">B Doubles</span>
+                        </div>
+                      </div>
+                    </div>
+                <div className="space-y-3 rounded-2xl border bg-white p-4">
+                  <Button variant="outline" className="h-12 w-full rounded-xl text-base" onClick={nextCall}>
+                    <Shuffle className="mr-2 h-4 w-4" />
+                    Randomize
+                  </Button>
+                  <Button className="h-12 w-full rounded-xl text-base" onClick={submitQuiz}>
+                    Check Answers
+                  </Button>
+                      <Button variant="outline" className="h-12 w-full rounded-xl text-base" onClick={() => { setShowQuizAnswers(true); setShowQuizFeedback(true); setQuizReadyForNext(false); }}>
+                        Show Answers
+                      </Button>
+                      {showQuizAnswers ? (
+                        <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                          <div>
+                            <span className="font-semibold">Formation:</span> {correctQuizAnswers.formation}
+                          </div>
+                          <div>
+                            <span className="font-semibold">Run Strength:</span> {correctQuizAnswers.runStrength}
+                          </div>
+                          <div>
+                            <span className="font-semibold">Pass Strength:</span> {correctQuizAnswers.passStrength}
+                          </div>
+                        </div>
+                      ) : null}
+                      {showQuizFeedback ? (
+                        <>
+                          <div className="text-sm font-semibold text-slate-700">Score: {quizScore} / 3</div>
+                          {lastScoreSummary.quiz ? (
+                            <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
+                              <span className="font-semibold">Points earned:</span> {lastScoreSummary.quiz.awarded}
+                              <div>
+                                <span className="font-semibold">Quiz total:</span> {lastScoreSummary.quiz.total}
+                              </div>
+                            </div>
+                          ) : null}
+                          <div className="space-y-2 text-sm">
+                            <div className="flex items-center justify-between rounded-lg border p-3"><span>Formation</span>{quizResult.formation ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <XCircle className="h-4 w-4 text-red-600" />}</div>
+                            <div className="flex items-center justify-between rounded-lg border p-3"><span>Run Strength</span>{quizResult.runStrength ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <XCircle className="h-4 w-4 text-red-600" />}</div>
+                            <div className="flex items-center justify-between rounded-lg border p-3"><span>Pass Strength</span>{quizResult.passStrength ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <XCircle className="h-4 w-4 text-red-600" />}</div>
+                          </div>
+                          {quizScore === 3 && (
+                            <div className="mt-3 rounded-xl border border-emerald-300 bg-emerald-100 p-3 text-center text-sm font-semibold text-emerald-700">
+                              All 3 correct. Press Enter again for the next formation
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <div className="rounded-xl border border-dashed p-3 text-sm text-slate-500">
+                          Fill in the three answer boxes below the field, then press <span className="font-semibold">Check Answers</span>.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : mode === "concept" ? (
+              <div className="space-y-4">
+                <div className="flex flex-wrap justify-end gap-2">
+                  <div className="min-w-[140px]">
+                    <Select
+                      value={passConceptViewMode}
+                      onValueChange={(value: PassConceptViewMode) => {
+                        setPassConceptViewMode(value);
+                        setShowPassConceptFeedback(false);
+                        setShowPassConceptAnswers(false);
+                      }}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-80 overflow-y-auto">
+                        <SelectItem value="study">Study</SelectItem>
+                        <SelectItem value="quiz">Quiz</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {passConceptViewMode === "quiz" ? (
+                    <div className="min-w-[190px]">
+                      <Select value={passConceptQuizMode} onValueChange={(value: PassConceptQuizMode) => setPassConceptQuizMode(value)}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="max-h-80 overflow-y-auto">
+                          <SelectItem value="build">Build the Concept</SelectItem>
+                          <SelectItem value="identify">Name the Concept</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  ) : null}
+                </div>
+                <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
+                  <div className="space-y-4">
+                    <div className="rounded-2xl border bg-white p-4">
+                      <div className="mb-3">
+                        <div className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">Pass Concept</div>
+                        <div className="mt-1 text-2xl font-extrabold tracking-tight text-slate-900">
+                          {passConceptViewMode === "study" ? passConceptDefinition.title : "Quiz Rep"}
+                        </div>
+                        {passConceptViewMode === "quiz" ? (
+                          <div className="mt-1 text-sm text-slate-600">
+                            {passConceptQuizMode === "build"
+                              ? <>Choose the correct route for each active eligible based on the concept name.</>
+                              : <>Study the routes on the field, then choose the correct concept name.</>}
+                          </div>
+                        ) : null}
+                      </div>
+                      <TrainingField
+                        offensePlayers={passConceptPreview.formationPlayers}
+                        routeOverlays={passConceptViewMode === "study" ? passConceptPreview.routesPreview : passConceptQuizRoutePreview}
+                        yardReferenceLines={passConceptPreview.yardLines}
+                        yardReferenceScale={3}
+                        subtleHashMarks
+                        losReferenceY={passConceptPreview.losY}
+                        flipOffense
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-3 rounded-2xl border bg-white p-4 text-sm text-slate-600">
+                    <div>
+                      <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Concept Family</div>
+                      <Select value={passConceptFamilyFilter} onValueChange={(value: PassConceptFamilyFilter) => setPassConceptFamilyFilter(value)}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="max-h-80 overflow-y-auto">
+                          <SelectItem value="2x2">2x2</SelectItem>
+                          <SelectItem value="3x1">3x1</SelectItem>
+                          <SelectItem value="all">All</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {passConceptViewMode === "study" ? (
+                      effectivePassConceptBoardKind === "2x2" ? (
+                        <>
+                          <div>
+                            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Frontside Concept</div>
+                            <Select value={selectedFrontsideConceptId} onValueChange={setSelectedFrontsideConceptId}>
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent className="max-h-80 overflow-y-auto">
+                                {TWO_BY_TWO_CONCEPTS.map((concept) => (
+                                  <SelectItem key={`front-${concept.id}`} value={concept.id}>
+                                    {concept.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div>
+                            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Backside Concept</div>
+                            <Select value={selectedBacksideConceptId} onValueChange={setSelectedBacksideConceptId}>
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent className="max-h-80 overflow-y-auto">
+                                {TWO_BY_TWO_CONCEPTS.map((concept) => (
+                                  <SelectItem key={`back-${concept.id}`} value={concept.id}>
+                                    {concept.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </>
+                      ) : (
+                        <div>
+                          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Trips Concept</div>
+                          <Select value={selectedThreeByOneConceptId} onValueChange={setSelectedThreeByOneConceptId}>
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent className="max-h-80 overflow-y-auto">
+                              {THREE_BY_ONE_CONCEPTS.map((concept) => (
+                                <SelectItem key={`trips-${concept.id}`} value={concept.id}>
+                                  {concept.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )
+                    ) : null}
+                    {passConceptViewMode === "study" ? (
+                      <>
+                        {passConceptDefinition.cards.map((card) => (
+                          <div key={`${card.label}-${card.name}`} className="rounded-xl border bg-slate-50 p-3">
+                            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{card.label}</div>
+                            <div className="mt-1 text-lg font-semibold text-slate-900">{card.name}</div>
+                            {card.assignments.length ? (
+                              <div className="mt-2 space-y-1 text-sm text-slate-700">
+                                {card.assignments.map((assignment) => (
+                                  <div key={`${card.name}-${assignment.player}`}>
+                                    <span className="font-semibold">{assignment.player} {assignment.roleLabel}:</span> {assignment.route}
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="mt-2 text-sm text-slate-700">No tagged route on this side for the base board.</div>
+                            )}
+                            {card.detail ? (
+                              <div className="mt-2 text-xs text-slate-500">{card.detail}</div>
+                            ) : null}
+                          </div>
+                        ))}
+                        <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
+                          This is the base concept-board model we can now build future pass concepts off of.
+                        </div>
+                        <Button variant="outline" className="rounded-xl" onClick={nextCall}>
+                          <Shuffle className="mr-2 h-4 w-4" />
+                          Random Concept
+                        </Button>
+                      </>
+                    ) : (
+                      <>
+                        {passConceptQuizMode === "build" ? (
+                          passConceptDefinition.cards.map((card) => (
+                            <div key={`quiz-${card.label}-${card.name}`} className="rounded-xl border bg-slate-50 p-3">
+                              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{card.label}</div>
+                              <div className="mt-1 text-lg font-semibold text-slate-900">{card.name}</div>
+                              <div className="mt-2 text-sm text-slate-700">
+                                {card.assignments.length
+                                  ? `Assign the correct route to ${card.assignments.map((assignment) => assignment.player).join(", ")}.`
+                                  : "No quiz answer needed on this side for this board."}
+                              </div>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="rounded-xl border bg-slate-50 p-3">
+                            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Identify the Concept</div>
+                            <div className="mt-2 text-sm text-slate-700">
+                              Use the field routes to identify the concept name. Only the answer dropdown is shown in this mode.
+                            </div>
+                          </div>
+                        )}
+                        {passConceptQuizMode === "build" ? (
+                          passConceptDefinition.activePlayers.map((playerId) => (
+                            <div key={playerId}>
+                              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">{playerId} Route</div>
+                              <Select
+                                value={passConceptAnswers[playerId]}
+                                onValueChange={(value) => setPassConceptAnswers((prev) => ({ ...prev, [playerId]: value }))}
+                              >
+                                <SelectTrigger>
+                                  <SelectValue placeholder="Choose route" />
+                                </SelectTrigger>
+                                <SelectContent className="max-h-80 overflow-y-auto">
+                                  {[...PASS_CONCEPT_ROUTE_OPTIONS].sort((a, b) => a.localeCompare(b)).map((route) => (
+                                    <SelectItem key={`${playerId}-${route}`} value={route}>
+                                      {route}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          ))
+                        ) : (
+                          passConceptDefinition.boardKind === "2x2" ? (
+                            <>
+                              <div>
+                                <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Frontside Concept</div>
+                                <Select value={passConceptFrontsideNameAnswer} onValueChange={setPassConceptFrontsideNameAnswer}>
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Choose frontside concept" />
+                                  </SelectTrigger>
+                                  <SelectContent className="max-h-80 overflow-y-auto">
+                                    {availablePassConceptNames.map((conceptName) => (
+                                      <SelectItem key={`identify-front-${conceptName}`} value={conceptName}>
+                                        {conceptName}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div>
+                                <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Backside Concept</div>
+                                <Select value={passConceptBacksideNameAnswer} onValueChange={setPassConceptBacksideNameAnswer}>
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Choose backside concept" />
+                                  </SelectTrigger>
+                                  <SelectContent className="max-h-80 overflow-y-auto">
+                                    {availablePassConceptNames.map((conceptName) => (
+                                      <SelectItem key={`identify-back-${conceptName}`} value={conceptName}>
+                                        {conceptName}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            </>
+                          ) : (
+                            <div>
+                              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Concept Name</div>
+                              <Select value={passConceptNameAnswer} onValueChange={setPassConceptNameAnswer}>
+                                <SelectTrigger>
+                                  <SelectValue placeholder="Choose concept" />
+                                </SelectTrigger>
+                                <SelectContent className="max-h-80 overflow-y-auto">
+                                  {availablePassConceptNames.map((conceptName) => (
+                                    <SelectItem key={conceptName} value={conceptName}>
+                                      {conceptName}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          )
+                        )}
+                        <div className="grid gap-2">
+                          <Button variant="outline" className="rounded-xl w-full" onClick={nextCall}>
+                            <Shuffle className="mr-2 h-4 w-4" />
+                            Random Concept
+                          </Button>
+                          <Button className="rounded-xl w-full" onClick={() => setShowPassConceptFeedback(true)}>
+                            Check Answers
+                          </Button>
+                          <Button
+                            variant="outline"
+                            className="rounded-xl w-full"
+                            onClick={() => {
+                              setShowPassConceptAnswers(true);
+                              setShowPassConceptFeedback(true);
+                            }}
+                          >
+                            Show Answers
+                          </Button>
+                        </div>
+                        {showPassConceptAnswers ? (
+                          <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                            {passConceptQuizMode === "build" ? (
+                              passConceptDefinition.activePlayers.map((playerId) => (
+                                <div key={`answer-${playerId}`}>
+                                  <span className="font-semibold">{playerId}:</span> {passConceptDefinition.routes[playerId]}
+                                </div>
+                              ))
+                            ) : (
+                              passConceptDefinition.boardKind === "2x2" ? (
+                                <>
+                                  <div><span className="font-semibold">Frontside:</span> {passConceptDefinition.frontsideConceptName}</div>
+                                  <div><span className="font-semibold">Backside:</span> {passConceptDefinition.backsideConceptName}</div>
+                                </>
+                              ) : (
+                                <div><span className="font-semibold">Concept:</span> {passConceptDefinition.conceptName}</div>
+                              )
+                            )}
+                          </div>
+                        ) : null}
+                        {showPassConceptFeedback ? (
+                          <>
+                            {passConceptQuizMode === "build" ? (
+                              <>
+                                <div className="text-sm font-semibold text-slate-700">Score: {passConceptScore} / {passConceptDefinition.activePlayers.length}</div>
+                                {lastScoreSummary.concept ? (
+                                  <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
+                                    <span className="font-semibold">Points earned:</span> {lastScoreSummary.concept.awarded}
+                                    <div>
+                                      <span className="font-semibold">Pass Concept total:</span> {lastScoreSummary.concept.total}
+                                    </div>
+                                  </div>
+                                ) : null}
+                                <div className="space-y-2 text-sm">
+                                  {passConceptDefinition.activePlayers.map((playerId) => (
+                                    <div key={`result-${playerId}`} className="flex items-center justify-between rounded-lg border p-3">
+                                      <span>{playerId} Route</span>
+                                      {passConceptResult[playerId] ? (
+                                        <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                                      ) : (
+                                        <XCircle className="h-4 w-4 text-red-600" />
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              </>
+                            ) : (
+                              <>
+                                <div className="text-sm font-semibold text-slate-700">Score: {passConceptIdentifyScore} / {passConceptIdentifyQuestionCount}</div>
+                                {lastScoreSummary.concept ? (
+                                  <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
+                                    <span className="font-semibold">Points earned:</span> {lastScoreSummary.concept.awarded}
+                                    <div>
+                                      <span className="font-semibold">Pass Concept total:</span> {lastScoreSummary.concept.total}
+                                    </div>
+                                  </div>
+                                ) : null}
+                                <div className="space-y-2 text-sm">
+                                  {passConceptDefinition.boardKind === "2x2" ? (
+                                    <>
+                                      <div className="flex items-center justify-between rounded-lg border p-3">
+                                        <span>Frontside Concept</span>
+                                        {passConceptFrontsideNameResult ? (
+                                          <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                                        ) : (
+                                          <XCircle className="h-4 w-4 text-red-600" />
+                                        )}
+                                      </div>
+                                      <div className="flex items-center justify-between rounded-lg border p-3">
+                                        <span>Backside Concept</span>
+                                        {passConceptBacksideNameResult ? (
+                                          <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                                        ) : (
+                                          <XCircle className="h-4 w-4 text-red-600" />
+                                        )}
+                                      </div>
+                                    </>
+                                  ) : (
+                                    <div className="flex items-center justify-between rounded-lg border p-3">
+                                      <span>Concept Name</span>
+                                      {passConceptNameResult ? (
+                                        <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                                      ) : (
+                                        <XCircle className="h-4 w-4 text-red-600" />
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              </>
+                            )}
+                          </>
+                        ) : (
+                          <div className="rounded-xl border border-dashed p-3 text-sm text-slate-500">
+                            {passConceptQuizMode === "build"
+                              ? <>Choose a route for each active eligible, then press <span className="font-semibold">Check Answers</span>.</>
+                              : <>Study the routes on the field, choose the concept name, then press <span className="font-semibold">Check Answers</span>.</>}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
                 </div>
               </div>
             ) : mode === "film" ? (
@@ -4638,6 +6407,25 @@ const existingStats =
 
                       {showFilmAdminTools ? (
                         <>
+                          <div className="flex justify-end gap-2">
+                            <Button
+                              variant={filmAdminPanelMode === "upload" ? "default" : "outline"}
+                              className="rounded-xl"
+                              onClick={() => setFilmAdminPanelMode("upload")}
+                            >
+                              Upload
+                            </Button>
+                            <Button
+                              variant={filmAdminPanelMode === "edit" ? "default" : "outline"}
+                              className="rounded-xl"
+                              onClick={() => setFilmAdminPanelMode("edit")}
+                              disabled={!selectedFilmClip}
+                            >
+                              Edit
+                            </Button>
+                          </div>
+
+                          {filmAdminPanelMode === "upload" ? (
                           <div className="space-y-3 rounded-2xl border bg-white p-4 text-sm text-slate-600">
                             <div className="text-sm font-semibold text-slate-900">Add Study Clip</div>
                             <div className="grid gap-3">
@@ -4665,11 +6453,19 @@ const existingStats =
                                   </div>
                                 <div>
                                   <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Team Tag</div>
-                                  <Input
-                                    value={filmDraft.teamTag}
-                                    placeholder="Optional team name"
-                                    onChange={(e) => setFilmDraft((prev) => ({ ...prev, teamTag: e.target.value }))}
-                                  />
+                                  <Select value={filmDraft.teamTag || "__none"} onValueChange={(value) => setFilmDraft((prev) => ({ ...prev, teamTag: value === "__none" ? "" : value }))}>
+                                    <SelectTrigger>
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent className="max-h-80 overflow-y-auto">
+                                      <SelectItem value="__none">No Team Tag</SelectItem>
+                                      {filmTeamTagSelectOptions.map((teamTag) => (
+                                        <SelectItem key={`film-team-upload-${teamTag}`} value={teamTag}>
+                                          {teamTag}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
                                 </div>
                                 <div>
                                   <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Run / Pass</div>
@@ -4920,7 +6716,9 @@ const existingStats =
                                   className={
                                     filmSaveNotice.tone === "success"
                                       ? "rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900"
-                                      : "rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900"
+                                      : filmSaveNotice.tone === "warning"
+                                        ? "rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"
+                                        : "rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900"
                                   }
                                 >
                                   {filmSaveNotice.message}
@@ -4928,11 +6726,15 @@ const existingStats =
                                     className={
                                       filmSaveNotice.tone === "success"
                                         ? "mt-1 text-xs text-emerald-700"
-                                        : "mt-1 text-xs text-rose-700"
+                                        : filmSaveNotice.tone === "warning"
+                                          ? "mt-1 text-xs text-amber-700"
+                                          : "mt-1 text-xs text-rose-700"
                                     }
                                   >
                                     {filmSaveNotice.tone === "success"
                                       ? "The upload form has been reset and is ready for the next clip."
+                                      : filmSaveNotice.tone === "warning"
+                                        ? "Nothing has been saved yet. Save again only if this is truly a new rep."
                                       : "Nothing was saved, so the current metadata and files are still in place."}
                                   </div>
                                 </div>
@@ -4942,8 +6744,7 @@ const existingStats =
                               </div>
                             </div>
                           </div>
-
-                          {selectedFilmClip ? (
+                          ) : selectedFilmClip ? (
                             <div className="space-y-3 rounded-2xl border bg-white p-4 text-sm text-slate-600">
                               <div className="text-sm font-semibold text-slate-900">Edit Clip Metadata</div>
                               <div className="grid gap-3">
@@ -4971,11 +6772,19 @@ const existingStats =
                                   </div>
                                   <div>
                                     <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Team Tag</div>
-                                    <Input
-                                      value={filmEditDraft.teamTag ?? ""}
-                                      placeholder="Optional team name"
-                                      onChange={(e) => setFilmEditDraft((prev) => ({ ...prev, teamTag: e.target.value }))}
-                                    />
+                                    <Select value={filmEditDraft.teamTag || "__none"} onValueChange={(value) => setFilmEditDraft((prev) => ({ ...prev, teamTag: value === "__none" ? "" : value }))}>
+                                      <SelectTrigger>
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent className="max-h-80 overflow-y-auto">
+                                        <SelectItem value="__none">No Team Tag</SelectItem>
+                                        {filmTeamTagSelectOptions.map((teamTag) => (
+                                          <SelectItem key={`film-team-edit-${teamTag}`} value={teamTag}>
+                                            {teamTag}
+                                          </SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
                                   </div>
                                   <div>
                                     <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Run / Pass</div>
@@ -5023,11 +6832,12 @@ const existingStats =
                                 {filmEditDraft.runPass === "pass" ? (
                                   <div>
                                     <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Pass Type</div>
-                                    <Select value={filmEditDraft.passType} onValueChange={(value: Exclude<FilmPassType, "">) => setFilmEditDraft((prev) => ({ ...prev, passType: value }))}>
+                                    <Select value={filmEditDraft.passType || "__none"} onValueChange={(value) => setFilmEditDraft((prev) => ({ ...prev, passType: value === "__none" ? "" : value as Exclude<FilmPassType, ""> }))}>
                                       <SelectTrigger>
                                         <SelectValue />
                                       </SelectTrigger>
                                       <SelectContent className="max-h-80 overflow-y-auto">
+                                        <SelectItem value="__none">Unspecified</SelectItem>
                                         <SelectItem value="normal">Normal</SelectItem>
                                         <SelectItem value="screen">Screen</SelectItem>
                                         <SelectItem value="play_action">Play Action</SelectItem>
@@ -5043,10 +6853,10 @@ const existingStats =
                                   <>
                                     <div>
                                       <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Run Scheme</div>
-                                      <Select value={filmEditDraft.runScheme} onValueChange={(value: Exclude<FilmRunScheme, "">) => setFilmEditDraft((prev) => ({
+                                      <Select value={filmEditDraft.runScheme || "__none"} onValueChange={(value) => setFilmEditDraft((prev) => ({
                                         ...prev,
-                                        runScheme: value,
-                                        zoneType: value === "zone" ? prev.zoneType || "normal" : "",
+                                        runScheme: value === "__none" ? "" : value as Exclude<FilmRunScheme, "">,
+                                        zoneType: value === "zone" ? prev.zoneType : "",
                                         gapPullerCount: value === "gap" ? prev.gapPullerCount : "",
                                         gapOnePullerConcept: value === "gap" ? prev.gapOnePullerConcept : "",
                                         gapTwoPullerConcept: value === "gap" ? prev.gapTwoPullerConcept : "",
@@ -5056,6 +6866,7 @@ const existingStats =
                                           <SelectValue />
                                         </SelectTrigger>
                                         <SelectContent className="max-h-80 overflow-y-auto">
+                                          <SelectItem value="__none">Unspecified</SelectItem>
                                           {FILM_RUN_SCHEME_OPTIONS.map((option) => (
                                             <SelectItem key={option} value={option}>
                                               {option.charAt(0).toUpperCase() + option.slice(1)}
@@ -5067,11 +6878,12 @@ const existingStats =
                                     {filmEditDraft.runScheme === "zone" ? (
                                       <div>
                                         <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Zone Type</div>
-                                        <Select value={filmEditDraft.zoneType} onValueChange={(value: Exclude<FilmZoneType, "">) => setFilmEditDraft((prev) => ({ ...prev, zoneType: value }))}>
+                                        <Select value={filmEditDraft.zoneType || "__none"} onValueChange={(value) => setFilmEditDraft((prev) => ({ ...prev, zoneType: value === "__none" ? "" : value as Exclude<FilmZoneType, ""> }))}>
                                           <SelectTrigger>
                                             <SelectValue />
                                           </SelectTrigger>
                                           <SelectContent className="max-h-80 overflow-y-auto">
+                                            <SelectItem value="__none">Unspecified</SelectItem>
                                             <SelectItem value="normal">Normal</SelectItem>
                                             <SelectItem value="split">Split</SelectItem>
                                             <SelectItem value="jet">Jet Sweep</SelectItem>
@@ -5083,9 +6895,9 @@ const existingStats =
                                       <>
                                         <div>
                                           <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Puller Count</div>
-                                          <Select value={filmEditDraft.gapPullerCount} onValueChange={(value: Exclude<FilmGapPullerCount, "">) => setFilmEditDraft((prev) => ({
+                                          <Select value={filmEditDraft.gapPullerCount || "__none"} onValueChange={(value) => setFilmEditDraft((prev) => ({
                                             ...prev,
-                                            gapPullerCount: value,
+                                            gapPullerCount: value === "__none" ? "" : value as Exclude<FilmGapPullerCount, "">,
                                             gapOnePullerConcept: value === "1" ? prev.gapOnePullerConcept : "",
                                             gapTwoPullerConcept: value === "2" ? prev.gapTwoPullerConcept : "",
                                           }))}>
@@ -5093,6 +6905,7 @@ const existingStats =
                                               <SelectValue />
                                             </SelectTrigger>
                                             <SelectContent className="max-h-80 overflow-y-auto">
+                                              <SelectItem value="__none">Unspecified</SelectItem>
                                               {FILM_GAP_PULLER_COUNT_OPTIONS.map((option) => (
                                                 <SelectItem key={option} value={option}>
                                                   {option}
@@ -5104,11 +6917,12 @@ const existingStats =
                                         {filmEditDraft.gapPullerCount === "1" ? (
                                           <div>
                                             <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">One Puller Concept</div>
-                                            <Select value={filmEditDraft.gapOnePullerConcept} onValueChange={(value: Exclude<FilmGapOnePullerConcept, "">) => setFilmEditDraft((prev) => ({ ...prev, gapOnePullerConcept: value }))}>
+                                            <Select value={filmEditDraft.gapOnePullerConcept || "__none"} onValueChange={(value) => setFilmEditDraft((prev) => ({ ...prev, gapOnePullerConcept: value === "__none" ? "" : value as Exclude<FilmGapOnePullerConcept, ""> }))}>
                                               <SelectTrigger>
                                                 <SelectValue />
                                               </SelectTrigger>
                                               <SelectContent className="max-h-80 overflow-y-auto">
+                                                <SelectItem value="__none">Unspecified</SelectItem>
                                                 {FILM_GAP_ONE_PULLER_CONCEPT_OPTIONS.map((option) => (
                                                   <SelectItem key={option} value={option}>
                                                     {option}
@@ -5121,11 +6935,12 @@ const existingStats =
                                         {filmEditDraft.gapPullerCount === "2" ? (
                                           <div>
                                             <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Two Puller Concept</div>
-                                            <Select value={filmEditDraft.gapTwoPullerConcept} onValueChange={(value: Exclude<FilmGapTwoPullerConcept, "">) => setFilmEditDraft((prev) => ({ ...prev, gapTwoPullerConcept: value }))}>
+                                            <Select value={filmEditDraft.gapTwoPullerConcept || "__none"} onValueChange={(value) => setFilmEditDraft((prev) => ({ ...prev, gapTwoPullerConcept: value === "__none" ? "" : value as Exclude<FilmGapTwoPullerConcept, ""> }))}>
                                               <SelectTrigger>
                                                 <SelectValue />
                                               </SelectTrigger>
                                               <SelectContent className="max-h-80 overflow-y-auto">
+                                                <SelectItem value="__none">Unspecified</SelectItem>
                                                 {FILM_GAP_TWO_PULLER_CONCEPT_OPTIONS.map((option) => (
                                                   <SelectItem key={option} value={option}>
                                                     {option}
@@ -5140,11 +6955,12 @@ const existingStats =
                                     {filmEditDraft.runScheme === "man" ? (
                                       <div>
                                         <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Man Concept</div>
-                                        <Select value={filmEditDraft.manConcept} onValueChange={(value: Exclude<FilmManConcept, "">) => setFilmEditDraft((prev) => ({ ...prev, manConcept: value }))}>
+                                        <Select value={filmEditDraft.manConcept || "__none"} onValueChange={(value) => setFilmEditDraft((prev) => ({ ...prev, manConcept: value === "__none" ? "" : value as Exclude<FilmManConcept, ""> }))}>
                                           <SelectTrigger>
                                             <SelectValue />
                                           </SelectTrigger>
                                           <SelectContent className="max-h-80 overflow-y-auto">
+                                            <SelectItem value="__none">Unspecified</SelectItem>
                                             {FILM_MAN_CONCEPT_OPTIONS.map((option) => (
                                               <SelectItem key={option} value={option}>
                                                 {option}
@@ -5209,7 +7025,11 @@ const existingStats =
                                 </Button>
                               </div>
                             </div>
-                          ) : null}
+                          ) : (
+                            <div className="rounded-2xl border bg-white p-4 text-sm text-slate-500">
+                              Select a clip to edit its metadata.
+                            </div>
+                          )}
                         </>
                       ) : null}
                     </div>
@@ -5236,6 +7056,10 @@ const existingStats =
 
                 <div className="space-y-4">
                   <div className="space-y-3 rounded-2xl border bg-white p-4 text-sm text-slate-600">
+                    <Button variant="outline" className="rounded-xl" onClick={nextCall}>
+                      <Shuffle className="mr-2 h-4 w-4" />
+                      Random Clip
+                    </Button>
                     {filmViewMode === "study" ? (
                       <>
                         {filmSubmode === "formation_key" ? (
@@ -5845,6 +7669,10 @@ const existingStats =
                   </div>
                 </div>
                 <div className="space-y-3 rounded-2xl border bg-white p-4">
+                  <Button variant="outline" className="h-12 w-full rounded-xl text-base" onClick={nextCall}>
+                    <Shuffle className="mr-2 h-4 w-4" />
+                    Randomize
+                  </Button>
                   <Button className="h-12 w-full rounded-xl text-base" onClick={submitQuiz}>
                     Check Answers
                   </Button>
@@ -5938,6 +7766,10 @@ const existingStats =
                 <div className="space-y-4">
                   {alignmentViewMode === "quiz" ? (
                     <>
+                      <Button variant="outline" className="rounded-xl w-full" onClick={nextCall}>
+                        <Shuffle className="mr-2 h-4 w-4" />
+                        Randomize
+                      </Button>
                       <TokenTray title="Defender Tray" ids={remainingDefenders as unknown as string[]} onAdd={addDefender} />
                       <div className="space-y-3 rounded-2xl border bg-white p-4 text-sm text-slate-600">
                         <div>Drag defenders to the defensive landmarks. Front: {frontMode}</div>
@@ -5967,6 +7799,10 @@ const existingStats =
                     </>
                   ) : (
                     <div className="space-y-3 rounded-2xl border bg-white p-4 text-sm text-slate-600">
+                      <Button className="rounded-xl" onClick={nextCall}>
+                        <Shuffle className="mr-2 h-4 w-4" />
+                        Randomize
+                      </Button>
                       <div>
                         <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Formation</div>
                         <Select
@@ -6148,6 +7984,10 @@ const existingStats =
                 <div className="space-y-4">
                   {offenseBuildViewMode === "quiz" ? (
                     <>
+                      <Button variant="outline" className="rounded-xl w-full" onClick={nextCall}>
+                        <Shuffle className="mr-2 h-4 w-4" />
+                        Randomize
+                      </Button>
                       <TokenTray title="Offense Tray" ids={remainingOffense as unknown as string[]} onAdd={addOffense} />
                       <div className="space-y-3 rounded-2xl border bg-white p-4 text-sm text-slate-600">
                         <div>Drag offensive pieces to the shared landmark grid.</div>
@@ -6177,6 +8017,10 @@ const existingStats =
                     </>
                   ) : (
                     <div className="space-y-3 rounded-2xl border bg-white p-4 text-sm text-slate-600">
+                      <Button className="rounded-xl" onClick={nextCall}>
+                        <Shuffle className="mr-2 h-4 w-4" />
+                        Randomize
+                      </Button>
                       <div>
                         <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Formation</div>
                         <Select

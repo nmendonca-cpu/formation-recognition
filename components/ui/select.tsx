@@ -17,7 +17,7 @@ const SelectTrigger = React.forwardRef<
   <RadixSelect.Trigger
     ref={ref}
     className={cn(
-      "flex h-10 w-full items-center justify-between rounded-md border border-slate-300 bg-white px-3 py-2 text-sm ring-offset-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50",
+      "flex h-10 w-full items-center justify-between rounded-md border border-slate-950 bg-white px-3 py-2 text-sm ring-offset-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-700 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50",
       className,
     )}
     {...props}
@@ -38,7 +38,7 @@ const SelectContent = React.forwardRef<
     <RadixSelect.Content
       ref={ref}
       className={cn(
-        "relative z-50 min-w-[8rem] overflow-hidden rounded-md border bg-white text-slate-950 shadow-md",
+        "relative z-50 min-w-[8rem] overflow-hidden rounded-md border border-slate-950 bg-white text-slate-950 shadow-md",
         className,
       )}
       position={position}

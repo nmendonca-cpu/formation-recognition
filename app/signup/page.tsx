@@ -45,11 +45,21 @@ export default function SignupPage() {
       return;
     }
 
-    const { error: profileError } = await supabase.from("profiles").insert({
+    let { error: profileError } = await supabase.from("profiles").insert({
       id: data.user.id,
       display_name: cleanName,
       school: "Foothill",
+      email: cleanEmail,
     });
+
+    if (profileError?.code === "PGRST204" || profileError?.message?.includes("email")) {
+      const fallbackInsert = await supabase.from("profiles").insert({
+        id: data.user.id,
+        display_name: cleanName,
+        school: "Foothill",
+      });
+      profileError = fallbackInsert.error;
+    }
 
     if (profileError) {
       setMessage(profileError.message);

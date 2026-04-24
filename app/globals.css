@@ -3,9 +3,13 @@
 @tailwind utilities;
 
 html, body {
-  background: #f1f5f9;
+  background:
+    radial-gradient(circle at top left, rgba(59, 107, 81, 0.12), transparent 28%),
+    radial-gradient(circle at top right, rgba(200, 170, 92, 0.10), transparent 24%),
+    linear-gradient(180deg, #eef4ef 0%, #f4f3eb 48%, #eef3f7 100%);
 }
 
 body {
   color: #0f172a;
+  background-attachment: fixed;
 }
