@@ -9,7 +9,7 @@ import { CheckCircle2, Clock3, Shuffle, Trophy, User, XCircle } from "lucide-rea
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
-type AppMode = "study" | "alignment" | "offense_build" | "film" | "quiz" | "editor" | "account" | "leaderboard" | "concept";
+type AppMode = "study" | "alignment" | "offense_build" | "film" | "quiz" | "editor" | "account" | "leaderboard" | "concept" | "run_fit" | "blitz";
 type AppSection = "offense" | "defense" | "admin";
 type LeaderboardMode = "quiz" | "offense_build" | "alignment" | "film" | "concept";
 type LeaderboardSection = "offense" | "defense";
@@ -63,6 +63,104 @@ type RouteOverlay = {
   path: { x: number; y: number }[];
   labelX?: number;
   labelY?: number;
+  endCap?: "arrow" | "square" | "circle";
+  pathway?: {
+    defenderId: string;
+    pathwayId: BlitzPathwayId | RunFitPathwayId;
+    layer?: "pressure" | "coverage" | "dl";
+  };
+};
+
+type FieldTag = {
+  id: string;
+  label: string;
+  x: number;
+  y: number;
+  tone?: "default" | "gold" | "cyan" | "sky";
+};
+
+type RunFitEditorTool = "arrow" | "tag";
+type RunFitArrowColor = "gold" | "cyan" | "sky" | "white" | "red";
+type RunFitLineEnd = "square" | "circle" | "arrow";
+type RunFitPathwayId =
+  | "a_gap_fit"
+  | "b_gap_fit"
+  | "c_gap_fit"
+  | "d_gap_fit"
+  | "box_fit"
+  | "spill_fit"
+  | "under_box_fit"
+  | "over_box_fit"
+  | "under_spill_fit"
+  | "over_spill_fit";
+type RunFitSavedBoard = {
+  id: string;
+  title: string;
+  routeOverlays: RouteOverlay[];
+  fieldTags: FieldTag[];
+  baseBoardId?: BlitzBaseBoardId;
+};
+type BlitzBaseBoardId = "double" | "trey" | "quad" | "dog" | "trips" | "troop";
+type BlitzCallId =
+  | "newton"
+  | "panthers"
+  | "carolina"
+  | "fields"
+  | "bears"
+  | "chicago"
+  | "brees"
+  | "saints"
+  | "nola"
+  | "bradshaw"
+  | "steelers"
+  | "pitt"
+  | "carr"
+  | "raiders"
+  | "oakland"
+  | "allen"
+  | "bills"
+  | "buffalo"
+  | "brady"
+  | "patriots"
+  | "boston";
+type BlitzCallFamilyId = "newton" | "fields" | "brees" | "bradshaw" | "carr" | "allen" | "brady";
+type BlitzCallType = "last_name" | "team_name" | "location_name";
+type BlitzPathwayId =
+  | "a_gap_blitz"
+  | "weak_a_gap_blitz"
+  | "b_gap_blitz"
+  | "c_gap_blitz"
+  | "d_gap_blitz"
+  | "edge_pressure"
+  | "strong_edge_pressure"
+  | "weak_edge_pressure"
+  | "one_gap_slant_left"
+  | "one_gap_slant_right"
+  | "two_gap_slant_left"
+  | "two_gap_slant_right"
+  | "curl_flat"
+  | "weak_curl_flat"
+  | "wall_flat"
+  | "weak_wall_flat"
+  | "strong_hook"
+  | "weak_hook"
+  | "hole"
+  | "eyes"
+  | "strong_eyes"
+  | "weak_eyes"
+  | "vert_hook"
+  | "cb_flat"
+  | "quarter"
+  | "drop_hook"
+  | "drop_curl_flat"
+  | "mof"
+  | "deep_third_left"
+  | "deep_third_middle"
+  | "deep_third_right";
+type BlitzSavedBoard = RunFitSavedBoard & {
+  baseBoardId: BlitzBaseBoardId;
+  frontMode?: FrontMode;
+  callId?: BlitzCallId;
 };
 
 type YardReferenceLine = {
@@ -257,18 +355,246 @@ const MODE_OPTIONS: { value: AppMode; label: string; title: string; section: App
   { value: "concept", label: "Pass Concept", title: "PASS CONCEPT MODE", section: "offense" },
   { value: "alignment", label: "Alignment Mode", title: "DEFENSIVE ALIGNMENT", section: "defense" },
   { value: "film", label: "Film Mode", title: "FILM MODE", section: "defense" },
+  { value: "run_fit", label: "Run Fit", title: "RUN FIT MODE", section: "defense" },
+  { value: "blitz", label: "Blitz Mode", title: "BLITZ MODE", section: "defense" },
   { value: "editor", label: "Formation Editor", title: "FORMATION EDITOR", section: "admin" },
   { value: "account", label: "Account", title: "ACCOUNT", section: "admin", hiddenFromNav: true },
   { value: "leaderboard", label: "Leaderboard", title: "LEADERBOARD", section: "admin", hiddenFromNav: true },
 ];
 const VIEW_STATE_STORAGE_KEY = "formation-recognition-view-state";
 const FILM_CLIPS_STORAGE_KEY = "formation-recognition-film-clips";
+const RUN_FIT_BOARDS_STORAGE_KEY = "formation-recognition-run-fit-boards-v3";
+const BLITZ_BOARDS_STORAGE_KEY = "formation-recognition-blitz-boards-v1";
 const FILM_BUCKET = "film-clips";
 const AVATAR_BUCKET = "profile-pics";
 const FILM_RUN_SCHEME_OPTIONS: Exclude<FilmRunScheme, "">[] = ["gap", "zone", "man"];
 const FILM_ZONE_TYPE_OPTIONS: Exclude<FilmZoneType, "">[] = ["normal", "split", "jet"];
 const FILM_PASS_TYPE_OPTIONS: Exclude<FilmPassType, "">[] = ["normal", "screen", "play_action"];
 const FILM_GAP_PULLER_COUNT_OPTIONS: Exclude<FilmGapPullerCount, "">[] = ["1", "2"];
+const RUN_FIT_PATHWAY_OPTIONS: { value: RunFitPathwayId; label: string }[] = [
+  { value: "a_gap_fit", label: "A-Gap Fit" },
+  { value: "b_gap_fit", label: "B-Gap Fit" },
+  { value: "c_gap_fit", label: "C-Gap Fit" },
+  { value: "d_gap_fit", label: "D-Gap Fit" },
+  { value: "box_fit", label: "Box" },
+  { value: "spill_fit", label: "Spill" },
+  { value: "under_box_fit", label: "Under Box" },
+  { value: "over_box_fit", label: "Over Box" },
+  { value: "under_spill_fit", label: "Under Spill" },
+  { value: "over_spill_fit", label: "Over Spill" },
+];
+const BLITZ_BASE_BOARD_OPTIONS: { value: BlitzBaseBoardId; label: string; call: string }[] = [
+  { value: "double", label: "Double", call: "Doubles Right" },
+  { value: "trey", label: "Trey", call: "Trey Right" },
+  { value: "quad", label: "Quad", call: "Quad Right" },
+  { value: "dog", label: "Dog", call: "Dog Right" },
+  { value: "trips", label: "Trips", call: "Trips Right" },
+  { value: "troop", label: "Troop", call: "Troop Right" },
+];
+const BLITZ_BOARD_STRUCTURE: Record<BlitzBaseBoardId, "2x2" | "3x1"> = {
+  double: "2x2",
+  dog: "2x2",
+  quad: "2x2",
+  trey: "3x1",
+  trips: "3x1",
+  troop: "3x1",
+};
+const BLITZ_CALL_OPTIONS: { value: BlitzCallId; label: string; family: string; detail: string }[] = [
+  {
+    value: "newton",
+    label: "Newton",
+    family: "QB Name / 4 MPRS",
+    detail: "Nickel edge pressure with the opposite DE as the dropper family and Swap-style replacement rules.",
+  },
+  {
+    value: "panthers",
+    label: "Panthers",
+    family: "Team Name / 5 MPRS",
+    detail: "Newton family without the DE dropper. Nickel edge pressure with all four DL rushing.",
+  },
+  {
+    value: "carolina",
+    label: "Carolina",
+    family: "City Name / 6 MPRS",
+    detail: "Panthers plus the next inside linebacker inserted into the pressure.",
+  },
+  {
+    value: "fields",
+    label: "Fields",
+    family: "QB Name / 4 MPRS",
+    detail: "Mike field-side edge pressure with the opposite DE dropping to coverage.",
+  },
+  {
+    value: "bears",
+    label: "Bears",
+    family: "Team Name / 5 MPRS",
+    detail: "Fields family without the DE dropper. Mike edge pressure with all four DL rushing.",
+  },
+  {
+    value: "chicago",
+    label: "Chicago",
+    family: "City Name / 6 MPRS",
+    detail: "Bears plus the Will inserted into the pressure.",
+  },
+  {
+    value: "brees",
+    label: "Brees",
+    family: "QB Name / 4 MPRS",
+    detail: "Will boundary-side edge pressure with the opposite DE dropping to coverage.",
+  },
+  {
+    value: "saints",
+    label: "Saints",
+    family: "Team Name / 5 MPRS",
+    detail: "Brees family without the DE dropper. Will edge pressure with all four DL rushing.",
+  },
+  {
+    value: "nola",
+    label: "NOLA",
+    family: "City Name / 6 MPRS",
+    detail: "Saints plus the Mike inserted into the pressure.",
+  },
+  {
+    value: "bradshaw",
+    label: "Bradshaw",
+    family: "QB Name / 4 MPRS",
+    detail: "Backside safety boundary edge pressure with the opposite DE dropping to coverage.",
+  },
+  {
+    value: "steelers",
+    label: "Steelers",
+    family: "Team Name / 5 MPRS",
+    detail: "Bradshaw family without the DE dropper. Backside safety edge pressure with all four DL rushing.",
+  },
+  {
+    value: "pitt",
+    label: "Pitt",
+    family: "City Name / 6 MPRS",
+    detail: "Steelers plus the Will inserted into the pressure.",
+  },
+  {
+    value: "carr",
+    label: "Carr",
+    family: "QB Name / 4 MPRS",
+    detail: "Backside corner boundary edge pressure with the opposite DE dropping to coverage.",
+  },
+  {
+    value: "raiders",
+    label: "Raiders",
+    family: "Team Name / 5 MPRS",
+    detail: "Carr family without the DE dropper. Backside corner edge pressure with all four DL rushing.",
+  },
+  {
+    value: "oakland",
+    label: "Oakland",
+    family: "City Name / 6 MPRS",
+    detail: "Raiders plus the Mike inserted into the pressure.",
+  },
+  {
+    value: "allen",
+    label: "Allen",
+    family: "QB Name / 4 MPRS",
+    detail: "Mike A-gap/C-read pressure with the run-strength DE dropping to coverage.",
+  },
+  {
+    value: "bills",
+    label: "Bills",
+    family: "Team Name / 5 MPRS",
+    detail: "Allen family without the DE dropper. Mike A-gap pressure with all four DL rushing.",
+  },
+  {
+    value: "buffalo",
+    label: "Buffalo",
+    family: "City Name / 6 MPRS",
+    detail: "Bills plus the Will inserted into the opposite A-gap pressure.",
+  },
+  {
+    value: "brady",
+    label: "Brady",
+    family: "QB Name / 4 MPRS",
+    detail: "Will B-gap pressure with the opposite DE dropping to coverage.",
+  },
+  {
+    value: "patriots",
+    label: "Patriots",
+    family: "Team Name / 5 MPRS",
+    detail: "Brady family without the DE dropper. Will B-gap pressure with all four DL rushing.",
+  },
+  {
+    value: "boston",
+    label: "Boston",
+    family: "City Name / 6 MPRS",
+    detail: "Patriots plus the Mike inserted into the B-gap pressure.",
+  },
+];
+const BLITZ_CALL_FAMILY_OPTIONS: { value: BlitzCallFamilyId; label: string }[] = [
+  { value: "newton", label: "Newton" },
+  { value: "fields", label: "Fields" },
+  { value: "brees", label: "Brees" },
+  { value: "bradshaw", label: "Bradshaw" },
+  { value: "carr", label: "Carr" },
+  { value: "allen", label: "Allen" },
+  { value: "brady", label: "Brady" },
+];
+const BLITZ_CALL_TYPE_LABELS: Record<BlitzCallType, string> = {
+  last_name: "4 Man (QB)",
+  team_name: "5 Man (Team)",
+  location_name: "6 Man (Location)",
+};
+const BLITZ_CALL_MATRIX: Record<BlitzCallFamilyId, Record<BlitzCallType, BlitzCallId>> = {
+  newton: { last_name: "newton", team_name: "panthers", location_name: "carolina" },
+  fields: { last_name: "fields", team_name: "bears", location_name: "chicago" },
+  brees: { last_name: "brees", team_name: "saints", location_name: "nola" },
+  bradshaw: { last_name: "bradshaw", team_name: "steelers", location_name: "pitt" },
+  carr: { last_name: "carr", team_name: "raiders", location_name: "oakland" },
+  allen: { last_name: "allen", team_name: "bills", location_name: "buffalo" },
+  brady: { last_name: "brady", team_name: "patriots", location_name: "boston" },
+};
+const BLITZ_PATHWAY_OPTIONS: { value: BlitzPathwayId; label: string }[] = [
+  { value: "a_gap_blitz", label: "A-Gap Blitz" },
+  { value: "weak_a_gap_blitz", label: "Weak A-Gap Blitz" },
+  { value: "b_gap_blitz", label: "B-Gap Blitz" },
+  { value: "c_gap_blitz", label: "C-Gap Blitz" },
+  { value: "d_gap_blitz", label: "D-Gap Blitz" },
+  { value: "edge_pressure", label: "Edge Pressure" },
+  { value: "strong_edge_pressure", label: "Strong Edge Pressure" },
+  { value: "weak_edge_pressure", label: "Weak Edge Pressure" },
+  { value: "one_gap_slant_left", label: "1-Gap Slant Left" },
+  { value: "one_gap_slant_right", label: "1-Gap Slant Right" },
+  { value: "two_gap_slant_left", label: "2-Gap Slant Left" },
+  { value: "two_gap_slant_right", label: "2-Gap Slant Right" },
+  { value: "curl_flat", label: "Curl/Flat" },
+  { value: "weak_curl_flat", label: "Weak Curl/Flat" },
+  { value: "wall_flat", label: "Wall Flat" },
+  { value: "weak_wall_flat", label: "Weak Wall Flat" },
+  { value: "strong_hook", label: "Strong Hook" },
+  { value: "weak_hook", label: "Weak Hook" },
+  { value: "hole", label: "Hole" },
+  { value: "eyes", label: "Eyes" },
+  { value: "strong_eyes", label: "Strong Eyes" },
+  { value: "weak_eyes", label: "Weak Eyes" },
+  { value: "vert_hook", label: "Vert Hook" },
+  { value: "cb_flat", label: "CB Flat" },
+  { value: "quarter", label: "1/4" },
+  { value: "drop_hook", label: "DE Drop Hook" },
+  { value: "drop_curl_flat", label: "DE Drop C/F" },
+  { value: "mof", label: "MOF" },
+  { value: "deep_third_left", label: "1/3 Left" },
+  { value: "deep_third_middle", label: "1/3 Middle" },
+  { value: "deep_third_right", label: "1/3 Right" },
+];
+const getBlitzCallFamilyId = (callId: BlitzCallId): BlitzCallFamilyId => (
+  (Object.entries(BLITZ_CALL_MATRIX).find(([, calls]) => (
+    Object.values(calls).includes(callId)
+  ))?.[0] as BlitzCallFamilyId | undefined) ?? "newton"
+);
+const getBlitzCallType = (callId: BlitzCallId): BlitzCallType => (
+  (Object.values(BLITZ_CALL_MATRIX).flatMap((calls) => (
+    Object.entries(calls) as [BlitzCallType, BlitzCallId][]
+  )).find(([, candidateCallId]) => candidateCallId === callId)?.[0]) ?? "last_name"
+);
+const getBlitzCallId = (familyId: BlitzCallFamilyId, callType: BlitzCallType) => BLITZ_CALL_MATRIX[familyId][callType];
+const getBlitzCallLabel = (callId: BlitzCallId) => BLITZ_CALL_OPTIONS.find((option) => option.value === callId)?.label ?? "Blitz";
 const FILM_GAP_ONE_PULLER_CONCEPT_OPTIONS: Exclude<FilmGapOnePullerConcept, "">[] = ["Power", "Dart (Tackle Power)", "G Lead", "Trap", "Center Pull", "Pin N Pull"];
 const FILM_GAP_TWO_PULLER_CONCEPT_OPTIONS: Exclude<FilmGapTwoPullerConcept, "">[] = ["GT", "GY/GH", "CG/CT", "Buck Sweep"];
 const FILM_MAN_CONCEPT_OPTIONS: Exclude<FilmManConcept, "">[] = ["Duo", "Lead"];
@@ -566,6 +892,11 @@ function clamp(value: number, min: number, max: number) {
 
 function getLineXs(wide = false) {
   return wide ? ALIGNMENT_OLINE_X : TIGHT_OLINE_X;
+}
+
+function getFormationLineXs(formation: FormationMeta): number[] {
+  const fallback = ALIGNMENT_OLINE_X;
+  return FIXED_OL_IDS.map((id, index) => formation.players.find((player) => player.id === id)?.x ?? fallback[index]);
 }
 
 function baseLine(wide = false): PlayerDot[] {
@@ -1028,7 +1359,7 @@ function getAlignmentLandmarks(formation: FormationMeta): Landmark[] {
   const skill = offense.filter((p) => isEligibleSkillPlayer(p));
   const points: Landmark[] = [];
   const push = (id: string, x: number, y: number, label: string, layer: LandmarkLayer) => points.push({ id, x, y, label, layer });
-  const xs = ALIGNMENT_OLINE_X;
+  const xs = getFormationLineXs(formation);
 
   push("dl-left-5", xs[0] - 2.2, DL_Y, "5T", "dl");
   push("dl-left-4", xs[0], DL_Y, "4", "dl");
@@ -1465,7 +1796,8 @@ function getTightSurfaceSlotReceiver(formation: FormationMeta, side: Side) {
 }
 
 function getInlineSurface(formation: FormationMeta, side: Side) {
-  const tackleX = side === "left" ? ALIGNMENT_OLINE_X[0] : ALIGNMENT_OLINE_X[4];
+  const xs = getFormationLineXs(formation);
+  const tackleX = side === "left" ? xs[0] : xs[4];
   const players = findEligibleOnSide(formation, side)
     .filter((p) => Math.abs(p.y - LOS_Y) < 0.5 && Math.abs(p.x - tackleX) <= 10)
     .sort((a, b) => Math.abs(a.x - tackleX) - Math.abs(b.x - tackleX));
@@ -1473,7 +1805,8 @@ function getInlineSurface(formation: FormationMeta, side: Side) {
 }
 
 function getWingSurface(formation: FormationMeta, side: Side) {
-  const tackleX = side === "left" ? ALIGNMENT_OLINE_X[0] : ALIGNMENT_OLINE_X[4];
+  const xs = getFormationLineXs(formation);
+  const tackleX = side === "left" ? xs[0] : xs[4];
   const players = findEligibleOnSide(formation, side)
     .filter((p) => Math.abs(p.y - WING_Y) < 0.75 && Math.abs(p.x - tackleX) <= 10)
     .sort((a, b) => Math.abs(a.x - tackleX) - Math.abs(b.x - tackleX));
@@ -1487,7 +1820,8 @@ function getWingSurface(formation: FormationMeta, side: Side) {
 }
 
 function getBunchPlayers(formation: FormationMeta, side: Side) {
-  const tackleX = side === "left" ? ALIGNMENT_OLINE_X[0] : ALIGNMENT_OLINE_X[4];
+  const xs = getFormationLineXs(formation);
+  const tackleX = side === "left" ? xs[0] : xs[4];
   const attachedX = getAttached(side, true);
   const sidePlayers = findEligibleOnSide(formation, side)
     .sort((a, b) => {
@@ -1616,7 +1950,9 @@ function shouldMikeApexFlexedThree(formation: FormationMeta, mikeSide: Side) {
   const numberThree = getNumberThreeReceiver(formation, mikeSide);
   if (!numberThree) return false;
 
-  const isFlexed = !isWingLikePlayer(numberThree) && Math.abs(numberThree.x - (mikeSide === "left" ? ALIGNMENT_OLINE_X[0] : ALIGNMENT_OLINE_X[4])) > 8;
+  const xs = getFormationLineXs(formation);
+  const tackleX = mikeSide === "left" ? xs[0] : xs[4];
+  const isFlexed = !isWingLikePlayer(numberThree) && Math.abs(numberThree.x - tackleX) > 8;
   return isFlexed;
 }
 
@@ -1830,7 +2166,8 @@ function getAlignmentAnswerKey(formation: FormationMeta, landmarks: Landmark[], 
 
   const strongBunch = isBunchFamilyOnSide(formation, mikeSide) ? getBunchNumberedReceivers(formation, mikeSide) : null;
   const mikeNumberThree = getNumberThreeReceiver(formation, mikeSide);
-  const mikeTackleX = mikeSide === "left" ? ALIGNMENT_OLINE_X[0] : ALIGNMENT_OLINE_X[4];
+  const answerLineXs = getFormationLineXs(formation);
+  const mikeTackleX = mikeSide === "left" ? answerLineXs[0] : answerLineXs[4];
 
   const mikeStrengthEligibles = findTrueEligiblesOnSide(formation, mikeSide).length;
   const mikeLandmark = (() => {
@@ -2330,6 +2667,635 @@ function buildThreeByOnePassConceptPreview(
   };
 }
 
+function buildSingleHighRunFitMockup() {
+  const baseFormation = buildProFormation("I Dot Right", true);
+  const runFitSpreadX: Record<string, number> = {
+    X: 10,
+    LT: 34,
+    LG: 42,
+    C: 50,
+    RG: 58,
+    RT: 66,
+    Y: 74,
+    Z: 90,
+  };
+  const formation = {
+    ...baseFormation,
+    players: baseFormation.players.map((player) => ({
+      ...player,
+      x: runFitSpreadX[player.id] ?? player.x,
+    })),
+  };
+  const offensePlayers = formation.players.map((player) => {
+    if (player.id === "QB") return { ...player, y: 39 };
+    if (player.id === "RB") return { ...player, id: "R", y: 18 };
+    if (player.id === "F") return { ...player, id: "FB", x: 46, y: 28 };
+    return player;
+  });
+  const alignmentLandmarks = getAlignmentLandmarks(formation);
+  const answerKey = getAlignmentAnswerKey(formation, alignmentLandmarks, "4-4");
+  const ySurface = formation.players.find((player) => player.id === "Y");
+  const defenders = getDefensePlayersFromAnswerKey(answerKey).map((defender) => (
+    defender.id === "SDE" && ySurface
+      ? { ...defender, x: ySurface.x, y: DL_Y }
+      : defender
+  ));
+
+  const routeOverlays: RouteOverlay[] = [];
+  const fieldTags: FieldTag[] = [];
+
+  return {
+    title: "Single High vs Power Strong",
+    subtitle: "(11p) Power Strong teaching shell built from the Single High board style.",
+    offensePlayers,
+    defensePlayers: defenders,
+    routeOverlays,
+    fieldTags,
+    notes: [
+      {
+        title: "Why This Slide",
+        body: "This style translates best because the shell stays consistent and the board teaches with repeated fit pills instead of full paragraphs. It feels like your PowerPoint boards, just cleaner for the app.",
+      },
+      {
+        title: "Offensive Picture",
+        body: "I Dot Right gives us the clean power surface: backside guard pulls, fullback reads the puller and wraps if the edge spills, the RB tracks downhill into the front-side C-gap picture, and the backside tackle hinges.",
+      },
+      {
+        title: "Defensive Language",
+        body: "The short pills are the key: HK, C/F, SPILL, FORCE, DEEP 1/3, POST / SEAM, and BOOT / REVERSE. That is the right visual vocabulary for the mode because it mirrors how your teaching slides repeat the same shell and just change the assignment tags.",
+      },
+      {
+        title: "Implementation Path",
+        body: "The clean version of Run Fit Mode would build each rep from four layers: offensive shell, defensive shell, play arrows, and fit pills. Then quiz mode can ask who owns force, spill, hook, or cutback without redrawing the whole board every time.",
+      },
+    ],
+  };
+}
+
+function buildBlitzBoardShell(baseBoardId: BlitzBaseBoardId, frontMode: FrontMode = "4-4") {
+  const boardOption = BLITZ_BASE_BOARD_OPTIONS.find((option) => option.value === baseBoardId) ?? BLITZ_BASE_BOARD_OPTIONS[0];
+  const call = boardOption.call;
+  const formation = buildFoothillFormation(call, true);
+  const alignmentLandmarks = getAlignmentLandmarks(formation);
+  const answerKey = getAlignmentAnswerKey(formation, alignmentLandmarks, frontMode);
+  const ySurface = formation.players.find((player) => player.id === "Y");
+  const verticalShift = -14;
+  const blitzLosY = LOS_Y + verticalShift;
+  const blitzWingY = WING_Y + verticalShift;
+  const shiftY = (player: PlayerDot) => ({ ...player, y: clamp(player.y + verticalShift, 3, 97) });
+  const lineXs = getFormationLineXs(formation);
+  const yTackleX = ySurface ? (ySurface.x < 50 ? lineXs[0] : lineXs[4]) : null;
+  const yAttachedToSurface = Boolean(ySurface && yTackleX !== null && Math.abs(ySurface.y - LOS_Y) < 1.25 && Math.abs(ySurface.x - yTackleX) <= 8);
+  const defensePlayers = getDefensePlayersFromAnswerKey(answerKey).map((defender) => (
+    defender.id === "SDE" && ySurface && yAttachedToSurface
+      ? { ...defender, x: ySurface.x, y: DL_Y }
+      : defender
+  )).map(shiftY);
+
+  return {
+    id: baseBoardId,
+    title: `Newton ${frontMode} vs ${boardOption.label}`,
+    subtitle: `Default Newton ${frontMode} install board against ${boardOption.label}.`,
+    runStrength: formation.runStrength,
+    passStrength: formation.passStrength,
+    losY: blitzLosY,
+    wingY: blitzWingY,
+    offensePlayers: formation.players.map(shiftY),
+    defensePlayers,
+    routeOverlays: [] as RouteOverlay[],
+    fieldTags: [] as FieldTag[],
+  };
+}
+
+function getBlitzPathwayLabel(pathwayId: BlitzPathwayId) {
+  return BLITZ_PATHWAY_OPTIONS.find((option) => option.value === pathwayId)?.label ?? "Pathway";
+}
+
+function isCoverageBlitzPathway(pathwayId: BlitzPathwayId) {
+  return ["curl_flat", "weak_curl_flat", "wall_flat", "weak_wall_flat", "strong_hook", "weak_hook", "hole", "eyes", "strong_eyes", "weak_eyes", "vert_hook", "cb_flat", "quarter", "drop_hook", "drop_curl_flat", "mof", "deep_third_left", "deep_third_middle", "deep_third_right"].includes(pathwayId);
+}
+
+function isDeepCoverageBlitzPathway(pathwayId: BlitzPathwayId) {
+  return ["mof", "deep_third_left", "deep_third_middle", "deep_third_right", "quarter"].includes(pathwayId);
+}
+
+function getBlitzPathwayStroke(pathwayId: BlitzPathwayId, layer?: "pressure" | "coverage" | "dl") {
+  if (layer === "dl") return "#22d3ee";
+  if (isDeepCoverageBlitzPathway(pathwayId)) return "#a855f7";
+  if (isCoverageBlitzPathway(pathwayId)) return "#f4cf63";
+  return "#ef4444";
+}
+
+function getBlitzCoverageLabel(pathwayId: BlitzPathwayId) {
+  const labels: Partial<Record<BlitzPathwayId, string>> = {
+    curl_flat: "C/F",
+    weak_curl_flat: "C/F",
+    wall_flat: "Wall Flat",
+    weak_wall_flat: "Wall Flat",
+    strong_hook: "Str Hk",
+    weak_hook: "Wk Hk",
+    hole: "Hole",
+    eyes: "Eyes",
+    strong_eyes: "Eyes",
+    weak_eyes: "Eyes",
+    vert_hook: "Vert Hk",
+    cb_flat: "Flat",
+    quarter: "1/4",
+    drop_hook: "Drop Hk",
+    drop_curl_flat: "Drop C/F",
+    mof: "MOF",
+    deep_third_left: "1/3",
+    deep_third_middle: "1/3",
+    deep_third_right: "1/3",
+  };
+  return labels[pathwayId] ?? "";
+}
+
+function getBlitzGapTargetX(offensePlayers: PlayerDot[], gap: "A" | "B" | "C", side: Side) {
+  const byId = Object.fromEntries(offensePlayers.map((player) => [player.id, player])) as Record<string, PlayerDot | undefined>;
+  const leftTackle = byId.LT?.x ?? 34;
+  const leftGuard = byId.LG?.x ?? 42;
+  const center = byId.C?.x ?? 50;
+  const rightGuard = byId.RG?.x ?? 58;
+  const rightTackle = byId.RT?.x ?? 66;
+
+  if (gap === "A") return side === "left" ? getMidpoint(leftGuard, center) : getMidpoint(center, rightGuard);
+  if (gap === "B") return side === "left" ? getMidpoint(leftTackle, leftGuard) : getMidpoint(rightGuard, rightTackle);
+  return side === "left" ? leftTackle - 5 : rightTackle + 5;
+}
+
+function getBlitzEdgePressureTargetX(offensePlayers: PlayerDot[], side: Side, losY = LOS_Y, wingY = WING_Y) {
+  const awayFromCenter = side === "left" ? -1 : 1;
+  const byId = Object.fromEntries(offensePlayers.map((player) => [player.id, player])) as Record<string, PlayerDot | undefined>;
+  const tackleX = side === "left" ? byId.LT?.x ?? 34 : byId.RT?.x ?? 66;
+  const sidePlayers = offensePlayers.filter((player) => (
+    ![...FIXED_OL_IDS, "QB", "RB", "R", "F", "FB"].includes(player.id as any)
+    && (side === "left" ? player.x < 50 : player.x > 50)
+  ));
+  const linePlayers = sidePlayers.filter((player) => Math.abs(player.y - losY) < 1.25 && Math.abs(player.x - tackleX) <= 7);
+  const wingPlayers = sidePlayers.filter((player) => Math.abs(player.y - wingY) < 1.75 && Math.abs(player.x - tackleX) <= 14);
+  const detachedTe = sidePlayers
+    .filter((player) => ["Y", "U"].includes(player.id) && Math.abs(player.x - tackleX) > 7)
+    .sort((a, b) => side === "left" ? b.x - a.x : a.x - b.x)[0];
+  const emolos = linePlayers
+    .sort((a, b) => side === "left" ? a.x - b.x : b.x - a.x)[0];
+  const wingOutsideEmolos = emolos
+    ? wingPlayers
+        .filter((player) => side === "left" ? player.x < emolos.x : player.x > emolos.x)
+        .sort((a, b) => side === "left" ? a.x - b.x : b.x - a.x)[0]
+    : null;
+  const tightWingSurface = wingOutsideEmolos ?? wingPlayers
+    .sort((a, b) => side === "left" ? a.x - b.x : b.x - a.x)[0];
+
+  if (detachedTe) return clamp(detachedTe.x - awayFromCenter * 4, 3, 97);
+  if (tightWingSurface) return clamp(tightWingSurface.x + awayFromCenter * 4, 3, 97);
+  if (emolos) return clamp(emolos.x + awayFromCenter * 4, 3, 97);
+  return getBlitzGapTargetX(offensePlayers, "C", side);
+}
+
+function getBlitzOrderedEligibles(offensePlayers: PlayerDot[], side: Side) {
+  return offensePlayers
+    .filter((player) => ![...FIXED_OL_IDS, "QB"].includes(player.id as any))
+    .filter((player) => side === "left" ? player.x < 50 : player.x > 50)
+    .sort((a, b) => side === "left" ? a.x - b.x : b.x - a.x);
+}
+
+function getBlitzBackfieldEligible(offensePlayers: PlayerDot[], side: Side) {
+  return offensePlayers
+    .filter((player) => ["RB", "R", "F", "FB"].includes(player.id))
+    .filter((player) => side === "left" ? player.x < 50 : player.x > 50)
+    .sort((a, b) => Math.abs(a.x - 50) - Math.abs(b.x - 50))[0] ?? null;
+}
+
+function getBlitzEyesTargetX(offensePlayers: PlayerDot[], side: Side, passStrength: Side) {
+  const strongEligibles = getBlitzOrderedEligibles(offensePlayers, passStrength);
+  const weakSide: Side = passStrength === "left" ? "right" : "left";
+  const weakEligibles = getBlitzOrderedEligibles(offensePlayers, weakSide);
+  const isThreeByOne = strongEligibles.length >= 3 && weakEligibles.length <= 1;
+
+  if (!isThreeByOne) return getHash(side, true);
+
+  if (side === passStrength) {
+    const numberTwo = strongEligibles[1];
+    const numberThree = strongEligibles[2];
+    if (numberTwo && numberThree) return getMidpoint(numberTwo.x, numberThree.x);
+  }
+
+  const numberThree = strongEligibles[2];
+  const weakNumberTwo = weakEligibles[1] ?? getBlitzBackfieldEligible(offensePlayers, weakSide) ?? weakEligibles[0];
+  if (numberThree && weakNumberTwo) return getMidpoint(numberThree.x, weakNumberTwo.x);
+  return getHash(side, true);
+}
+
+function buildBlitzPathwayOverlay({
+  id,
+  defender,
+  offensePlayers,
+  pathwayId,
+  runStrength,
+  passStrength,
+  losY = LOS_Y,
+  wingY = WING_Y,
+  frontMode = "4-4",
+  layer,
+}: {
+  id?: string;
+  defender: PlayerDot;
+  offensePlayers: PlayerDot[];
+  pathwayId: BlitzPathwayId;
+  runStrength?: Side;
+  passStrength: Side;
+  losY?: number;
+  wingY?: number;
+  frontMode?: FrontMode;
+  layer?: "pressure" | "coverage" | "dl";
+}): RouteOverlay {
+  const side: Side = defender.x < 50 ? "left" : "right";
+  const passAway: Side = passStrength === "left" ? "right" : "left";
+  const runWeak: Side = (runStrength ?? passStrength) === "left" ? "right" : "left";
+  const stroke = getBlitzPathwayStroke(pathwayId, layer);
+  const slantDirection = pathwayId.endsWith("left") ? -1 : pathwayId.endsWith("right") ? 1 : side === "left" ? -1 : 1;
+  const makePressurePath = (targetX: number) => [
+    { x: defender.x, y: defender.y },
+    { x: getMidpoint(defender.x, targetX), y: getMidpoint(defender.y, losY) },
+    { x: targetX, y: losY - 4 },
+  ];
+  const makeEdgePressurePath = (edgeLaneXRaw: number, edgeSide: Side = side) => {
+    const awayFromCenter = edgeSide === "left" ? -1 : 1;
+    const edgeLaneX = clamp(edgeLaneXRaw, 3, 97);
+    const backfieldX = clamp(edgeLaneX - awayFromCenter * 10, 3, 97);
+    const backfieldY = losY - 15;
+    return [
+      { x: defender.x, y: defender.y },
+      { x: edgeLaneX, y: losY + 3 },
+      { x: backfieldX, y: backfieldY },
+    ];
+  };
+  const makeCoveragePath = (targetX: number, targetY: number) => [
+    { x: defender.x, y: defender.y },
+    { x: getMidpoint(defender.x, targetX), y: getMidpoint(defender.y, targetY) },
+    { x: targetX, y: targetY },
+  ];
+  const trimPathStartToCircleEdge = (rawPath: { x: number; y: number }[]) => {
+    if (rawPath.length < 2) return rawPath;
+    const [start, next, ...rest] = rawPath;
+    const dx = next.x - start.x;
+    const dy = next.y - start.y;
+    const distance = Math.hypot(dx, dy);
+    if (distance <= 0.1) return rawPath;
+    const circleRadius = 3.1;
+    const trimDistance = Math.min(circleRadius, distance - 0.1);
+    return [
+      {
+        x: start.x + (dx / distance) * trimDistance,
+        y: start.y + (dy / distance) * trimDistance,
+      },
+      next,
+      ...rest,
+    ];
+  };
+  const getCoverageLabelPoint = () => path[Math.max(0, Math.floor(path.length / 2))] ?? path[path.length - 1];
+
+  let path: { x: number; y: number }[];
+  let endCap: RunFitLineEnd = isCoverageBlitzPathway(pathwayId) && !isDeepCoverageBlitzPathway(pathwayId) ? "circle" : "arrow";
+
+  if (pathwayId === "a_gap_blitz" || pathwayId === "weak_a_gap_blitz") {
+    const gapSide = pathwayId === "weak_a_gap_blitz" ? runWeak : side;
+    path = makePressurePath(getBlitzGapTargetX(offensePlayers, "A", gapSide));
+  } else if (pathwayId === "b_gap_blitz") {
+    path = makePressurePath(getBlitzGapTargetX(offensePlayers, "B", side));
+  } else if (pathwayId === "c_gap_blitz") {
+    path = makePressurePath(getBlitzGapTargetX(offensePlayers, "C", side));
+  } else if (pathwayId === "d_gap_blitz") {
+    path = makePressurePath(getBlitzEdgePressureTargetX(offensePlayers, side, losY, wingY));
+  } else if (pathwayId === "edge_pressure" || pathwayId === "strong_edge_pressure" || pathwayId === "weak_edge_pressure") {
+    const edgeSide = pathwayId === "strong_edge_pressure" ? passStrength : pathwayId === "weak_edge_pressure" ? passAway : side;
+    path = makeEdgePressurePath(getBlitzEdgePressureTargetX(offensePlayers, edgeSide, losY, wingY), edgeSide);
+  } else if (pathwayId === "one_gap_slant_left" || pathwayId === "one_gap_slant_right") {
+    path = [
+      { x: defender.x, y: defender.y },
+      { x: clamp(defender.x + slantDirection * 6, 3, 97), y: losY - 3 },
+    ];
+  } else if (pathwayId === "two_gap_slant_left" || pathwayId === "two_gap_slant_right") {
+    path = [
+      { x: defender.x, y: defender.y },
+      { x: clamp(defender.x + slantDirection * 12, 3, 97), y: losY - 3 },
+    ];
+  } else if (pathwayId === "curl_flat" || pathwayId === "weak_curl_flat") {
+    const targetX = getHash(pathwayId === "weak_curl_flat" ? passAway : side, true);
+    const isSafety = ["FS", "BS"].includes(defender.id);
+    path = makeCoveragePath(targetX, isSafety && frontMode === "4-3" ? getMidpoint(defender.y, losY) : defender.y + 15);
+  } else if (pathwayId === "wall_flat" || pathwayId === "weak_wall_flat") {
+    path = makeCoveragePath(getHash(pathwayId === "weak_wall_flat" ? passAway : side, true), defender.y + 16);
+  } else if (pathwayId === "strong_hook" || pathwayId === "weak_hook") {
+    const hookSide = pathwayId === "strong_hook" ? passStrength : passAway;
+    const targetX = hookSide === "left" ? 42 : 58;
+    const isSafety = ["FS", "BS"].includes(defender.id);
+    path = makeCoveragePath(targetX, isSafety && frontMode === "4-3" ? getMidpoint(defender.y, losY) : defender.y + 14);
+  } else if (pathwayId === "hole") {
+    path = makeCoveragePath(50, defender.y + 14);
+  } else if (pathwayId === "eyes" || pathwayId === "strong_eyes" || pathwayId === "weak_eyes") {
+    const eyesSide = pathwayId === "strong_eyes" ? passStrength : pathwayId === "weak_eyes" ? passAway : side;
+    const targetX = getBlitzEyesTargetX(offensePlayers, eyesSide, passStrength);
+    path = makeCoveragePath(targetX, defender.y + 14);
+  } else if (pathwayId === "vert_hook") {
+    path = makeCoveragePath(side === "left" ? 43 : 57, defender.y + 17);
+  } else if (pathwayId === "cb_flat") {
+    path = makeCoveragePath(getHash(side, true), getMidpoint(defender.y, losY));
+  } else if (pathwayId === "quarter") {
+    path = makeCoveragePath(side === "left" ? 25 : 75, 88);
+  } else if (pathwayId === "drop_hook") {
+    const targetX = side === "left" ? 36 : 64;
+    path = [
+      { x: defender.x, y: defender.y },
+      { x: getMidpoint(defender.x, targetX), y: defender.y + 7 },
+      { x: targetX, y: defender.y + 15 },
+    ];
+  } else if (pathwayId === "drop_curl_flat") {
+    const targetX = getHash(side, true);
+    path = makeCoveragePath(targetX, defender.y + 13);
+  } else if (pathwayId === "mof") {
+    path = makeCoveragePath(50, 88);
+  } else if (pathwayId === "deep_third_left") {
+    path = makeCoveragePath(20, 88);
+  } else if (pathwayId === "deep_third_middle") {
+    path = makeCoveragePath(50, 88);
+  } else {
+    path = [
+      { x: defender.x, y: defender.y },
+      { x: getMidpoint(defender.x, 80), y: getMidpoint(defender.y, 88) },
+      { x: 80, y: 88 },
+    ];
+  }
+  path = trimPathStartToCircleEdge(path);
+
+  return {
+    id: id ?? `blitz-pathway-${pathwayId}-${defender.id}-${Date.now()}`,
+    label: getBlitzCoverageLabel(pathwayId),
+    color: stroke,
+    path,
+    labelX: getBlitzCoverageLabel(pathwayId) ? getCoverageLabelPoint().x : undefined,
+    labelY: getBlitzCoverageLabel(pathwayId) ? getCoverageLabelPoint().y - 2.5 : undefined,
+    endCap,
+    pathway: {
+      defenderId: defender.id,
+      pathwayId,
+      layer,
+    },
+  };
+}
+
+function getBlitzPathwayMetaFromOverlay(overlay: RouteOverlay) {
+  if (overlay.pathway) return overlay.pathway;
+  const parts = overlay.id.split("-");
+  if (parts[0] !== "blitz" || parts[1] !== "pathway") return null;
+  const maybeDefenderId = parts[parts.length - 2];
+  const maybePathwayId = parts.slice(2, -2).join("_") as BlitzPathwayId;
+  if (!BLITZ_PATHWAY_OPTIONS.some((option) => option.value === maybePathwayId)) return null;
+  return {
+    defenderId: maybeDefenderId,
+    pathwayId: maybePathwayId,
+    layer: undefined,
+  };
+}
+
+function getBlitzTemplateAssignments({
+  callId,
+  defensePlayers,
+  offensePlayers,
+  runStrength,
+  passStrength,
+  frontMode = "4-4",
+}: {
+  callId: BlitzCallId;
+  defensePlayers: PlayerDot[];
+  offensePlayers: PlayerDot[];
+  runStrength?: Side;
+  passStrength: Side;
+  frontMode?: FrontMode;
+}): { defenderId: string; pathwayId: BlitzPathwayId; layer?: "pressure" | "coverage" | "dl" }[] {
+  const assignments: { defenderId: string; pathwayId: BlitzPathwayId; layer?: "pressure" | "coverage" | "dl" }[] = [];
+  const usedDefenders = new Set<string>();
+  const defenderSide = (defenderId: string): Side => {
+    const defender = defensePlayers.find((player) => player.id === defenderId);
+    return defender && defender.x < 50 ? "left" : "right";
+  };
+  const oppositeEnd = (side: Side) => side === "left" ? "SDE" : "WDE";
+  const slantAway = (side: Side): BlitzPathwayId => side === "left" ? "one_gap_slant_right" : "one_gap_slant_left";
+  const add = (defenderId: string, pathwayId: BlitzPathwayId, layer?: "pressure" | "coverage" | "dl") => {
+    if (usedDefenders.has(defenderId)) return;
+    assignments.push({ defenderId, pathwayId, layer });
+    usedDefenders.add(defenderId);
+  };
+  const addCornerThirds = () => {
+    add("FC", defenderSide("FC") === "left" ? "deep_third_left" : "deep_third_right", "coverage");
+    add("BC", defenderSide("BC") === "left" ? "deep_third_left" : "deep_third_right", "coverage");
+  };
+  const addDlSlants = (pressureSide: Side, dropperId?: string) => {
+    const slantPathway = slantAway(pressureSide);
+    ["N", "T", "WDE", "SDE"].forEach((defenderId) => {
+      if (defenderId !== dropperId) add(defenderId, slantPathway, "dl");
+    });
+  };
+  const addEyesCoverage = () => {
+    const addFirstAvailable = (defenderIds: string[], pathwayId: BlitzPathwayId) => {
+      for (const defenderId of defenderIds) {
+        if (usedDefenders.has(defenderId)) continue;
+        add(defenderId, pathwayId, "coverage");
+        return;
+      }
+    };
+
+    add("FS", frontMode === "4-4" ? "mof" : "eyes", "coverage");
+    addFirstAvailable(["Ni", "M", "W", "BS"], "strong_eyes");
+    addFirstAvailable(["BS", "W", "M", "Ni"], frontMode === "4-4" ? "weak_eyes" : "mof");
+    addCornerThirds();
+  };
+  const addBaseCoverage = (coverage: "standard" | "fire" | "eyes" = "standard") => {
+    if (coverage === "fire") {
+      add("FS", frontMode === "4-4" ? "mof" : "hole", "coverage");
+      add("BS", frontMode === "4-4" ? "wall_flat" : "mof", "coverage");
+      add("M", "hole", "coverage");
+      add("W", "wall_flat", "coverage");
+      add("Ni", "wall_flat", "coverage");
+      addCornerThirds();
+      return;
+    }
+
+    if (coverage === "eyes") {
+      addEyesCoverage();
+      return;
+    }
+
+    add("FS", frontMode === "4-4" ? "mof" : "curl_flat", "coverage");
+    add("BS", frontMode === "4-4" ? "weak_hook" : "mof", "coverage");
+    add("M", "strong_hook", "coverage");
+    add("W", "weak_hook", "coverage");
+    add("Ni", "curl_flat", "coverage");
+    addCornerThirds();
+  };
+  const passAway: Side = passStrength === "left" ? "right" : "left";
+  const weakSideEligibleCount = offensePlayers.filter((player) => (
+    ![...FIXED_OL_IDS, "QB", "RB", "R", "F", "FB"].includes(player.id as any)
+    && (passAway === "left" ? player.x < 50 : player.x > 50)
+  )).length;
+  const getDropperPathway = (dropperId: string, pressureSide: Side): BlitzPathwayId => {
+    const dropperSide = pressureSide === "left" ? "right" : "left";
+    return passAway === dropperSide && weakSideEligibleCount <= 1 ? "drop_curl_flat" : "drop_hook";
+  };
+  const hasThreeWrSide = ["left", "right"].some((side) => getBlitzOrderedEligibles(offensePlayers, side as Side).length >= 3);
+  const addLastNameCoverage = (blitzerId: string, dropperId: string, pressureSide: Side) => {
+    const dropperPathway = getDropperPathway(dropperId, pressureSide);
+    const dropperHasCurlFlat = dropperPathway === "drop_curl_flat";
+
+    add(dropperId, dropperPathway, "coverage");
+    add("FS", frontMode === "4-4" ? "mof" : "curl_flat", "coverage");
+
+    if (blitzerId === "Ni") {
+      if (dropperHasCurlFlat) {
+        add("BS", "weak_hook", "coverage");
+        add("W", "strong_hook", "coverage");
+      } else {
+        add("M", "curl_flat", "coverage");
+        add("BS", "curl_flat", "coverage");
+        add("W", "strong_hook", "coverage");
+      }
+    } else if (blitzerId === "BS") {
+      add("Ni", "curl_flat", "coverage");
+      if (!dropperHasCurlFlat) add("W", "weak_curl_flat", "coverage");
+      add("M", dropperHasCurlFlat ? "strong_hook" : "weak_hook", "coverage");
+    } else if (blitzerId === "M") {
+      add("Ni", "curl_flat", "coverage");
+      add("BS", dropperHasCurlFlat ? "weak_hook" : "curl_flat", "coverage");
+      add("W", "strong_hook", "coverage");
+    } else if (blitzerId === "W") {
+      add("Ni", "curl_flat", "coverage");
+      add("BS", dropperHasCurlFlat ? "weak_hook" : "curl_flat", "coverage");
+      add("M", "weak_hook", "coverage");
+    } else {
+      add("Ni", "curl_flat", "coverage");
+      add("BS", "curl_flat", "coverage");
+      add("M", "strong_hook", "coverage");
+      add("W", "weak_hook", "coverage");
+    }
+
+    addCornerThirds();
+  };
+  const runQbNamePressure = (blitzerId: string, pressurePathway: BlitzPathwayId, forcedDropperId?: string) => {
+    const pressureSide = defenderSide(blitzerId);
+    const dropperId = forcedDropperId ?? oppositeEnd(pressureSide);
+    add(blitzerId, pressurePathway, "pressure");
+    addDlSlants(pressureSide, dropperId);
+    addLastNameCoverage(blitzerId, dropperId, pressureSide);
+  };
+  const runTeamNamePressure = (blitzerId: string, pressurePathway: BlitzPathwayId) => {
+    const pressureSide = defenderSide(blitzerId);
+    add(blitzerId, pressurePathway, "pressure");
+    addDlSlants(pressureSide);
+
+    add("FS", frontMode === "4-4" ? "mof" : "hole", "coverage");
+    if (blitzerId === "Ni") {
+      add("M", "wall_flat", "coverage");
+      add("BS", "wall_flat", "coverage");
+      add("W", "hole", "coverage");
+    } else if (blitzerId === "BS") {
+      add("Ni", "wall_flat", "coverage");
+      add("W", "weak_wall_flat", "coverage");
+      add("M", "hole", "coverage");
+    } else if (blitzerId === "M") {
+      add("Ni", "wall_flat", "coverage");
+      add("BS", "wall_flat", "coverage");
+      add("W", "hole", "coverage");
+    } else if (blitzerId === "W") {
+      add("Ni", "wall_flat", "coverage");
+      add("BS", "wall_flat", "coverage");
+      add("M", "hole", "coverage");
+    } else {
+      add("Ni", "wall_flat", "coverage");
+      add("BS", frontMode === "4-4" ? "wall_flat" : "mof", "coverage");
+      add("M", "hole", "coverage");
+      add("W", "wall_flat", "coverage");
+    }
+    addCornerThirds();
+  };
+  const runCityNamePressure = (blitzerId: string, pressurePathway: BlitzPathwayId, extraBlitzerId: string, extraPathway: BlitzPathwayId) => {
+    const pressureSide = defenderSide(blitzerId);
+    add(blitzerId, pressurePathway, "pressure");
+    add(extraBlitzerId, extraPathway, "pressure");
+    addDlSlants(pressureSide);
+    addBaseCoverage("eyes");
+  };
+
+  if (callId === "newton") runQbNamePressure("Ni", "edge_pressure");
+  if (callId === "panthers") runTeamNamePressure("Ni", "edge_pressure");
+  if (callId === "carolina" && hasThreeWrSide) runCityNamePressure("M", "edge_pressure", "W", "weak_a_gap_blitz");
+  else if (callId === "carolina") runCityNamePressure("Ni", "edge_pressure", "M", "weak_a_gap_blitz");
+  if (callId === "fields") runQbNamePressure("M", "edge_pressure");
+  if (callId === "bears") runTeamNamePressure("M", "edge_pressure");
+  if (callId === "chicago") runCityNamePressure("M", "edge_pressure", "W", "weak_a_gap_blitz");
+  if (callId === "brees") runQbNamePressure("W", "edge_pressure");
+  if (callId === "saints") runTeamNamePressure("W", "edge_pressure");
+  if (callId === "nola") runCityNamePressure("W", "edge_pressure", "M", "weak_a_gap_blitz");
+  if (callId === "bradshaw") runQbNamePressure("BS", "edge_pressure");
+  if (callId === "steelers") runTeamNamePressure("BS", "edge_pressure");
+  if (callId === "pitt") runCityNamePressure("BS", "edge_pressure", "W", "weak_a_gap_blitz");
+  if (callId === "carr") runQbNamePressure("BC", "edge_pressure");
+  if (callId === "raiders") runTeamNamePressure("BC", "edge_pressure");
+  if (callId === "oakland") runCityNamePressure("BC", "edge_pressure", "M", "weak_a_gap_blitz");
+  if (callId === "allen") runQbNamePressure("M", "a_gap_blitz", passStrength === "left" ? "WDE" : "SDE");
+  if (callId === "bills") runTeamNamePressure("M", "a_gap_blitz");
+  if (callId === "buffalo") runCityNamePressure("M", "a_gap_blitz", "W", "weak_a_gap_blitz");
+  if (callId === "brady") runQbNamePressure("W", "b_gap_blitz");
+  if (callId === "patriots") runTeamNamePressure("W", "b_gap_blitz");
+  if (callId === "boston") runCityNamePressure("W", "b_gap_blitz", "M", "b_gap_blitz");
+
+  return assignments;
+}
+
+function buildBlitzTemplateOverlays({
+  callId,
+  defensePlayers,
+  offensePlayers,
+  runStrength,
+  passStrength,
+  losY,
+  wingY,
+  frontMode = "4-4",
+}: {
+  callId: BlitzCallId;
+  defensePlayers: PlayerDot[];
+  offensePlayers: PlayerDot[];
+  runStrength?: Side;
+  passStrength: Side;
+  losY: number;
+  wingY: number;
+  frontMode?: FrontMode;
+}) {
+  return getBlitzTemplateAssignments({ callId, defensePlayers, offensePlayers, passStrength, frontMode }).flatMap((assignment) => {
+    const defender = defensePlayers.find((player) => player.id === assignment.defenderId);
+    if (!defender) return [];
+    return buildBlitzPathwayOverlay({
+      defender,
+      offensePlayers,
+      pathwayId: assignment.pathwayId,
+      runStrength,
+      passStrength,
+      losY,
+      wingY,
+      frontMode,
+      layer: assignment.layer,
+    });
+  });
+}
+
+function getRunFitArrowStroke(color: RunFitArrowColor) {
+  if (color === "gold") return "#f4cf63";
+  if (color === "cyan") return "#78dfd0";
+  if (color === "sky") return "#89c6ff";
+  if (color === "red") return "#ef4444";
+  return "#ffffff";
+}
+
 function Circle({ player, color = "bg-orange-600", text = "text-white", border = "border-white/30" }: {
   player: PlayerDot;
   color?: string;
@@ -2385,9 +3351,14 @@ function TrainingField({
   enhancedLandmarks = false,
   offensePlayers,
   routeOverlays = [],
+  routeOverlaysOnTop = false,
+  fieldTags = [],
+  onFieldClick,
+  onFieldDoubleClick,
   yardReferenceLines = [],
   yardReferenceScale = 1.6,
   subtleHashMarks = false,
+  wideFieldMarks = false,
   losReferenceY = LOS_Y,
   offenseLandmarks = [],
   defensePlayers = [],
@@ -2411,9 +3382,12 @@ function TrainingField({
   enhancedLandmarks?: boolean;
   offensePlayers: PlayerDot[];
   routeOverlays?: RouteOverlay[];
+  routeOverlaysOnTop?: boolean;
+  fieldTags?: FieldTag[];
   yardReferenceLines?: YardReferenceLine[];
   yardReferenceScale?: number;
   subtleHashMarks?: boolean;
+  wideFieldMarks?: boolean;
   losReferenceY?: number;
   offenseLandmarks?: Landmark[];
   defensePlayers?: PlayerDot[];
@@ -2433,20 +3407,27 @@ function TrainingField({
   onMoveOffense?: (id: string, x: number, y: number) => void;
   onMoveDefense?: (id: string, x: number, y: number) => void;
   onMoveDefenseGhost?: (id: string, x: number, y: number) => void;
+  onFieldClick?: (x: number, y: number) => void;
+  onFieldDoubleClick?: (x: number, y: number) => void;
 }) {
   const [drag, setDrag] = useState<{ id: string; type: "offense" | "defense" | "defense_ghost" } | null>(null);
   const maybeFlipY = (y: number, enabled: boolean) => (enabled ? 100 - y : y);
-  const fieldWide = editableDefense;
+  const fieldWide = editableDefense || wideFieldMarks;
   const hashXs = [getHash("left", fieldWide), getHash("right", fieldWide)];
   const losY = flipOffense ? 100 - losReferenceY : losReferenceY;
   const hashMarkRows = [13, 28, 43, 61, 76, 91];
   const sidelineInset = 1.5;
   const numberInset = 12;
 
+  const getRawPoint = (clientX: number, clientY: number, rect: DOMRect) => {
+    const x = clamp(((clientX - rect.left) / rect.width) * 100, 2, 98);
+    const rawY = clamp(((clientY - rect.top) / rect.height) * 100, 2, 98);
+    return { x, rawY };
+  };
+
   const getPointer = (e: React.PointerEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
-    const x = clamp(((e.clientX - rect.left) / rect.width) * 100, 2, 98);
-    const rawY = clamp(((e.clientY - rect.top) / rect.height) * 100, 2, 98);
+    const { x, rawY } = getRawPoint(e.clientX, e.clientY, rect);
     const y = drag?.type === "offense" && flipOffense ? 100 - rawY : rawY;
     return { x, y };
   };
@@ -2477,12 +3458,89 @@ function TrainingField({
     setDrag(null);
   };
 
+  const routeOverlayLayer = routeOverlays.length ? (
+    <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+      <defs>
+        {routeOverlays.map((route) => (
+          <marker
+            key={`marker-${route.id}`}
+            id={`marker-${route.id}`}
+            markerWidth={route.endCap === "circle" ? "5" : route.endCap === "square" ? "4.8" : "5"}
+            markerHeight={route.endCap === "circle" ? "5" : route.endCap === "square" ? "4.8" : "5"}
+            refX={route.endCap === "circle" ? "2.5" : route.endCap === "square" ? "2.4" : "3.6"}
+            refY={route.endCap === "circle" ? "2.5" : route.endCap === "square" ? "2.4" : "2.5"}
+            orient="auto"
+          >
+            {route.endCap === "circle" ? (
+              <circle cx="2.5" cy="2.5" r="2" fill={route.color} />
+            ) : route.endCap === "square" ? (
+              <rect x="0.6" y="0.6" width="3.6" height="3.6" rx="0.3" fill={route.color} />
+            ) : (
+              <path d="M0,0 L5,2.5 L0,5 z" fill={route.color} />
+            )}
+          </marker>
+        ))}
+      </defs>
+      {routeOverlays.map((route) => (
+        <g key={route.id}>
+          <polyline
+            points={route.path.map((point) => `${point.x},${maybeFlipY(point.y, flipOffense)}`).join(" ")}
+            fill="none"
+            stroke={route.color}
+            strokeWidth="0.7"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            markerEnd={`url(#marker-${route.id})`}
+            opacity="0.95"
+          />
+          {route.labelX !== undefined && route.labelY !== undefined ? (
+            <>
+              <rect
+                x={route.labelX - 2.8}
+                y={maybeFlipY(route.labelY, flipOffense) - 2.45}
+                width="7.2"
+                height="4.2"
+                rx="1.15"
+                fill="rgba(15,23,42,0.68)"
+              />
+              <text
+                x={route.labelX + 0.8}
+                y={maybeFlipY(route.labelY, flipOffense)}
+                textAnchor="middle"
+                dominantBaseline="middle"
+                fontSize="1.25"
+                letterSpacing="0.04em"
+                fontWeight="700"
+                fill="white"
+              >
+                {route.label}
+              </text>
+            </>
+          ) : null}
+        </g>
+      ))}
+    </svg>
+  ) : null;
+
   return (
     <div
       className="relative aspect-[19/9] w-full overflow-hidden rounded-2xl border bg-emerald-700"
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onPointerLeave={() => setDrag(null)}
+      onClick={(e) => {
+        if (!onFieldClick || drag) return;
+        if (e.detail > 1) return;
+        const rect = e.currentTarget.getBoundingClientRect();
+        const { x, rawY } = getRawPoint(e.clientX, e.clientY, rect);
+        onFieldClick(x, flipOffense ? 100 - rawY : rawY);
+      }}
+      onDoubleClick={(e) => {
+        if (!onFieldDoubleClick || drag) return;
+        const rect = e.currentTarget.getBoundingClientRect();
+        const { x, rawY } = getRawPoint(e.clientX, e.clientY, rect);
+        onFieldDoubleClick(x, flipOffense ? 100 - rawY : rawY);
+      }}
     >
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.06),transparent_55%)]" />
       <div className="absolute bottom-[4%] top-[4%] w-px bg-white/35" style={{ left: `${sidelineInset}%` }} />
@@ -2577,63 +3635,28 @@ function TrainingField({
         );
       })}
 
-      {routeOverlays.length ? (
-        <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
-          <defs>
-            {routeOverlays.map((route) => (
-              <marker
-                key={`marker-${route.id}`}
-                id={`marker-${route.id}`}
-                markerWidth="5"
-                markerHeight="5"
-                refX="3.6"
-                refY="2.5"
-                orient="auto"
-              >
-                <path d="M0,0 L5,2.5 L0,5 z" fill={route.color} />
-              </marker>
-            ))}
-          </defs>
-          {routeOverlays.map((route) => (
-            <g key={route.id}>
-              <polyline
-                points={route.path.map((point) => `${point.x},${maybeFlipY(point.y, flipOffense)}`).join(" ")}
-                fill="none"
-                stroke={route.color}
-                strokeWidth="0.7"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                markerEnd={`url(#marker-${route.id})`}
-                opacity="0.95"
-              />
-              {route.labelX !== undefined && route.labelY !== undefined ? (
-                <>
-                  <rect
-                    x={route.labelX - 2.8}
-                    y={maybeFlipY(route.labelY, flipOffense) - 2.45}
-                    width="7.2"
-                    height="4.2"
-                    rx="1.15"
-                    fill="rgba(15,23,42,0.68)"
-                  />
-                  <text
-                    x={route.labelX + 0.8}
-                    y={maybeFlipY(route.labelY, flipOffense)}
-                    textAnchor="middle"
-                    dominantBaseline="middle"
-                    fontSize="1.25"
-                    letterSpacing="0.04em"
-                    fontWeight="700"
-                    fill="white"
-                  >
-                    {route.label}
-                  </text>
-                </>
-              ) : null}
-            </g>
-          ))}
-        </svg>
-      ) : null}
+      {!routeOverlaysOnTop ? routeOverlayLayer : null}
+
+      {fieldTags.map((tag) => {
+        const toneClass =
+          tag.tone === "gold"
+            ? "border-amber-200/45 bg-amber-100/15 text-amber-100"
+            : tag.tone === "cyan"
+              ? "border-cyan-200/45 bg-cyan-100/15 text-cyan-100"
+              : tag.tone === "sky"
+                ? "border-sky-200/45 bg-sky-100/15 text-sky-100"
+                : "border-slate-100/20 bg-slate-950/50 text-white/95";
+
+        return (
+          <div
+            key={tag.id}
+            className={`absolute -translate-x-1/2 -translate-y-1/2 rounded-md border px-2 py-1 text-[10px] font-black uppercase tracking-[0.12em] shadow-sm ${toneClass}`}
+            style={{ left: `${tag.x}%`, top: `${maybeFlipY(tag.y, flipOffense)}%` }}
+          >
+            {tag.label}
+          </div>
+        );
+      })}
 
       {offenseGhosts.map((p) => (
         <div key={`og-${p.id}`} className="absolute -translate-x-1/2 -translate-y-1/2" style={{ left: `${clamp(p.x + offenseGhostOffset, 2, 98)}%`, top: `${maybeFlipY(p.y, flipOffense)}%` }}>
@@ -2689,6 +3712,8 @@ function TrainingField({
           </div>
         );
       })}
+
+      {routeOverlaysOnTop ? routeOverlayLayer : null}
 
       {overlayLabel ? <div className="absolute bottom-4 left-4 rounded-lg bg-black/20 px-3 py-1 text-xs font-medium text-white/90">{overlayLabel}</div> : null}
     </div>
@@ -2879,6 +3904,45 @@ export default function FormationRecognitionWorkingApp() {
   const [passConceptBacksideNameAnswer, setPassConceptBacksideNameAnswer] = useState("");
   const [showPassConceptFeedback, setShowPassConceptFeedback] = useState(false);
   const [showPassConceptAnswers, setShowPassConceptAnswers] = useState(false);
+  const [showBlitzAdminTools, setShowBlitzAdminTools] = useState(false);
+  const [showRunFitAdminTools, setShowRunFitAdminTools] = useState(false);
+  const [runFitTitle, setRunFitTitle] = useState("Single High vs Power Strong");
+  const [runFitEditorTool, setRunFitEditorTool] = useState<RunFitEditorTool>("arrow");
+  const [runFitArrowColor, setRunFitArrowColor] = useState<RunFitArrowColor>("gold");
+  const [runFitLineEnd, setRunFitLineEnd] = useState<RunFitLineEnd>("square");
+  const [runFitArrowLabel, setRunFitArrowLabel] = useState("PULL / KICK");
+  const [runFitDraftPoints, setRunFitDraftPoints] = useState<{ x: number; y: number }[]>([]);
+  const [runFitFieldTags, setRunFitFieldTags] = useState<FieldTag[]>([]);
+  const [runFitRouteOverlays, setRunFitRouteOverlays] = useState<RouteOverlay[]>([]);
+  const [runFitTagLabel, setRunFitTagLabel] = useState("SPILL");
+  const [runFitTagTone, setRunFitTagTone] = useState<FieldTag["tone"]>("gold");
+  const [runFitSavedBoards, setRunFitSavedBoards] = useState<RunFitSavedBoard[]>([]);
+  const [selectedRunFitBaseBoardId, setSelectedRunFitBaseBoardId] = useState<BlitzBaseBoardId>("double");
+  const [selectedRunFitBoardId, setSelectedRunFitBoardId] = useState("working");
+  const [runFitSaveNotice, setRunFitSaveNotice] = useState<string | null>(null);
+  const [selectedRunFitPathwayDefenderId, setSelectedRunFitPathwayDefenderId] = useState("M");
+  const [selectedRunFitPathwayId, setSelectedRunFitPathwayId] = useState<RunFitPathwayId>("a_gap_fit");
+  const [selectedBlitzBaseBoardId, setSelectedBlitzBaseBoardId] = useState<BlitzBaseBoardId>("double");
+  const [selectedBlitzFrontMode, setSelectedBlitzFrontMode] = useState<FrontMode>("4-4");
+  const [selectedBlitzCallId, setSelectedBlitzCallId] = useState<BlitzCallId>("newton");
+  const [selectedBlitzCallFamilyId, setSelectedBlitzCallFamilyId] = useState<BlitzCallFamilyId>("newton");
+  const [selectedBlitzCallType, setSelectedBlitzCallType] = useState<BlitzCallType>("last_name");
+  const [blitzTitle, setBlitzTitle] = useState("Newton vs Double");
+  const [blitzEditorTool, setBlitzEditorTool] = useState<RunFitEditorTool>("arrow");
+  const [blitzLineColor, setBlitzLineColor] = useState<RunFitArrowColor>("red");
+  const [blitzLineEnd, setBlitzLineEnd] = useState<RunFitLineEnd>("arrow");
+  const [blitzLineLabel, setBlitzLineLabel] = useState("BLITZ");
+  const [blitzDraftPoints, setBlitzDraftPoints] = useState<{ x: number; y: number }[]>([]);
+  const [blitzFieldTags, setBlitzFieldTags] = useState<FieldTag[]>([]);
+  const [blitzRouteOverlays, setBlitzRouteOverlays] = useState<RouteOverlay[]>([]);
+  const [blitzTagLabel, setBlitzTagLabel] = useState("NEWTON");
+  const [blitzTagTone, setBlitzTagTone] = useState<FieldTag["tone"]>("gold");
+  const [blitzSavedBoards, setBlitzSavedBoards] = useState<BlitzSavedBoard[]>([]);
+  const [selectedBlitzBoardId, setSelectedBlitzBoardId] = useState("working");
+  const [blitzSaveNotice, setBlitzSaveNotice] = useState<string | null>(null);
+  const [blitzBoardsHydrated, setBlitzBoardsHydrated] = useState(false);
+  const [selectedBlitzPathwayDefenderId, setSelectedBlitzPathwayDefenderId] = useState("M");
+  const [selectedBlitzPathwayId, setSelectedBlitzPathwayId] = useState<BlitzPathwayId>("a_gap_blitz");
   const [showQuizFeedback, setShowQuizFeedback] = useState(false);
   const [showQuizAnswers, setShowQuizAnswers] = useState(false);
   const [quizReadyForNext, setQuizReadyForNext] = useState(false);
@@ -3588,7 +4652,11 @@ const existingStats =
   }, [currentUser]);
 
   const effectivePlaybooks: PlaybookKey[] = mode === "offense_build" ? ["Foothill"] : selectedPlaybooks;
-  const sectionModeOptions = MODE_OPTIONS.filter((option) => option.section === appSection && !option.hiddenFromNav);
+  const sectionModeOptions = MODE_OPTIONS.filter((option) => (
+    option.section === appSection
+    && !option.hiddenFromNav
+    && (option.value !== "run_fit" || Boolean(currentUser?.isAdmin))
+  ));
   const effectivePassConceptBoardKind: PassConceptBoardKind =
     passConceptFamilyFilter === "all" ? passConceptBoardKind : passConceptFamilyFilter;
 
@@ -3608,7 +4676,186 @@ const existingStats =
         : buildThreeByOnePassConceptPreview(selectedThreeByOneConcept),
     [effectivePassConceptBoardKind, selectedFrontsideConcept, selectedBacksideConcept, selectedThreeByOneConcept],
   );
+  const runFitPreview = useMemo(() => {
+    const shell = buildBlitzBoardShell(selectedRunFitBaseBoardId, "4-4");
+    const boardLabel = BLITZ_BASE_BOARD_OPTIONS.find((option) => option.value === selectedRunFitBaseBoardId)?.label ?? "Formation";
+    return {
+      ...shell,
+      title: `Run Fit 4-4 vs ${boardLabel}`,
+      notes: [] as { title: string; body: string }[],
+    };
+  }, [selectedRunFitBaseBoardId]);
+  const blitzPreview = useMemo(() => buildBlitzBoardShell(selectedBlitzBaseBoardId, selectedBlitzFrontMode), [selectedBlitzBaseBoardId, selectedBlitzFrontMode]);
   const passConceptDefinition = passConceptPreview;
+  const runFitDraftOverlay = useMemo<RouteOverlay[]>(() => {
+    if (runFitDraftPoints.length < 2) return [];
+    return [{
+      id: "run-fit-draft",
+      label: runFitArrowLabel.trim() || "Draft",
+      color: getRunFitArrowStroke(runFitArrowColor),
+      path: runFitDraftPoints,
+      labelX: runFitDraftPoints[runFitDraftPoints.length - 1]?.x ?? 50,
+      labelY: (runFitDraftPoints[runFitDraftPoints.length - 1]?.y ?? 50) - 3,
+      endCap: runFitLineEnd,
+    }];
+  }, [runFitArrowColor, runFitArrowLabel, runFitDraftPoints, runFitLineEnd]);
+  const runFitDisplayOverlays = useMemo(
+    () => [...runFitRouteOverlays, ...runFitDraftOverlay],
+    [runFitRouteOverlays, runFitDraftOverlay],
+  );
+  const blitzDraftOverlay = useMemo<RouteOverlay[]>(() => {
+    if (blitzDraftPoints.length < 2) return [];
+    return [{
+      id: "blitz-draft",
+      label: blitzLineLabel.trim() || "Draft",
+      color: getRunFitArrowStroke(blitzLineColor),
+      path: blitzDraftPoints,
+      labelX: blitzDraftPoints[blitzDraftPoints.length - 1]?.x ?? 50,
+      labelY: (blitzDraftPoints[blitzDraftPoints.length - 1]?.y ?? 50) - 3,
+      endCap: blitzLineEnd,
+    }];
+  }, [blitzDraftPoints, blitzLineColor, blitzLineEnd, blitzLineLabel]);
+  const blitzDisplayOverlays = useMemo(
+    () => [
+      ...blitzRouteOverlays.map((overlay) => {
+        const pathway = getBlitzPathwayMetaFromOverlay(overlay);
+        if (!pathway) return overlay;
+        const defender = blitzPreview.defensePlayers.find((player) => player.id === pathway.defenderId);
+        if (!defender) return overlay;
+        return buildBlitzPathwayOverlay({
+          id: overlay.id,
+          defender,
+          offensePlayers: blitzPreview.offensePlayers,
+          pathwayId: pathway.pathwayId as BlitzPathwayId,
+          runStrength: blitzPreview.runStrength,
+          passStrength: blitzPreview.passStrength,
+          losY: blitzPreview.losY,
+          wingY: blitzPreview.wingY,
+          frontMode: selectedBlitzFrontMode,
+          layer: pathway.layer,
+        });
+      }),
+      ...blitzDraftOverlay,
+    ],
+    [blitzDraftOverlay, blitzPreview, blitzRouteOverlays, selectedBlitzFrontMode],
+  );
+  const selectedBlitzCallOption = useMemo(() => (
+    BLITZ_CALL_OPTIONS.find((option) => option.value === selectedBlitzCallId) ?? BLITZ_CALL_OPTIONS[0]
+  ), [selectedBlitzCallId]);
+  const selectedStructuredBlitzBoard = useMemo(() => (
+    blitzSavedBoards.find((board) => (
+      board.frontMode === selectedBlitzFrontMode
+      && board.callId === selectedBlitzCallId
+      && board.baseBoardId === selectedBlitzBaseBoardId
+    ))
+  ), [blitzSavedBoards, selectedBlitzBaseBoardId, selectedBlitzCallId, selectedBlitzFrontMode]);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(RUN_FIT_BOARDS_STORAGE_KEY);
+      if (!raw) {
+        setRunFitTitle(runFitPreview.title);
+        setRunFitRouteOverlays(runFitPreview.routeOverlays);
+        setRunFitFieldTags(runFitPreview.fieldTags);
+        return;
+      }
+
+      const parsed = JSON.parse(raw) as {
+        working?: { title?: string; routeOverlays?: RouteOverlay[]; fieldTags?: FieldTag[] };
+        boards?: RunFitSavedBoard[];
+      };
+
+      setRunFitTitle(parsed.working?.title || runFitPreview.title);
+      setRunFitRouteOverlays(parsed.working?.routeOverlays || runFitPreview.routeOverlays);
+      setRunFitFieldTags(parsed.working?.fieldTags || runFitPreview.fieldTags);
+      setRunFitSavedBoards(Array.isArray(parsed.boards) ? parsed.boards : []);
+    } catch {
+      setRunFitTitle(runFitPreview.title);
+      setRunFitRouteOverlays(runFitPreview.routeOverlays);
+      setRunFitFieldTags(runFitPreview.fieldTags);
+    }
+  }, [runFitPreview]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        RUN_FIT_BOARDS_STORAGE_KEY,
+        JSON.stringify({
+          working: {
+            title: runFitTitle,
+            routeOverlays: runFitRouteOverlays,
+            fieldTags: runFitFieldTags,
+          },
+          boards: runFitSavedBoards,
+        }),
+      );
+    } catch {}
+  }, [runFitFieldTags, runFitRouteOverlays, runFitSavedBoards, runFitTitle]);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(BLITZ_BOARDS_STORAGE_KEY);
+      if (!raw) {
+        setBlitzTitle(blitzPreview.title);
+        setBlitzRouteOverlays(blitzPreview.routeOverlays);
+        setBlitzFieldTags(blitzPreview.fieldTags);
+        setBlitzBoardsHydrated(true);
+        return;
+      }
+
+      const parsed = JSON.parse(raw) as {
+        selectedBaseBoardId?: BlitzBaseBoardId;
+        selectedFrontMode?: FrontMode;
+        selectedCallId?: BlitzCallId;
+        working?: { title?: string; routeOverlays?: RouteOverlay[]; fieldTags?: FieldTag[] };
+        boards?: BlitzSavedBoard[];
+      };
+
+      const savedBaseId = BLITZ_BASE_BOARD_OPTIONS.some((option) => option.value === parsed.selectedBaseBoardId)
+        ? parsed.selectedBaseBoardId as BlitzBaseBoardId
+        : "double";
+      const savedFrontMode: FrontMode = parsed.selectedFrontMode === "4-3" ? "4-3" : "4-4";
+      const savedCallId: BlitzCallId = BLITZ_CALL_OPTIONS.some((option) => option.value === parsed.selectedCallId)
+        ? parsed.selectedCallId as BlitzCallId
+        : "newton";
+      setSelectedBlitzBaseBoardId(savedBaseId);
+      setSelectedBlitzFrontMode(savedFrontMode);
+      setSelectedBlitzCallId(savedCallId);
+      setSelectedBlitzCallFamilyId(getBlitzCallFamilyId(savedCallId));
+      setSelectedBlitzCallType(getBlitzCallType(savedCallId));
+      const savedPreview = buildBlitzBoardShell(savedBaseId, savedFrontMode);
+      setBlitzTitle(parsed.working?.title || savedPreview.title);
+      setBlitzRouteOverlays(parsed.working?.routeOverlays || savedPreview.routeOverlays);
+      setBlitzFieldTags(parsed.working?.fieldTags || savedPreview.fieldTags);
+      setBlitzSavedBoards(Array.isArray(parsed.boards) ? parsed.boards : []);
+      setBlitzBoardsHydrated(true);
+    } catch {
+      setBlitzTitle(blitzPreview.title);
+      setBlitzRouteOverlays(blitzPreview.routeOverlays);
+      setBlitzFieldTags(blitzPreview.fieldTags);
+      setBlitzBoardsHydrated(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!blitzBoardsHydrated) return;
+    try {
+      window.localStorage.setItem(
+        BLITZ_BOARDS_STORAGE_KEY,
+        JSON.stringify({
+          selectedBaseBoardId: selectedBlitzBaseBoardId,
+          selectedFrontMode: selectedBlitzFrontMode,
+          selectedCallId: selectedBlitzCallId,
+          working: {
+            title: blitzTitle,
+            routeOverlays: blitzRouteOverlays,
+            fieldTags: blitzFieldTags,
+          },
+          boards: blitzSavedBoards,
+        }),
+      );
+    } catch {}
+  }, [blitzBoardsHydrated, blitzFieldTags, blitzRouteOverlays, blitzSavedBoards, blitzTitle, selectedBlitzBaseBoardId, selectedBlitzCallId, selectedBlitzFrontMode]);
   const passConceptQuizRoutePreview = useMemo(() => {
     if (passConceptViewMode !== "quiz") return [];
     if (passConceptQuizMode === "identify") return passConceptPreview.routesPreview;
@@ -5129,6 +6376,563 @@ const existingStats =
   router.push("/login");
 };
 
+  const handleRunFitFieldClick = (x: number, y: number) => {
+    if (!currentUser?.isAdmin) return;
+
+    if (runFitEditorTool === "tag") {
+      const cleanLabel = runFitTagLabel.trim();
+      if (!cleanLabel) return;
+      setRunFitFieldTags((prev) => [
+        ...prev,
+        {
+          id: `tag-${Date.now()}-${prev.length}`,
+          label: cleanLabel,
+          x,
+          y,
+          tone: runFitTagTone,
+        },
+      ]);
+      setRunFitSaveNotice("Placed tag on the board.");
+      return;
+    }
+
+    setRunFitDraftPoints((prev) => [...prev, { x, y }]);
+    setRunFitSaveNotice(null);
+  };
+
+  const commitRunFitLine = (points: { x: number; y: number }[]) => {
+    if (points.length < 2) return;
+    const cleanLabel = runFitArrowLabel.trim();
+    setRunFitRouteOverlays((prev) => [
+      ...prev,
+      {
+        id: `run-fit-arrow-${Date.now()}-${prev.length}`,
+        label: cleanLabel,
+        color: getRunFitArrowStroke(runFitArrowColor),
+        path: points,
+        labelX: cleanLabel ? points[points.length - 1]?.x ?? 50 : undefined,
+        labelY: cleanLabel ? (points[points.length - 1]?.y ?? 50) - 3 : undefined,
+        endCap: runFitLineEnd,
+      },
+    ]);
+    setRunFitDraftPoints([]);
+    setRunFitSaveNotice("Line added to the board.");
+  };
+
+  const finishRunFitArrow = () => {
+    commitRunFitLine(runFitDraftPoints);
+  };
+
+  const handleRunFitFieldDoubleClick = (x: number, y: number) => {
+    if (!currentUser?.isAdmin || runFitEditorTool !== "arrow") return;
+    commitRunFitLine([...runFitDraftPoints, { x, y }]);
+  };
+
+  const loadRunFitBaseBoard = (baseBoardId: BlitzBaseBoardId) => {
+    const shell = buildBlitzBoardShell(baseBoardId, "4-4");
+    const boardLabel = BLITZ_BASE_BOARD_OPTIONS.find((option) => option.value === baseBoardId)?.label ?? "Formation";
+    setSelectedRunFitBaseBoardId(baseBoardId);
+    setSelectedRunFitBoardId("working");
+    setRunFitTitle(`Run Fit 4-4 vs ${boardLabel}`);
+    setRunFitRouteOverlays(shell.routeOverlays);
+    setRunFitFieldTags(shell.fieldTags);
+    setRunFitDraftPoints([]);
+    setRunFitSaveNotice(`Loaded Run Fit 4-4 vs ${boardLabel}.`);
+  };
+
+  const addRunFitPathway = () => {
+    if (!currentUser?.isAdmin) return;
+    const defender = runFitPreview.defensePlayers.find((player) => player.id === selectedRunFitPathwayDefenderId);
+    if (!defender) {
+      setRunFitSaveNotice("Choose a defender that exists on this board.");
+      return;
+    }
+
+    const side: Side = defender.x < 50 ? "left" : "right";
+    const awayFromCenter = side === "left" ? -1 : 1;
+    const trimStart = (rawPath: { x: number; y: number }[]) => {
+      if (rawPath.length < 2) return rawPath;
+      const [start, next, ...rest] = rawPath;
+      const dx = next.x - start.x;
+      const dy = next.y - start.y;
+      const distance = Math.hypot(dx, dy);
+      if (distance <= 0.1) return rawPath;
+      const trimDistance = Math.min(3.1, distance - 0.1);
+      return [
+        { x: start.x + (dx / distance) * trimDistance, y: start.y + (dy / distance) * trimDistance },
+        next,
+        ...rest,
+      ];
+    };
+    const segmentDistanceToPoint = (a: { x: number; y: number }, b: { x: number; y: number }, p: { x: number; y: number }) => {
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const lengthSquared = dx * dx + dy * dy;
+      if (lengthSquared === 0) return Math.hypot(p.x - a.x, p.y - a.y);
+      const t = clamp(((p.x - a.x) * dx + (p.y - a.y) * dy) / lengthSquared, 0, 1);
+      return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+    };
+    const routeAroundPlayers = (rawPath: { x: number; y: number }[]) => {
+      const blockers = [...runFitPreview.offensePlayers, ...runFitPreview.defensePlayers]
+        .filter((player) => player.id !== defender.id);
+      const nextPath: { x: number; y: number }[] = [rawPath[0]];
+      for (let i = 1; i < rawPath.length; i += 1) {
+        const start = nextPath[nextPath.length - 1];
+        const end = rawPath[i];
+        const blocker = blockers.find((player) => segmentDistanceToPoint(start, end, player) < 3.7);
+        if (blocker) {
+          const detourDirection = blocker.x < 50 ? -1 : 1;
+          nextPath.push({
+            x: clamp(blocker.x + detourDirection * 5, 3, 97),
+            y: clamp(getMidpoint(start.y, end.y), 3, 97),
+          });
+        }
+        nextPath.push(end);
+      }
+      return nextPath;
+    };
+    const makeFitPath = (targetX: number, targetY = LOS_Y - 4) => trimStart(routeAroundPlayers([
+      { x: defender.x, y: defender.y },
+      { x: defender.x, y: LOS_Y + 8 },
+      { x: targetX, y: LOS_Y + 8 },
+      { x: targetX, y: targetY },
+    ]));
+    const edgeX = getBlitzEdgePressureTargetX(runFitPreview.offensePlayers, side, LOS_Y, WING_Y);
+    const pathwayConfig: Record<RunFitPathwayId, { label: string; color: RunFitArrowColor; path: { x: number; y: number }[]; endCap: RunFitLineEnd }> = {
+      a_gap_fit: {
+        label: "A Fit",
+        color: "gold",
+        path: makeFitPath(getBlitzGapTargetX(runFitPreview.offensePlayers, "A", side)),
+        endCap: "square",
+      },
+      b_gap_fit: {
+        label: "B Fit",
+        color: "gold",
+        path: makeFitPath(getBlitzGapTargetX(runFitPreview.offensePlayers, "B", side)),
+        endCap: "square",
+      },
+      c_gap_fit: {
+        label: "C Fit",
+        color: "gold",
+        path: makeFitPath(getBlitzGapTargetX(runFitPreview.offensePlayers, "C", side)),
+        endCap: "square",
+      },
+      d_gap_fit: {
+        label: "D Fit",
+        color: "gold",
+        path: makeFitPath(edgeX),
+        endCap: "square",
+      },
+      box_fit: {
+        label: "Box",
+        color: "red",
+        path: trimStart(routeAroundPlayers([
+          { x: defender.x, y: defender.y },
+          { x: defender.x, y: LOS_Y - 3 },
+          { x: defender.x + awayFromCenter * 1.5, y: LOS_Y - 3 },
+        ])),
+        endCap: "square",
+      },
+      spill_fit: {
+        label: "Spill",
+        color: "red",
+        path: trimStart(routeAroundPlayers([
+          { x: defender.x, y: defender.y },
+          { x: edgeX, y: LOS_Y },
+          { x: edgeX + awayFromCenter * 3, y: LOS_Y - 1 },
+        ])),
+        endCap: "circle",
+      },
+      under_box_fit: {
+        label: "Under Box",
+        color: "red",
+        path: trimStart(routeAroundPlayers([
+          { x: defender.x, y: defender.y },
+          { x: edgeX - awayFromCenter * 2, y: LOS_Y + 2 },
+          { x: edgeX + awayFromCenter * 3, y: LOS_Y - 5 },
+        ])),
+        endCap: "square",
+      },
+      over_box_fit: {
+        label: "Over Box",
+        color: "red",
+        path: trimStart(routeAroundPlayers([
+          { x: defender.x, y: defender.y },
+          { x: edgeX + awayFromCenter * 2, y: LOS_Y - 1 },
+          { x: edgeX + awayFromCenter * 5, y: LOS_Y - 6 },
+        ])),
+        endCap: "square",
+      },
+      under_spill_fit: {
+        label: "Under Spill",
+        color: "red",
+        path: trimStart(routeAroundPlayers([
+          { x: defender.x, y: defender.y },
+          { x: edgeX - awayFromCenter * 3, y: LOS_Y + 2 },
+          { x: edgeX - awayFromCenter * 5, y: LOS_Y - 1 },
+        ])),
+        endCap: "circle",
+      },
+      over_spill_fit: {
+        label: "Over Spill",
+        color: "red",
+        path: trimStart(routeAroundPlayers([
+          { x: defender.x, y: defender.y },
+          { x: edgeX + awayFromCenter * 1.5, y: LOS_Y + 1 },
+          { x: edgeX - awayFromCenter * 3, y: LOS_Y - 1 },
+        ])),
+        endCap: "circle",
+      },
+    };
+    const config = pathwayConfig[selectedRunFitPathwayId];
+    setRunFitRouteOverlays((prev) => [
+      ...prev.filter((existing) => existing.pathway?.defenderId !== defender.id),
+      {
+        id: `run-fit-pathway-${selectedRunFitPathwayId}-${defender.id}-${Date.now()}`,
+        label: config.label,
+        color: getRunFitArrowStroke(config.color),
+        path: config.path,
+        labelX: config.path[config.path.length - 1]?.x,
+        labelY: (config.path[config.path.length - 1]?.y ?? LOS_Y) - 3,
+        endCap: config.endCap,
+        pathway: {
+          defenderId: defender.id,
+          pathwayId: selectedRunFitPathwayId,
+        },
+      },
+    ]);
+    setRunFitDraftPoints([]);
+    setRunFitSaveNotice(`Added ${RUN_FIT_PATHWAY_OPTIONS.find((option) => option.value === selectedRunFitPathwayId)?.label ?? "run fit"} for ${defender.id}.`);
+  };
+
+  const loadRunFitBoard = (boardId: string) => {
+    if (boardId === "working") {
+      setSelectedRunFitBoardId("working");
+      return;
+    }
+    const selectedBoard = runFitSavedBoards.find((board) => board.id === boardId);
+    if (!selectedBoard) return;
+    setSelectedRunFitBoardId(boardId);
+    setSelectedRunFitBaseBoardId(selectedBoard.baseBoardId ?? "double");
+    setRunFitTitle(selectedBoard.title);
+    setRunFitRouteOverlays(selectedBoard.routeOverlays);
+    setRunFitFieldTags(selectedBoard.fieldTags);
+    setRunFitDraftPoints([]);
+    setRunFitSaveNotice(`Loaded ${selectedBoard.title}.`);
+  };
+
+  const saveRunFitBoard = () => {
+    const cleanTitle = runFitTitle.trim() || "Untitled Run Fit";
+    if (selectedRunFitBoardId !== "working") {
+      setRunFitSavedBoards((prev) => prev.map((board) => (
+        board.id === selectedRunFitBoardId
+          ? { ...board, title: cleanTitle, baseBoardId: selectedRunFitBaseBoardId, routeOverlays: runFitRouteOverlays, fieldTags: runFitFieldTags }
+          : board
+      )));
+      setRunFitSaveNotice(`Updated ${cleanTitle}.`);
+      return;
+    }
+
+    const nextBoard: RunFitSavedBoard = {
+      id: `run-fit-${Date.now()}`,
+      title: cleanTitle,
+      routeOverlays: runFitRouteOverlays,
+      fieldTags: runFitFieldTags,
+      baseBoardId: selectedRunFitBaseBoardId,
+    };
+    setRunFitSavedBoards((prev) => [...prev, nextBoard]);
+    setSelectedRunFitBoardId(nextBoard.id);
+    setRunFitSaveNotice(`Saved ${cleanTitle}.`);
+  };
+
+  const resetRunFitSample = () => {
+    setSelectedRunFitBoardId("working");
+    setRunFitTitle(runFitPreview.title);
+    setRunFitRouteOverlays(runFitPreview.routeOverlays);
+    setRunFitFieldTags(runFitPreview.fieldTags);
+    setRunFitDraftPoints([]);
+    setRunFitSaveNotice("Reset to the sample board.");
+  };
+
+  const loadBlitzStructuredSelection = ({
+    familyId = selectedBlitzCallFamilyId,
+    callType = selectedBlitzCallType,
+    baseBoardId = selectedBlitzBaseBoardId,
+    frontMode = selectedBlitzFrontMode,
+  }: {
+    familyId?: BlitzCallFamilyId;
+    callType?: BlitzCallType;
+    baseBoardId?: BlitzBaseBoardId;
+    frontMode?: FrontMode;
+  }) => {
+    const nextCallId = getBlitzCallId(familyId, callType);
+    const selectedBoard = blitzSavedBoards.find((board) => (
+      board.frontMode === frontMode
+      && board.callId === nextCallId
+      && board.baseBoardId === baseBoardId
+    ));
+
+    setSelectedBlitzCallFamilyId(familyId);
+    setSelectedBlitzCallType(callType);
+    setSelectedBlitzCallId(nextCallId);
+    setSelectedBlitzBaseBoardId(baseBoardId);
+    setSelectedBlitzFrontMode(frontMode);
+
+    if (selectedBoard) {
+      setSelectedBlitzBoardId(selectedBoard.id);
+      setBlitzTitle(selectedBoard.title);
+      setBlitzRouteOverlays(selectedBoard.routeOverlays);
+      setBlitzFieldTags(selectedBoard.fieldTags);
+      setBlitzDraftPoints([]);
+      setBlitzSaveNotice(`Loaded ${selectedBoard.title}.`);
+      return;
+    }
+
+    const nextPreview = buildBlitzBoardShell(baseBoardId, frontMode);
+    const routeOverlays = buildBlitzTemplateOverlays({
+      callId: nextCallId,
+      defensePlayers: nextPreview.defensePlayers,
+      offensePlayers: nextPreview.offensePlayers,
+      runStrength: nextPreview.runStrength,
+      passStrength: nextPreview.passStrength,
+      losY: nextPreview.losY,
+      wingY: nextPreview.wingY,
+      frontMode,
+    });
+    const boardLabel = BLITZ_BASE_BOARD_OPTIONS.find((option) => option.value === baseBoardId)?.label ?? "Formation";
+    setSelectedBlitzBoardId("working");
+    setBlitzTitle(`${getBlitzCallLabel(nextCallId)} ${frontMode} vs ${boardLabel}`);
+    setBlitzRouteOverlays(routeOverlays);
+    setBlitzFieldTags(nextPreview.fieldTags);
+    setBlitzDraftPoints([]);
+    setBlitzSaveNotice(`Generated ${getBlitzCallLabel(nextCallId)} ${frontMode} vs ${boardLabel}. Save it if you want to keep edits.`);
+  };
+
+  const loadBlitzFrontMode = (nextFrontMode: FrontMode) => {
+    loadBlitzStructuredSelection({ frontMode: nextFrontMode });
+  };
+
+  const handleBlitzFieldClick = (x: number, y: number) => {
+    if (!currentUser?.isAdmin) return;
+
+    if (blitzEditorTool === "tag") {
+      const cleanLabel = blitzTagLabel.trim();
+      if (!cleanLabel) return;
+      setBlitzFieldTags((prev) => [
+        ...prev,
+        {
+          id: `blitz-tag-${Date.now()}-${prev.length}`,
+          label: cleanLabel,
+          x,
+          y,
+          tone: blitzTagTone,
+        },
+      ]);
+      setBlitzSaveNotice("Placed tag on the board.");
+      return;
+    }
+
+    setBlitzDraftPoints((prev) => [...prev, { x, y }]);
+    setBlitzSaveNotice(null);
+  };
+
+  const commitBlitzLine = (points: { x: number; y: number }[]) => {
+    if (points.length < 2) return;
+    const cleanLabel = blitzLineLabel.trim();
+    setBlitzRouteOverlays((prev) => [
+      ...prev,
+      {
+        id: `blitz-line-${Date.now()}-${prev.length}`,
+        label: cleanLabel,
+        color: getRunFitArrowStroke(blitzLineColor),
+        path: points,
+        labelX: cleanLabel ? points[points.length - 1]?.x ?? 50 : undefined,
+        labelY: cleanLabel ? (points[points.length - 1]?.y ?? 50) - 3 : undefined,
+        endCap: blitzLineEnd,
+      },
+    ]);
+    setBlitzDraftPoints([]);
+    setBlitzSaveNotice("Line added to the board.");
+  };
+
+  const finishBlitzLine = () => {
+    commitBlitzLine(blitzDraftPoints);
+  };
+
+  const handleBlitzFieldDoubleClick = (x: number, y: number) => {
+    if (!currentUser?.isAdmin || blitzEditorTool !== "arrow") return;
+    commitBlitzLine([...blitzDraftPoints, { x, y }]);
+  };
+
+  const addBlitzPathway = () => {
+    if (!currentUser?.isAdmin) return;
+    const defender = blitzPreview.defensePlayers.find((player) => player.id === selectedBlitzPathwayDefenderId);
+    if (!defender) {
+      setBlitzSaveNotice("Choose a defender that exists on this board.");
+      return;
+    }
+
+    const overlay = buildBlitzPathwayOverlay({
+      defender,
+      offensePlayers: blitzPreview.offensePlayers,
+      pathwayId: selectedBlitzPathwayId,
+      runStrength: blitzPreview.runStrength,
+      passStrength: blitzPreview.passStrength,
+      losY: blitzPreview.losY,
+      wingY: blitzPreview.wingY,
+      frontMode: selectedBlitzFrontMode,
+    });
+    setBlitzRouteOverlays((prev) => prev
+      .filter((existing) => getBlitzPathwayMetaFromOverlay(existing)?.defenderId !== defender.id)
+      .concat(overlay));
+    setBlitzDraftPoints([]);
+    setBlitzSaveNotice(`Added ${getBlitzPathwayLabel(selectedBlitzPathwayId)} for ${defender.id}.`);
+  };
+
+  const applyBlitzCallTemplate = () => {
+    if (!currentUser?.isAdmin) return;
+    const overlays = buildBlitzTemplateOverlays({
+      callId: selectedBlitzCallId,
+      defensePlayers: blitzPreview.defensePlayers,
+      offensePlayers: blitzPreview.offensePlayers,
+      runStrength: blitzPreview.runStrength,
+      passStrength: blitzPreview.passStrength,
+      losY: blitzPreview.losY,
+      wingY: blitzPreview.wingY,
+      frontMode: selectedBlitzFrontMode,
+    });
+    const templateDefenderIds = new Set(overlays.map((overlay) => overlay.pathway?.defenderId).filter(Boolean));
+
+    setBlitzRouteOverlays((prev) => [
+      ...prev.filter((existing) => {
+        const meta = getBlitzPathwayMetaFromOverlay(existing);
+        return !meta || !templateDefenderIds.has(meta.defenderId);
+      }),
+      ...overlays,
+    ]);
+    setBlitzDraftPoints([]);
+    setBlitzTitle(`${getBlitzCallLabel(selectedBlitzCallId)} ${selectedBlitzFrontMode} vs ${BLITZ_BASE_BOARD_OPTIONS.find((option) => option.value === selectedBlitzBaseBoardId)?.label ?? "Formation"}`);
+    setBlitzSaveNotice(`Applied ${getBlitzCallLabel(selectedBlitzCallId)} template.`);
+  };
+
+  const buildSavedBlitzBoard = (callId: BlitzCallId, boardOption: typeof BLITZ_BASE_BOARD_OPTIONS[number], index: number): BlitzSavedBoard => {
+    const callLabel = getBlitzCallLabel(callId);
+    const preview = buildBlitzBoardShell(boardOption.value, selectedBlitzFrontMode);
+    const routeOverlays = buildBlitzTemplateOverlays({
+      callId,
+      defensePlayers: preview.defensePlayers,
+      offensePlayers: preview.offensePlayers,
+      runStrength: preview.runStrength,
+      passStrength: preview.passStrength,
+      losY: preview.losY,
+      wingY: preview.wingY,
+      frontMode: selectedBlitzFrontMode,
+    });
+
+    return {
+      id: `blitz-${callId}-${selectedBlitzFrontMode}-${boardOption.value}-${Date.now()}-${index}`,
+      title: `${callLabel} ${selectedBlitzFrontMode} vs ${boardOption.label}`,
+      baseBoardId: boardOption.value,
+      frontMode: selectedBlitzFrontMode,
+      callId,
+      routeOverlays,
+      fieldTags: preview.fieldTags,
+    };
+  };
+
+  const applyBlitzCallTemplateToAllBoards = () => {
+    if (!currentUser?.isAdmin) return;
+    const callLabel = getBlitzCallLabel(selectedBlitzCallId);
+    const stampedBoards = BLITZ_BASE_BOARD_OPTIONS.map((boardOption, index) => (
+      buildSavedBlitzBoard(selectedBlitzCallId, boardOption, index)
+    ));
+
+    const firstBoard = stampedBoards[0];
+    setBlitzSavedBoards((prev) => [
+      ...prev.filter((board) => !(board.callId === selectedBlitzCallId && board.frontMode === selectedBlitzFrontMode)),
+      ...stampedBoards,
+    ]);
+    setSelectedBlitzBoardId(firstBoard.id);
+    setSelectedBlitzBaseBoardId(firstBoard.baseBoardId);
+    setBlitzTitle(firstBoard.title);
+    setBlitzRouteOverlays(firstBoard.routeOverlays);
+    setBlitzFieldTags(firstBoard.fieldTags);
+    setBlitzDraftPoints([]);
+    setBlitzSaveNotice(`Applied ${callLabel} to all ${selectedBlitzFrontMode} base boards.`);
+  };
+
+  const applyEveryBlitzTemplateToAllBoards = () => {
+    if (!currentUser?.isAdmin) return;
+    const stampedBoards = BLITZ_CALL_OPTIONS.flatMap((callOption, callIndex) => (
+      BLITZ_BASE_BOARD_OPTIONS.map((boardOption, boardIndex) => (
+        buildSavedBlitzBoard(callOption.value, boardOption, callIndex * BLITZ_BASE_BOARD_OPTIONS.length + boardIndex)
+      ))
+    ));
+
+    const activeBoard = stampedBoards.find((board) => (
+      board.callId === selectedBlitzCallId && board.baseBoardId === selectedBlitzBaseBoardId
+    )) ?? stampedBoards[0];
+    setBlitzSavedBoards((prev) => [
+      ...prev.filter((board) => board.frontMode !== selectedBlitzFrontMode),
+      ...stampedBoards,
+    ]);
+    setSelectedBlitzBoardId(activeBoard.id);
+    setBlitzTitle(activeBoard.title);
+    setBlitzRouteOverlays(activeBoard.routeOverlays);
+    setBlitzFieldTags(activeBoard.fieldTags);
+    setBlitzDraftPoints([]);
+    setBlitzSaveNotice(`Applied all loaded blitzes to all ${selectedBlitzFrontMode} base boards.`);
+  };
+
+  const saveBlitzBoard = () => {
+    const cleanTitle = blitzTitle.trim() || "Untitled Blitz";
+    if (selectedBlitzBoardId !== "working") {
+      setBlitzSavedBoards((prev) => prev.map((board) => (
+        board.id === selectedBlitzBoardId
+          ? { ...board, title: cleanTitle, baseBoardId: selectedBlitzBaseBoardId, frontMode: selectedBlitzFrontMode, callId: selectedBlitzCallId, routeOverlays: blitzRouteOverlays, fieldTags: blitzFieldTags }
+          : board
+      )));
+      setBlitzSaveNotice(`Updated ${cleanTitle}.`);
+      return;
+    }
+
+    const nextBoard: BlitzSavedBoard = {
+      id: `blitz-${Date.now()}`,
+      title: cleanTitle,
+      baseBoardId: selectedBlitzBaseBoardId,
+      frontMode: selectedBlitzFrontMode,
+      callId: selectedBlitzCallId,
+      routeOverlays: blitzRouteOverlays,
+      fieldTags: blitzFieldTags,
+    };
+    setBlitzSavedBoards((prev) => [...prev, nextBoard]);
+    setSelectedBlitzBoardId(nextBoard.id);
+    setBlitzSaveNotice(`Saved ${cleanTitle}.`);
+  };
+
+  const deleteBlitzBoard = () => {
+    if (selectedBlitzBoardId === "working") return;
+    const deletedBoard = blitzSavedBoards.find((board) => board.id === selectedBlitzBoardId);
+    setBlitzSavedBoards((prev) => prev.filter((board) => board.id !== selectedBlitzBoardId));
+    const nextPreview = buildBlitzBoardShell(selectedBlitzBaseBoardId, selectedBlitzFrontMode);
+    setSelectedBlitzBoardId("working");
+    setBlitzTitle(nextPreview.title);
+    setBlitzRouteOverlays(nextPreview.routeOverlays);
+    setBlitzFieldTags(nextPreview.fieldTags);
+    setBlitzDraftPoints([]);
+    setBlitzSaveNotice(deletedBoard ? `Deleted ${deletedBoard.title}.` : "Deleted saved board.");
+  };
+
+  const resetBlitzSample = () => {
+    const nextPreview = buildBlitzBoardShell(selectedBlitzBaseBoardId, selectedBlitzFrontMode);
+    setSelectedBlitzBoardId("working");
+    setBlitzTitle(nextPreview.title);
+    setBlitzRouteOverlays(nextPreview.routeOverlays);
+    setBlitzFieldTags(nextPreview.fieldTags);
+    setBlitzDraftPoints([]);
+    setBlitzSaveNotice("Reset to the selected blitz board.");
+  };
+
   const getSpeedBonus = (activeMode: "quiz" | "offense_build" | "alignment" | "film" | "concept", elapsedMs: number) => {
     const seconds = elapsedMs / 1000;
     if (activeMode === "quiz") {
@@ -5413,9 +7217,9 @@ const existingStats =
                 <div className="min-w-[220px]">
                   {mode === "leaderboard" ? null : mode === "offense_build" ? (
                     <div className="rounded-md border bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700">Foothill</div>
-                  ) : mode === "film" || mode === "concept" ? (
+                  ) : mode === "film" || mode === "concept" || mode === "run_fit" || mode === "blitz" ? (
                     <div className="rounded-md border bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700">
-                      {mode === "film" ? "Film Library" : "Concept Board"}
+                      {mode === "film" ? "Film Library" : mode === "concept" ? "Concept Board" : mode === "run_fit" ? "Fit Board" : "Blitz Board"}
                     </div>
                   ) : (
                     <details className="relative">
@@ -5454,7 +7258,7 @@ const existingStats =
                     </details>
                   )}
                 </div>
-                {mode === "offense_build" || mode === "film" || mode === "concept" || mode === "leaderboard" ? null : (
+                {mode === "offense_build" || mode === "film" || mode === "concept" || mode === "leaderboard" || mode === "run_fit" || mode === "blitz" ? null : (
                   <div className="min-w-[120px]">
                     <Select value={personnelFilter} onValueChange={(value: string) => { setPersonnelFilter(value); setIndex(0); }}>
                       <SelectTrigger>
@@ -5472,11 +7276,11 @@ const existingStats =
                 )}
               </div>
             </div>
-            {(mode === "alignment" || (mode === "study" && formationTrainerViewMode === "study") || (mode === "offense_build" && offenseBuildViewMode === "study")) && (
+            {(mode === "alignment" || (mode === "study" && formationTrainerViewMode === "study") || mode === "offense_build") && (
               <div className="rounded-2xl border border-[#dde3d8] bg-gradient-to-r from-white via-[#fbfcfa] to-[#f4f4ee] p-4 text-3xl font-extrabold tracking-tight text-slate-900 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] md:text-4xl">
                 {displayFormation.name}
                 <div className="mt-1 text-sm font-semibold uppercase tracking-[0.14em] text-slate-500">
-                  {displayFormation.playbook}
+                  {mode === "offense_build" && offenseBuildViewMode === "quiz" ? "Build this formation" : displayFormation.playbook}
                 </div>
               </div>
             )}
@@ -5921,6 +7725,483 @@ const existingStats =
                     </div>
                   </div>
                 )}
+              </div>
+            ) : mode === "run_fit" ? (
+              currentUser?.isAdmin ? (
+              <div className="grid gap-4 lg:grid-cols-[1fr_360px]">
+                <div className="space-y-4">
+                  <div className="rounded-2xl border bg-white p-4">
+                    <div className="mb-3">
+                      <div className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">Run Fit</div>
+                      <div className="mt-1 text-2xl font-extrabold tracking-tight text-slate-900">{runFitTitle}</div>
+                      <div className="mt-1 text-sm text-slate-600">
+                        Build run-fit answer boards from the same formation shells we use in Blitz Mode.
+                      </div>
+                    </div>
+                    <TrainingField
+                      offensePlayers={runFitPreview.offensePlayers}
+                      defensePlayers={runFitPreview.defensePlayers}
+                      routeOverlays={runFitDisplayOverlays}
+                      fieldTags={runFitFieldTags}
+                      enhancedLandmarks
+                      onFieldClick={showRunFitAdminTools ? handleRunFitFieldClick : undefined}
+                      onFieldDoubleClick={showRunFitAdminTools ? handleRunFitFieldDoubleClick : undefined}
+                    />
+                  </div>
+                </div>
+                <div className="space-y-3 rounded-2xl border bg-white p-4 text-sm text-slate-600">
+                  <div className="rounded-xl border bg-slate-50 p-3">
+                    <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Formation</div>
+                    <Select value={selectedRunFitBaseBoardId} onValueChange={(value: BlitzBaseBoardId) => loadRunFitBaseBoard(value)}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-80 overflow-y-auto">
+                        {(["2x2", "3x1"] as const).map((structure) => (
+                          <SelectGroup key={structure}>
+                            <SelectLabel>{structure}</SelectLabel>
+                            {BLITZ_BASE_BOARD_OPTIONS
+                              .filter((option) => BLITZ_BOARD_STRUCTURE[option.value] === structure)
+                              .sort((a, b) => a.label.localeCompare(b.label))
+                              .map((option) => (
+                                <SelectItem key={option.value} value={option.value}>
+                                  {option.label}
+                                </SelectItem>
+                              ))}
+                          </SelectGroup>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="rounded-xl border bg-slate-50 p-3">
+                    <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Saved Boards</div>
+                    <Select value={selectedRunFitBoardId} onValueChange={loadRunFitBoard}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-80 overflow-y-auto">
+                        <SelectItem value="working">Working Board</SelectItem>
+                        {runFitSavedBoards.map((board) => (
+                          <SelectItem key={board.id} value={board.id}>
+                            {board.title}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <Button
+                    variant={showRunFitAdminTools ? "default" : "outline"}
+                    className="w-full rounded-xl"
+                    onClick={() => setShowRunFitAdminTools((prev) => !prev)}
+                  >
+                    {showRunFitAdminTools ? "Hide Admin Tools" : "Show Admin Tools"}
+                  </Button>
+                  {showRunFitAdminTools ? (
+                    <>
+                      <div className="rounded-xl border bg-slate-50 p-3">
+                        <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Board Title</div>
+                        <Input value={runFitTitle} onChange={(e) => setRunFitTitle(e.target.value)} />
+                      </div>
+                      <div className="rounded-xl border bg-slate-50 p-3">
+                        <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Tool</div>
+                        <Select value={runFitEditorTool} onValueChange={(value: RunFitEditorTool) => setRunFitEditorTool(value)}>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="arrow">Line</SelectItem>
+                            <SelectItem value="tag">Tag</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <div className="mt-2 text-xs text-slate-500">
+                          {runFitEditorTool === "arrow"
+                            ? "Click once to start, click for each new angle, and double-click the endpoint to finish."
+                            : "Click anywhere on the field to drop the current fit pill."}
+                        </div>
+                      </div>
+                      <div className="space-y-3 rounded-xl border border-emerald-200 bg-emerald-50/70 p-3">
+                        <div>
+                          <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-emerald-800">Premade Run Fit Pathway</div>
+                          <div className="text-xs leading-5 text-emerald-950/80">
+                            Stamp common fits for DL/LBs: gap fits plus Box and Spill at the EMOLOS.
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Defender</div>
+                            <Select value={selectedRunFitPathwayDefenderId} onValueChange={setSelectedRunFitPathwayDefenderId}>
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent className="max-h-80 overflow-y-auto">
+                                {runFitPreview.defensePlayers.map((defender) => (
+                                  <SelectItem key={defender.id} value={defender.id}>
+                                    {defender.id}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div>
+                            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Pathway</div>
+                            <Select value={selectedRunFitPathwayId} onValueChange={(value: RunFitPathwayId) => setSelectedRunFitPathwayId(value)}>
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent className="max-h-80 overflow-y-auto">
+                                {RUN_FIT_PATHWAY_OPTIONS.map((option) => (
+                                  <SelectItem key={option.value} value={option.value}>
+                                    {option.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+                        <Button className="w-full rounded-xl bg-emerald-700 text-white hover:bg-emerald-800" onClick={addRunFitPathway}>
+                          Add Run Fit Pathway
+                        </Button>
+                      </div>
+                      {runFitEditorTool === "arrow" ? (
+                        <div className="rounded-xl border bg-slate-50 p-3 space-y-3">
+                          <div>
+                            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Line Label</div>
+                            <Input value={runFitArrowLabel} onChange={(e) => setRunFitArrowLabel(e.target.value)} />
+                          </div>
+                          <div>
+                            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Line Color</div>
+                            <Select value={runFitArrowColor} onValueChange={(value: RunFitArrowColor) => setRunFitArrowColor(value)}>
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="gold">Gold</SelectItem>
+                                <SelectItem value="cyan">Cyan</SelectItem>
+                                <SelectItem value="sky">Sky</SelectItem>
+                                <SelectItem value="red">Red</SelectItem>
+                                <SelectItem value="white">White</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div>
+                            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Line End</div>
+                            <Select value={runFitLineEnd} onValueChange={(value: RunFitLineEnd) => setRunFitLineEnd(value)}>
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="square">Square</SelectItem>
+                                <SelectItem value="circle">Circle</SelectItem>
+                                <SelectItem value="arrow">Arrow</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <Button className="rounded-xl" onClick={finishRunFitArrow} disabled={runFitDraftPoints.length < 2}>
+                              Finish Line
+                            </Button>
+                            <Button variant="outline" className="rounded-xl" onClick={() => setRunFitDraftPoints([])}>
+                              Cancel Draft
+                            </Button>
+                          </div>
+                          <div className="text-xs text-slate-500">Draft points: {runFitDraftPoints.length}</div>
+                        </div>
+                      ) : (
+                        <div className="rounded-xl border bg-slate-50 p-3 space-y-3">
+                          <div>
+                            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Tag Label</div>
+                            <Input value={runFitTagLabel} onChange={(e) => setRunFitTagLabel(e.target.value)} />
+                          </div>
+                          <div>
+                            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Tag Tone</div>
+                            <Select value={runFitTagTone} onValueChange={(value: FieldTag["tone"]) => setRunFitTagTone(value)}>
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="gold">Gold</SelectItem>
+                                <SelectItem value="cyan">Cyan</SelectItem>
+                                <SelectItem value="sky">Sky</SelectItem>
+                                <SelectItem value="default">Default</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+                      )}
+                      <div className="grid grid-cols-2 gap-2">
+                        <Button className="rounded-xl" onClick={saveRunFitBoard}>
+                          Save Board
+                        </Button>
+                        <Button variant="outline" className="rounded-xl" onClick={resetRunFitSample}>
+                          Reset Sample
+                        </Button>
+                        <Button
+                          variant="outline"
+                          className="rounded-xl"
+                          onClick={() => setRunFitRouteOverlays((prev) => prev.slice(0, -1))}
+                          disabled={!runFitRouteOverlays.length}
+                        >
+                          Undo Line
+                        </Button>
+                        <Button
+                          variant="outline"
+                          className="rounded-xl"
+                          onClick={() => setRunFitFieldTags((prev) => prev.slice(0, -1))}
+                          disabled={!runFitFieldTags.length}
+                        >
+                          Undo Tag
+                        </Button>
+                      </div>
+                    </>
+                  ) : null}
+                  {runFitSaveNotice ? (
+                    <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
+                      {runFitSaveNotice}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+              ) : (
+                <div className="rounded-2xl border bg-white p-6 text-center text-slate-700">
+                  <div className="text-lg font-semibold">Admin Access Required</div>
+                  <div className="mt-2 text-sm text-slate-500">
+                    Run Fit Mode is still being built and is hidden from players for now.
+                  </div>
+                </div>
+              )
+            ) : mode === "blitz" ? (
+              <div className="grid gap-4 lg:grid-cols-[1fr_360px]">
+                <div className="space-y-4">
+                  <div className="rounded-2xl border bg-white p-4">
+                    <div className="mb-3">
+                      <div className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">Blitz Mode</div>
+                      <div className="mt-1 text-2xl font-extrabold tracking-tight text-slate-900">{blitzTitle}</div>
+                      <div className="mt-1 text-sm text-slate-600">
+                        Pick a formation, defensive shell, and blitz call, then stamp premade pathways to build the answer key.
+                      </div>
+                    </div>
+                    <TrainingField
+                      offensePlayers={blitzPreview.offensePlayers}
+                      defensePlayers={blitzPreview.defensePlayers}
+                      routeOverlays={blitzDisplayOverlays}
+                      routeOverlaysOnTop
+                      fieldTags={blitzFieldTags}
+                      enhancedLandmarks
+                      wideFieldMarks
+                      losReferenceY={blitzPreview.losY}
+                    />
+                  </div>
+                </div>
+                <div className="space-y-3 rounded-2xl border bg-white p-4 text-sm text-slate-600">
+                  <div className="rounded-xl border bg-slate-50 p-3">
+                    <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Defense</div>
+                    <Select value={selectedBlitzFrontMode} onValueChange={(value: FrontMode) => loadBlitzFrontMode(value)}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="4-4">4-4</SelectItem>
+                        <SelectItem value="4-3">4-3</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="rounded-xl border bg-slate-50 p-3">
+                    <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Saved Blitz Boards</div>
+                    <div className="grid gap-2">
+                      <Select value={selectedBlitzCallFamilyId} onValueChange={(value: BlitzCallFamilyId) => loadBlitzStructuredSelection({ familyId: value })}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="max-h-80 overflow-y-auto">
+                          {BLITZ_CALL_FAMILY_OPTIONS.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Select value={selectedBlitzCallType} onValueChange={(value: BlitzCallType) => loadBlitzStructuredSelection({ callType: value })}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {(Object.entries(BLITZ_CALL_MATRIX[selectedBlitzCallFamilyId]) as [BlitzCallType, BlitzCallId][]).map(([callType, callId]) => (
+                            <SelectItem key={callType} value={callType}>
+                              {getBlitzCallLabel(callId)}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Select value={selectedBlitzBaseBoardId} onValueChange={(value: BlitzBaseBoardId) => loadBlitzStructuredSelection({ baseBoardId: value })}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="max-h-80 overflow-y-auto">
+                          {(["2x2", "3x1"] as const).map((structure) => (
+                            <SelectGroup key={structure}>
+                              <SelectLabel>{structure}</SelectLabel>
+                              {BLITZ_BASE_BOARD_OPTIONS
+                                .filter((option) => BLITZ_BOARD_STRUCTURE[option.value] === structure)
+                                .sort((a, b) => a.label.localeCompare(b.label))
+                                .map((option) => (
+                                  <SelectItem key={option.value} value={option.value}>
+                                    {option.label}
+                                  </SelectItem>
+                                ))}
+                            </SelectGroup>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <div className="rounded-lg border bg-white p-2 text-xs leading-5 text-slate-600">
+                        {selectedStructuredBlitzBoard ? `Loaded: ${selectedStructuredBlitzBoard.title}` : "No saved board yet for this family / type / formation."}
+                      </div>
+                    </div>
+                  </div>
+                  {currentUser?.isAdmin ? (
+                    <>
+                      <Button
+                        variant={showBlitzAdminTools ? "default" : "outline"}
+                        className="w-full rounded-xl"
+                        onClick={() => setShowBlitzAdminTools((prev) => !prev)}
+                      >
+                        {showBlitzAdminTools ? "Hide Admin Tools" : "Show Admin Tools"}
+                      </Button>
+                      {showBlitzAdminTools ? (
+                        <>
+                          <div className="rounded-xl border bg-slate-50 p-3">
+                            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Board Title</div>
+                            <Input value={blitzTitle} onChange={(e) => setBlitzTitle(e.target.value)} />
+                          </div>
+                          <div className="space-y-3 rounded-xl border border-amber-200 bg-amber-50/70 p-3">
+                            <div>
+                              <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-amber-800">Blitz Call Template</div>
+                              <div className="text-xs leading-5 text-amber-950/80">
+                                Apply the full call, then tweak individual defenders below if needed.
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2">
+                              <Select value={selectedBlitzCallFamilyId} onValueChange={(value: BlitzCallFamilyId) => loadBlitzStructuredSelection({ familyId: value })}>
+                                <SelectTrigger>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent className="max-h-80 overflow-y-auto">
+                                  {BLITZ_CALL_FAMILY_OPTIONS.map((option) => (
+                                    <SelectItem key={option.value} value={option.value}>
+                                      {option.label}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              <Select value={selectedBlitzCallType} onValueChange={(value: BlitzCallType) => loadBlitzStructuredSelection({ callType: value })}>
+                                <SelectTrigger>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {(Object.entries(BLITZ_CALL_MATRIX[selectedBlitzCallFamilyId]) as [BlitzCallType, BlitzCallId][]).map(([callType, callId]) => (
+                                    <SelectItem key={callType} value={callType}>
+                                      {getBlitzCallLabel(callId)}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div className="rounded-lg border border-amber-200 bg-white/70 p-2 text-xs leading-5 text-amber-950">
+                              <div className="font-semibold">{selectedBlitzCallOption.family} • {BLITZ_CALL_TYPE_LABELS[selectedBlitzCallType]}</div>
+                              <div>{selectedBlitzCallOption.detail}</div>
+                            </div>
+                            <div className="grid grid-cols-3 gap-2">
+                              <Button className="rounded-xl bg-amber-500 text-slate-950 hover:bg-amber-400" onClick={applyBlitzCallTemplate}>
+                                Apply Current
+                              </Button>
+                              <Button variant="outline" className="rounded-xl border-amber-300 bg-white/70 text-amber-950 hover:bg-amber-100" onClick={applyBlitzCallTemplateToAllBoards}>
+                                Apply Call
+                              </Button>
+                              <Button variant="outline" className="rounded-xl border-amber-300 bg-white/70 text-amber-950 hover:bg-amber-100" onClick={applyEveryBlitzTemplateToAllBoards}>
+                                Apply All
+                              </Button>
+                            </div>
+                          </div>
+                          <div className="space-y-3 rounded-xl border border-red-100 bg-red-50/60 p-3">
+                            <div>
+                              <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-red-700">Premade Pathway</div>
+                              <div className="text-xs leading-5 text-red-900/80">
+                                Stamp a structured assignment onto the board. These are the first gradeable pathway building blocks.
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2">
+                              <div>
+                                <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Defender</div>
+                                <Select value={selectedBlitzPathwayDefenderId} onValueChange={setSelectedBlitzPathwayDefenderId}>
+                                  <SelectTrigger>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent className="max-h-80 overflow-y-auto">
+                                    {blitzPreview.defensePlayers.map((defender) => (
+                                      <SelectItem key={defender.id} value={defender.id}>
+                                        {defender.id}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div>
+                                <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Pathway</div>
+                                <Select value={selectedBlitzPathwayId} onValueChange={(value: BlitzPathwayId) => setSelectedBlitzPathwayId(value)}>
+                                  <SelectTrigger>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent className="max-h-80 overflow-y-auto">
+                                    {BLITZ_PATHWAY_OPTIONS.map((option) => (
+                                      <SelectItem key={option.value} value={option.value}>
+                                        {option.label}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            </div>
+                            <Button className="w-full rounded-xl bg-red-600 text-white hover:bg-red-700" onClick={addBlitzPathway}>
+                              Add Pathway
+                            </Button>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <Button className="rounded-xl" onClick={saveBlitzBoard}>
+                              Save Board
+                            </Button>
+                            <Button variant="outline" className="rounded-xl" onClick={resetBlitzSample}>
+                              Reset Board
+                            </Button>
+                            <Button
+                              variant="outline"
+                              className="rounded-xl"
+                              onClick={() => setBlitzRouteOverlays((prev) => prev.slice(0, -1))}
+                              disabled={!blitzRouteOverlays.length}
+                            >
+                              Undo Line
+                            </Button>
+                            <Button
+                              variant="outline"
+                              className="rounded-xl border-red-200 text-red-700 hover:bg-red-50"
+                              onClick={deleteBlitzBoard}
+                              disabled={selectedBlitzBoardId === "working"}
+                            >
+                              Delete Board
+                            </Button>
+                          </div>
+                        </>
+                      ) : null}
+                    </>
+                  ) : (
+                    <div className="rounded-xl border bg-slate-50 p-3 text-sm leading-6 text-slate-700">
+                      Blitz Mode will let players study each defender&apos;s assignment once the answer keys are built.
+                    </div>
+                  )}
+                  {blitzSaveNotice ? (
+                    <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-900">
+                      {blitzSaveNotice}
+                    </div>
+                  ) : null}
+                </div>
               </div>
             ) : mode === "concept" ? (
               <div className="space-y-4">
