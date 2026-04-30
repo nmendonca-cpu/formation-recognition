@@ -1062,7 +1062,7 @@ function buildFoothillFormation(call: string, wide = false): FormationMeta {
   const add = (id: string, x: number, y: number) => players.push({ id, x, y });
 
   if (!isEmpty) {
-    add("RB", isGun ? (isKing ? 42 : isQueen ? 58 : 50) : 50, isGun ? QB_GUN_Y : RB_DOT_Y);
+    add("RB", isGun ? (isKing ? 58 : isQueen ? 42 : 50) : 50, isGun ? QB_GUN_Y : RB_DOT_Y);
   }
 
   switch (base) {
@@ -3370,6 +3370,7 @@ function TrainingField({
   incorrectDefenseIds = [],
   overlayLabel,
   flipOffense = false,
+  flipHorizontalPerspective = false,
   editableOffense = false,
   editableDefense = false,
   offenseGhostOffset = 0,
@@ -3399,6 +3400,7 @@ function TrainingField({
   incorrectDefenseIds?: string[];
   overlayLabel?: string;
   flipOffense?: boolean;
+  flipHorizontalPerspective?: boolean;
   editableOffense?: boolean;
   editableDefense?: boolean;
   offenseGhostOffset?: number;
@@ -3411,6 +3413,7 @@ function TrainingField({
   onFieldDoubleClick?: (x: number, y: number) => void;
 }) {
   const [drag, setDrag] = useState<{ id: string; type: "offense" | "defense" | "defense_ghost" } | null>(null);
+  const maybeFlipX = (x: number, enabled: boolean) => (enabled ? 100 - x : x);
   const maybeFlipY = (y: number, enabled: boolean) => (enabled ? 100 - y : y);
   const fieldWide = editableDefense || wideFieldMarks;
   const hashXs = [getHash("left", fieldWide), getHash("right", fieldWide)];
@@ -3427,7 +3430,8 @@ function TrainingField({
 
   const getPointer = (e: React.PointerEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
-    const { x, rawY } = getRawPoint(e.clientX, e.clientY, rect);
+    const { x: rawX, rawY } = getRawPoint(e.clientX, e.clientY, rect);
+    const x = drag?.type === "offense" && flipHorizontalPerspective ? 100 - rawX : rawX;
     const y = drag?.type === "offense" && flipOffense ? 100 - rawY : rawY;
     return { x, y };
   };
@@ -3484,7 +3488,7 @@ function TrainingField({
       {routeOverlays.map((route) => (
         <g key={route.id}>
           <polyline
-            points={route.path.map((point) => `${point.x},${maybeFlipY(point.y, flipOffense)}`).join(" ")}
+            points={route.path.map((point) => `${maybeFlipX(point.x, flipHorizontalPerspective)},${maybeFlipY(point.y, flipOffense)}`).join(" ")}
             fill="none"
             stroke={route.color}
             strokeWidth="0.7"
@@ -3496,7 +3500,7 @@ function TrainingField({
           {route.labelX !== undefined && route.labelY !== undefined ? (
             <>
               <rect
-                x={route.labelX - 2.8}
+                x={maybeFlipX(route.labelX, flipHorizontalPerspective) - 2.8}
                 y={maybeFlipY(route.labelY, flipOffense) - 2.45}
                 width="7.2"
                 height="4.2"
@@ -3504,7 +3508,7 @@ function TrainingField({
                 fill="rgba(15,23,42,0.68)"
               />
               <text
-                x={route.labelX + 0.8}
+                x={maybeFlipX(route.labelX, flipHorizontalPerspective) + 0.8}
                 y={maybeFlipY(route.labelY, flipOffense)}
                 textAnchor="middle"
                 dominantBaseline="middle"
@@ -3532,13 +3536,15 @@ function TrainingField({
         if (!onFieldClick || drag) return;
         if (e.detail > 1) return;
         const rect = e.currentTarget.getBoundingClientRect();
-        const { x, rawY } = getRawPoint(e.clientX, e.clientY, rect);
+        const { x: rawX, rawY } = getRawPoint(e.clientX, e.clientY, rect);
+        const x = flipHorizontalPerspective ? 100 - rawX : rawX;
         onFieldClick(x, flipOffense ? 100 - rawY : rawY);
       }}
       onDoubleClick={(e) => {
         if (!onFieldDoubleClick || drag) return;
         const rect = e.currentTarget.getBoundingClientRect();
-        const { x, rawY } = getRawPoint(e.clientX, e.clientY, rect);
+        const { x: rawX, rawY } = getRawPoint(e.clientX, e.clientY, rect);
+        const x = flipHorizontalPerspective ? 100 - rawX : rawX;
         onFieldDoubleClick(x, flipOffense ? 100 - rawY : rawY);
       }}
     >
@@ -3603,7 +3609,7 @@ function TrainingField({
       ))}
 
       {offenseLandmarks.map((p) => (
-        <div key={p.id} className="absolute -translate-x-1/2 -translate-y-1/2" style={{ left: `${p.x}%`, top: `${maybeFlipY(p.y, flipOffense)}%` }}>
+        <div key={p.id} className="absolute -translate-x-1/2 -translate-y-1/2" style={{ left: `${maybeFlipX(p.x, flipHorizontalPerspective)}%`, top: `${maybeFlipY(p.y, flipOffense)}%` }}>
           <div className="h-2 w-2 rounded-full border border-pink-100/80 bg-pink-200/50" />
         </div>
       ))}
@@ -3651,7 +3657,7 @@ function TrainingField({
           <div
             key={tag.id}
             className={`absolute -translate-x-1/2 -translate-y-1/2 rounded-md border px-2 py-1 text-[10px] font-black uppercase tracking-[0.12em] shadow-sm ${toneClass}`}
-            style={{ left: `${tag.x}%`, top: `${maybeFlipY(tag.y, flipOffense)}%` }}
+            style={{ left: `${maybeFlipX(tag.x, flipHorizontalPerspective)}%`, top: `${maybeFlipY(tag.y, flipOffense)}%` }}
           >
             {tag.label}
           </div>
@@ -3659,7 +3665,7 @@ function TrainingField({
       })}
 
       {offenseGhosts.map((p) => (
-        <div key={`og-${p.id}`} className="absolute -translate-x-1/2 -translate-y-1/2" style={{ left: `${clamp(p.x + offenseGhostOffset, 2, 98)}%`, top: `${maybeFlipY(p.y, flipOffense)}%` }}>
+        <div key={`og-${p.id}`} className="absolute -translate-x-1/2 -translate-y-1/2" style={{ left: `${clamp(maybeFlipX(p.x, flipHorizontalPerspective) + offenseGhostOffset, 2, 98)}%`, top: `${maybeFlipY(p.y, flipOffense)}%` }}>
           <div className="flex h-10 w-10 items-center justify-center rounded-full border-2 border-red-300 border-dashed bg-white/80 text-[10px] font-bold text-slate-900">{p.id}</div>
         </div>
       ))}
@@ -3687,7 +3693,7 @@ function TrainingField({
           }}
         >
           <Circle
-            player={{ ...p, y: maybeFlipY(p.y, flipOffense) }}
+            player={{ ...p, x: maybeFlipX(p.x, flipHorizontalPerspective), y: maybeFlipY(p.y, flipOffense) }}
             color={incorrectOffenseIds.includes(p.id) ? "bg-red-500" : undefined}
             border={incorrectOffenseIds.includes(p.id) ? "border-red-300" : undefined}
           />
@@ -10429,6 +10435,7 @@ const existingStats =
                     dimOffenseOnAnswers={showOffenseCheck}
                     editableOffense={offenseBuildViewMode === "quiz"}
                     flipOffense
+                    flipHorizontalPerspective
                     onMoveOffense={offenseBuildViewMode === "quiz" ? moveOffense : undefined}
                     incorrectOffenseIds={offenseBuildViewMode === "quiz" && showOffenseCheck ? offenseCheck.incorrectIds : []}
                     offenseGhosts={offenseBuildViewMode === "quiz" && showOffenseCheck ? offenseCheck.ghosts : []}
