@@ -961,6 +961,16 @@ function getBlitzHash(side: Side) {
   return side === "right" ? 64 : 36;
 }
 
+function getOppositeSide(side: Side): Side {
+  return side === "left" ? "right" : "left";
+}
+
+function flipCallSide(call: string) {
+  if (call.includes("Right")) return call.replace("Right", "Left");
+  if (call.includes("Left")) return call.replace("Left", "Right");
+  return call;
+}
+
 function getMidpoint(a: number, b: number) {
   return (a + b) / 2;
 }
@@ -2747,28 +2757,27 @@ function buildBlitzBoardShell(baseBoardId: BlitzBaseBoardId, frontMode: FrontMod
   const boardOption = BLITZ_BASE_BOARD_OPTIONS.find((option) => option.value === baseBoardId) ?? BLITZ_BASE_BOARD_OPTIONS[0];
   const call = boardOption.call;
   const baseFormation = buildFoothillFormation(call, true);
+  const fieldCall = boardSpot === "hash" && baseFormation.passStrength !== "left" ? flipCallSide(call) : call;
+  const fieldFormation = fieldCall === call ? baseFormation : buildFoothillFormation(fieldCall, true);
   const ballX = boardSpot === "hash" ? getBlitzHash("right") : 50;
   const horizontalShift = ballX - 50;
   const shiftX = (player: PlayerDot) => ({ ...player, x: clamp(player.x + horizontalShift, 3, 97) });
-  const formation = {
-    ...baseFormation,
-    players: baseFormation.players.map(shiftX),
-  };
-  const alignmentLandmarks = getAlignmentLandmarks(formation);
-  const answerKey = getAlignmentAnswerKey(formation, alignmentLandmarks, frontMode);
-  const ySurface = formation.players.find((player) => player.id === "Y");
+  const alignmentLandmarks = getAlignmentLandmarks(fieldFormation);
+  const answerKey = getAlignmentAnswerKey(fieldFormation, alignmentLandmarks, frontMode);
+  const ySurface = fieldFormation.players.find((player) => player.id === "Y");
   const verticalShift = -14;
   const blitzLosY = LOS_Y + verticalShift;
   const blitzWingY = WING_Y + verticalShift;
   const shiftY = (player: PlayerDot) => ({ ...player, y: clamp(player.y + verticalShift, 3, 97) });
-  const lineXs = getFormationLineXs(formation);
+  const shiftBoard = (player: PlayerDot) => shiftY(shiftX(player));
+  const lineXs = getFormationLineXs(fieldFormation);
   const yTackleX = ySurface ? (ySurface.x < 50 ? lineXs[0] : lineXs[4]) : null;
   const yAttachedToSurface = Boolean(ySurface && yTackleX !== null && Math.abs(ySurface.y - LOS_Y) < 1.25 && Math.abs(ySurface.x - yTackleX) <= 8);
   const defensePlayers = getDefensePlayersFromAnswerKey(answerKey).map((defender) => (
     defender.id === "SDE" && ySurface && yAttachedToSurface
       ? { ...defender, x: ySurface.x, y: DL_Y }
       : defender
-  )).map(shiftY);
+  )).map(shiftBoard);
 
   return {
     id: baseBoardId,
@@ -2776,11 +2785,11 @@ function buildBlitzBoardShell(baseBoardId: BlitzBaseBoardId, frontMode: FrontMod
     subtitle: `Default Newton ${frontMode} install board against ${boardOption.label}${boardSpot === "hash" ? " with the ball on the right hash" : ""}.`,
     boardSpot,
     hashXs: boardSpot === "hash" ? [getBlitzHash("left"), getBlitzHash("right")] : undefined,
-    runStrength: formation.runStrength,
-    passStrength: formation.passStrength,
+    runStrength: fieldFormation.runStrength,
+    passStrength: fieldFormation.passStrength,
     losY: blitzLosY,
     wingY: blitzWingY,
-    offensePlayers: formation.players.map(shiftY),
+    offensePlayers: fieldFormation.players.map(shiftBoard),
     defensePlayers,
     routeOverlays: [] as RouteOverlay[],
     fieldTags: [] as FieldTag[],
@@ -2844,13 +2853,28 @@ function getBlitzGapTargetX(offensePlayers: PlayerDot[], gap: "A" | "B" | "C", s
   return side === "left" ? leftTackle - 5 : rightTackle + 5;
 }
 
+function getBlitzOriginX(offensePlayers: PlayerDot[]) {
+  return offensePlayers.find((player) => player.id === "C")?.x ?? 50;
+}
+
+function getBlitzRelativeX(offensePlayers: PlayerDot[], centeredX: number) {
+  return clamp(getBlitzOriginX(offensePlayers) + centeredX - 50, 3, 97);
+}
+
+function getBlitzCoverageHashX(offensePlayers: PlayerDot[], side: Side) {
+  const originX = getBlitzOriginX(offensePlayers);
+  if (Math.abs(originX - getBlitzHash("right")) < 1.5) return getBlitzHash(side);
+  return getHash(side, true);
+}
+
 function getBlitzEdgePressureTargetX(offensePlayers: PlayerDot[], side: Side, losY = LOS_Y, wingY = WING_Y) {
   const awayFromCenter = side === "left" ? -1 : 1;
   const byId = Object.fromEntries(offensePlayers.map((player) => [player.id, player])) as Record<string, PlayerDot | undefined>;
   const tackleX = side === "left" ? byId.LT?.x ?? 34 : byId.RT?.x ?? 66;
+  const originX = getBlitzOriginX(offensePlayers);
   const sidePlayers = offensePlayers.filter((player) => (
     ![...FIXED_OL_IDS, "QB", "RB", "R", "F", "FB"].includes(player.id as any)
-    && (side === "left" ? player.x < 50 : player.x > 50)
+    && (side === "left" ? player.x < originX : player.x > originX)
   ));
   const linePlayers = sidePlayers.filter((player) => Math.abs(player.y - losY) < 1.25 && Math.abs(player.x - tackleX) <= 7);
   const wingPlayers = sidePlayers.filter((player) => Math.abs(player.y - wingY) < 1.75 && Math.abs(player.x - tackleX) <= 14);
@@ -2874,17 +2898,19 @@ function getBlitzEdgePressureTargetX(offensePlayers: PlayerDot[], side: Side, lo
 }
 
 function getBlitzOrderedEligibles(offensePlayers: PlayerDot[], side: Side) {
+  const originX = getBlitzOriginX(offensePlayers);
   return offensePlayers
     .filter((player) => ![...FIXED_OL_IDS, "QB"].includes(player.id as any))
-    .filter((player) => side === "left" ? player.x < 50 : player.x > 50)
+    .filter((player) => side === "left" ? player.x < originX : player.x > originX)
     .sort((a, b) => side === "left" ? a.x - b.x : b.x - a.x);
 }
 
 function getBlitzBackfieldEligible(offensePlayers: PlayerDot[], side: Side) {
+  const originX = getBlitzOriginX(offensePlayers);
   return offensePlayers
     .filter((player) => ["RB", "R", "F", "FB"].includes(player.id))
-    .filter((player) => side === "left" ? player.x < 50 : player.x > 50)
-    .sort((a, b) => Math.abs(a.x - 50) - Math.abs(b.x - 50))[0] ?? null;
+    .filter((player) => side === "left" ? player.x < originX : player.x > originX)
+    .sort((a, b) => Math.abs(a.x - originX) - Math.abs(b.x - originX))[0] ?? null;
 }
 
 function getBlitzEyesTargetX(offensePlayers: PlayerDot[], side: Side, passStrength: Side) {
@@ -2893,7 +2919,7 @@ function getBlitzEyesTargetX(offensePlayers: PlayerDot[], side: Side, passStreng
   const weakEligibles = getBlitzOrderedEligibles(offensePlayers, weakSide);
   const isThreeByOne = strongEligibles.length >= 3 && weakEligibles.length <= 1;
 
-  if (!isThreeByOne) return getHash(side, true);
+  if (!isThreeByOne) return getBlitzCoverageHashX(offensePlayers, side);
 
   if (side === passStrength) {
     const numberTwo = strongEligibles[1];
@@ -2904,7 +2930,7 @@ function getBlitzEyesTargetX(offensePlayers: PlayerDot[], side: Side, passStreng
   const numberThree = strongEligibles[2];
   const weakNumberTwo = weakEligibles[1] ?? getBlitzBackfieldEligible(offensePlayers, weakSide) ?? weakEligibles[0];
   if (numberThree && weakNumberTwo) return getMidpoint(numberThree.x, weakNumberTwo.x);
-  return getHash(side, true);
+  return getBlitzCoverageHashX(offensePlayers, side);
 }
 
 function buildBlitzPathwayOverlay({
@@ -2930,7 +2956,8 @@ function buildBlitzPathwayOverlay({
   frontMode?: FrontMode;
   layer?: "pressure" | "coverage" | "dl";
 }): RouteOverlay {
-  const side: Side = defender.x < 50 ? "left" : "right";
+  const originX = getBlitzOriginX(offensePlayers);
+  const side: Side = defender.x < originX ? "left" : "right";
   const passAway: Side = passStrength === "left" ? "right" : "left";
   const runWeak: Side = (runStrength ?? passStrength) === "left" ? "right" : "left";
   const stroke = getBlitzPathwayStroke(pathwayId, layer);
@@ -3002,49 +3029,50 @@ function buildBlitzPathwayOverlay({
       { x: clamp(defender.x + slantDirection * 12, 3, 97), y: losY - 3 },
     ];
   } else if (pathwayId === "curl_flat" || pathwayId === "weak_curl_flat") {
-    const targetX = getHash(pathwayId === "weak_curl_flat" ? passAway : side, true);
+    const targetX = getBlitzCoverageHashX(offensePlayers, pathwayId === "weak_curl_flat" ? passAway : side);
     const isSafety = ["FS", "BS"].includes(defender.id);
     path = makeCoveragePath(targetX, isSafety && frontMode === "4-3" ? getMidpoint(defender.y, losY) : defender.y + 15);
   } else if (pathwayId === "wall_flat" || pathwayId === "weak_wall_flat") {
-    path = makeCoveragePath(getHash(pathwayId === "weak_wall_flat" ? passAway : side, true), defender.y + 16);
+    path = makeCoveragePath(getBlitzCoverageHashX(offensePlayers, pathwayId === "weak_wall_flat" ? passAway : side), defender.y + 16);
   } else if (pathwayId === "strong_hook" || pathwayId === "weak_hook") {
     const hookSide = pathwayId === "strong_hook" ? passStrength : passAway;
-    const targetX = hookSide === "left" ? 42 : 58;
+    const targetX = getBlitzRelativeX(offensePlayers, hookSide === "left" ? 42 : 58);
     const isSafety = ["FS", "BS"].includes(defender.id);
     path = makeCoveragePath(targetX, isSafety && frontMode === "4-3" ? getMidpoint(defender.y, losY) : defender.y + 14);
   } else if (pathwayId === "hole") {
-    path = makeCoveragePath(50, getMidpoint(losY, 88));
+    path = makeCoveragePath(originX, getMidpoint(losY, 88));
   } else if (pathwayId === "eyes" || pathwayId === "strong_eyes" || pathwayId === "weak_eyes") {
     const eyesSide = pathwayId === "strong_eyes" ? passStrength : pathwayId === "weak_eyes" ? passAway : side;
     const targetX = getBlitzEyesTargetX(offensePlayers, eyesSide, passStrength);
     path = makeCoveragePath(targetX, defender.y + 14);
   } else if (pathwayId === "vert_hook") {
-    path = makeCoveragePath(side === "left" ? 43 : 57, defender.y + 17);
+    path = makeCoveragePath(getBlitzRelativeX(offensePlayers, side === "left" ? 43 : 57), defender.y + 17);
   } else if (pathwayId === "cb_flat") {
-    path = makeCoveragePath(getHash(side, true), getMidpoint(defender.y, losY));
+    path = makeCoveragePath(getBlitzCoverageHashX(offensePlayers, side), getMidpoint(defender.y, losY));
   } else if (pathwayId === "quarter") {
-    path = makeCoveragePath(side === "left" ? 25 : 75, 88);
+    path = makeCoveragePath(getBlitzRelativeX(offensePlayers, side === "left" ? 25 : 75), 88);
   } else if (pathwayId === "drop_hook") {
-    const targetX = side === "left" ? 36 : 64;
+    const targetX = getBlitzRelativeX(offensePlayers, side === "left" ? 36 : 64);
     path = [
       { x: defender.x, y: defender.y },
       { x: getMidpoint(defender.x, targetX), y: defender.y + 7 },
       { x: targetX, y: defender.y + 15 },
     ];
   } else if (pathwayId === "drop_curl_flat") {
-    const targetX = getHash(side, true);
+    const targetX = getBlitzCoverageHashX(offensePlayers, side);
     path = makeCoveragePath(targetX, defender.y + 13);
   } else if (pathwayId === "mof") {
-    path = makeCoveragePath(50, 88);
+    path = makeCoveragePath(originX, 88);
   } else if (pathwayId === "deep_third_left") {
-    path = makeCoveragePath(20, 88);
+    path = makeCoveragePath(getBlitzRelativeX(offensePlayers, 20), 88);
   } else if (pathwayId === "deep_third_middle") {
-    path = makeCoveragePath(50, 88);
+    path = makeCoveragePath(originX, 88);
   } else {
+    const fallbackX = getBlitzRelativeX(offensePlayers, 80);
     path = [
       { x: defender.x, y: defender.y },
-      { x: getMidpoint(defender.x, 80), y: getMidpoint(defender.y, 88) },
-      { x: 80, y: 88 },
+      { x: getMidpoint(defender.x, fallbackX), y: getMidpoint(defender.y, 88) },
+      { x: fallbackX, y: 88 },
     ];
   }
   path = trimPathStartToCircleEdge(path);
@@ -3096,9 +3124,10 @@ function getBlitzTemplateAssignments({
 }): { defenderId: string; pathwayId: BlitzPathwayId; layer?: "pressure" | "coverage" | "dl" }[] {
   const assignments: { defenderId: string; pathwayId: BlitzPathwayId; layer?: "pressure" | "coverage" | "dl" }[] = [];
   const usedDefenders = new Set<string>();
+  const originX = getBlitzOriginX(offensePlayers);
   const defenderSide = (defenderId: string): Side => {
     const defender = defensePlayers.find((player) => player.id === defenderId);
-    return defender && defender.x < 50 ? "left" : "right";
+    return defender && defender.x < originX ? "left" : "right";
   };
   const oppositeEnd = (side: Side) => side === "left" ? "SDE" : "WDE";
   const slantAway = (side: Side): BlitzPathwayId => side === "left" ? "one_gap_slant_right" : "one_gap_slant_left";
@@ -3157,7 +3186,7 @@ function getBlitzTemplateAssignments({
   const passAway: Side = passStrength === "left" ? "right" : "left";
   const weakSideEligibleCount = offensePlayers.filter((player) => (
     ![...FIXED_OL_IDS, "QB", "RB", "R", "F", "FB"].includes(player.id as any)
-    && (passAway === "left" ? player.x < 50 : player.x > 50)
+    && (passAway === "left" ? player.x < originX : player.x > originX)
   )).length;
   const getDropperPathway = (dropperId: string, pressureSide: Side): BlitzPathwayId => {
     const dropperSide = pressureSide === "left" ? "right" : "left";
