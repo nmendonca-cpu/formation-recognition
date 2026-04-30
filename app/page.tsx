@@ -1062,7 +1062,7 @@ function buildFoothillFormation(call: string, wide = false): FormationMeta {
   const add = (id: string, x: number, y: number) => players.push({ id, x, y });
 
   if (!isEmpty) {
-    add("RB", isGun ? (isKing ? 58 : isQueen ? 42 : 50) : 50, isGun ? QB_GUN_Y : RB_DOT_Y);
+    add("RB", isGun ? (isKing ? 42 : isQueen ? 58 : 50) : 50, isGun ? QB_GUN_Y : RB_DOT_Y);
   }
 
   switch (base) {
@@ -3878,6 +3878,8 @@ export default function FormationRecognitionWorkingApp() {
   const [mode, setMode] = useState<AppMode>("study");
   const [currentUser, setCurrentUser] = useState<UserRecord | null>(null);
   const [leaderboardEntries, setLeaderboardEntries] = useState<LeaderboardEntry[]>([]);
+  const [accountDirectoryEntries, setAccountDirectoryEntries] = useState<LeaderboardEntry[]>([]);
+  const [showAccountDirectory, setShowAccountDirectory] = useState(false);
   const [lastScoreSummary, setLastScoreSummary] = useState<Partial<Record<"quiz" | "offense_build" | "alignment" | "film" | "concept", ScoreSummary>>>({});
   const [scoredAttemptKey, setScoredAttemptKey] = useState<string | null>(null);
   const [attemptStartedAt, setAttemptStartedAt] = useState<number>(Date.now());
@@ -4629,6 +4631,102 @@ const existingStats =
   }, [currentUser?.teamCode]);
 
   useEffect(() => {
+    const loadAccountDirectory = async () => {
+      if (!currentUser?.isAdmin || !showAccountDirectory) {
+        setAccountDirectoryEntries([]);
+        return;
+      }
+
+      const supabase = createClient();
+      let { data: profilesWithEmail, error: profilesError } = await supabase
+        .from("profiles")
+        .select("id, display_name, school, seconds_used, avatar_url, email")
+        .order("school", { ascending: true })
+        .order("display_name", { ascending: true });
+
+      if (profilesError?.code === "PGRST204" || profilesError?.message?.includes("email")) {
+        const fallbackProfiles = await supabase
+          .from("profiles")
+          .select("id, display_name, school, seconds_used, avatar_url")
+          .order("school", { ascending: true })
+          .order("display_name", { ascending: true });
+        profilesWithEmail = fallbackProfiles.data as typeof profilesWithEmail;
+        profilesError = fallbackProfiles.error;
+      }
+
+      if (profilesError) {
+        console.error("Failed to load account directory", profilesError);
+        return;
+      }
+
+      const profiles = profilesWithEmail ?? [];
+      if (!profiles.length) {
+        setAccountDirectoryEntries([]);
+        return;
+      }
+
+      const userIds = profiles.map((profile) => profile.id);
+      const { data: scoreRows, error: scoresError } = await supabase
+        .from("mode_scores")
+        .select("user_id, mode, points, attempts, correct, best_time_ms")
+        .in("user_id", userIds);
+
+      if (scoresError) {
+        console.error("Failed to load account directory scores", scoresError);
+        return;
+      }
+
+      const statsByUser = new Map<string, UserStats>();
+
+      for (const profile of profiles) {
+        const stats = emptyStats();
+        stats.secondsUsed = profile.seconds_used ?? 0;
+        statsByUser.set(profile.id, stats);
+      }
+
+      for (const row of scoreRows ?? []) {
+        if (row.mode !== "quiz" && row.mode !== "offense_build" && row.mode !== "alignment" && row.mode !== "film" && row.mode !== "concept") {
+          continue;
+        }
+
+        const stats = statsByUser.get(row.user_id);
+        if (!stats) continue;
+
+        stats[row.mode] = {
+          points: row.points ?? 0,
+          attempts: row.attempts ?? 0,
+          correct: row.correct ?? 0,
+          bestTimeMs: row.best_time_ms ?? null,
+        };
+      }
+
+      const nextEntries = profiles.map((profile) => {
+        const stats = statsByUser.get(profile.id) ?? emptyStats();
+        stats.totalPoints =
+          stats.quiz.points +
+          stats.offense_build.points +
+          stats.alignment.points +
+          stats.film.points +
+          stats.concept.points;
+
+        return {
+          id: profile.id,
+          name: profile.display_name || "User",
+          teamCode: profile.school || "No Team",
+          avatarUrl: profile.avatar_url ?? null,
+          email: profile.email ?? null,
+          isAdmin: ADMIN_EMAILS.includes((profile.email ?? "").toLowerCase()),
+          stats,
+        };
+      });
+
+      setAccountDirectoryEntries(nextEntries);
+    };
+
+    void loadAccountDirectory();
+  }, [currentUser?.isAdmin, showAccountDirectory]);
+
+  useEffect(() => {
     if (!currentUser) return;
 
     setLeaderboardEntries((prev) => {
@@ -5044,7 +5142,6 @@ const existingStats =
       .filter((group) => group.options.length > 0);
   }, [pool]);
   const activeFilmClips = useMemo(() => {
-    if (filmViewMode !== "study") return filmClips;
     if (filmSubmode === "formation_key") {
       if (filmFormationFilter === "all") return filmClips;
       return filmClips.filter((clip) => normalizeFilmFormationFamily(clip.formationKey) === filmFormationFilter);
@@ -5054,7 +5151,7 @@ const existingStats =
       return filmClips.filter((clip) => clip.teamTag === filmTeamFilter);
     }
     return filmClips;
-  }, [filmClips, filmViewMode, filmSubmode, filmFormationFilter, filmTeamFilter]);
+  }, [filmClips, filmSubmode, filmFormationFilter, filmTeamFilter]);
   const filmFormationKeyOptions = useMemo(() => {
     const grouped = new Map<string, string[]>();
 
@@ -5101,6 +5198,12 @@ const existingStats =
 
     return Array.from(optionSet).sort((a, b) => a.localeCompare(b));
   }, [currentUser?.teamCode, filmDraft.teamTag, filmEditDraft.teamTag, filmTeamTagOptions]);
+  const safeFilmFormationFilter = filmFormationFilter === "all" || filmFormationKeyOptions.some((group) => group.options.includes(filmFormationFilter))
+    ? filmFormationFilter
+    : "all";
+  const safeFilmTeamFilter = filmTeamFilter === "all" || filmTeamTagOptions.includes(filmTeamFilter)
+    ? filmTeamFilter
+    : "all";
   const filmClipGroups = useMemo(() => {
     type ClipOption = { value: string; label: string };
     type BucketGroup = { bucket: string; options: ClipOption[] };
@@ -5238,6 +5341,15 @@ const existingStats =
   }, [filmClips, selectedFilmClipId]);
 
   useEffect(() => {
+    if (filmFormationFilter !== "all" && safeFilmFormationFilter === "all") {
+      setFilmFormationFilter("all");
+    }
+    if (filmTeamFilter !== "all" && safeFilmTeamFilter === "all") {
+      setFilmTeamFilter("all");
+    }
+  }, [filmFormationFilter, filmTeamFilter, safeFilmFormationFilter, safeFilmTeamFilter]);
+
+  useEffect(() => {
     setFilmStarted(false);
     setFilmPlaybackNonce(0);
   }, [selectedFilmClipId, filmViewMode, filmSubmode]);
@@ -5287,16 +5399,10 @@ const existingStats =
   }, [selectedFilmClipId]);
 
   useEffect(() => {
-    if ((filmSubmode === "formation_key" || filmSubmode === "team_key") && filmViewMode !== "study") {
-      setFilmViewMode("study");
-    }
-  }, [filmSubmode, filmViewMode]);
-
-  useEffect(() => {
     if (mode !== "film" || !filmClips.length) return;
 
     const signature = `${mode}:${filmSubmode}:${filmViewMode}:${filmSubmode === "formation_key" ? filmFormationFilter : filmSubmode === "team_key" ? filmTeamFilter : "all"}`;
-    const clipPool = filmViewMode === "quiz" ? filmClips : activeFilmClips;
+    const clipPool = activeFilmClips;
     if (!clipPool.length) {
       if (selectedFilmClipId) setSelectedFilmClipId("");
       return;
@@ -5535,12 +5641,13 @@ const existingStats =
 
   const nextCall = () => {
     if (mode === "film") {
-      if (!filmClips.length) return;
+      const clipPool = activeFilmClips;
+      if (!clipPool.length) return;
       setSelectedFilmClipId((prev) => {
-        if (filmClips.length === 1) return filmClips[0].id;
-        const currentIndex = filmClips.findIndex((clip) => clip.id === prev);
-        const nextIndex = getRandomPoolIndex(filmClips.length, currentIndex >= 0 ? currentIndex : undefined);
-        return filmClips[nextIndex].id;
+        if (clipPool.length === 1) return clipPool[0].id;
+        const currentIndex = clipPool.findIndex((clip) => clip.id === prev);
+        const nextIndex = getRandomPoolIndex(clipPool.length, currentIndex >= 0 ? currentIndex : undefined);
+        return clipPool[nextIndex].id;
       });
       return;
     }
@@ -5633,10 +5740,11 @@ const existingStats =
   };
 
   const nextFilmQuizClip = () => {
-    if (!filmClips.length) return;
-    const currentIndex = selectedFilmClip ? filmClips.findIndex((clip) => clip.id === selectedFilmClip.id) : undefined;
-    const nextIndex = getRandomPoolIndex(filmClips.length, currentIndex);
-    setSelectedFilmClipId(filmClips[nextIndex].id);
+    const clipPool = activeFilmClips;
+    if (!clipPool.length) return;
+    const currentIndex = selectedFilmClip ? clipPool.findIndex((clip) => clip.id === selectedFilmClip.id) : undefined;
+    const nextIndex = getRandomPoolIndex(clipPool.length, currentIndex >= 0 ? currentIndex : undefined);
+    setSelectedFilmClipId(clipPool[nextIndex].id);
     setFilmQuizAnswers({
       runPass: "",
       passType: "",
@@ -7399,6 +7507,73 @@ const existingStats =
                 </SelectContent>
               </Select>
             </div>
+            {currentUser?.isAdmin ? (
+              <div className="mx-auto flex max-w-[540px] justify-center">
+                <Button
+                  variant={showAccountDirectory ? "default" : "outline"}
+                  className="rounded-xl bg-white/95 text-slate-950 hover:bg-white data-[state=open]:bg-white"
+                  onClick={() => setShowAccountDirectory((prev) => !prev)}
+                >
+                  {showAccountDirectory ? "Hide Created Accounts" : "Show Created Accounts"}
+                </Button>
+              </div>
+            ) : null}
+            {currentUser?.isAdmin && showAccountDirectory ? (
+              <div className="overflow-hidden rounded-xl border border-[#8a856f] bg-[#f8f4e6] shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]">
+                <div className="border-b border-[#8a856f] bg-[#e8e0c8] px-4 py-3">
+                  <div className="text-center text-[10px] font-bold uppercase tracking-[0.22em] text-[#5a5646]">
+                    Admin Account Directory
+                  </div>
+                  <div className="mt-1 text-center text-xs text-[#6d6857]">
+                    {accountDirectoryEntries.length} created account{accountDirectoryEntries.length === 1 ? "" : "s"}
+                  </div>
+                </div>
+                <div className="grid grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_72px_90px] items-center border-b border-[#b7b09a] bg-[#ddd4bc] px-3 py-2 text-[10px] font-bold uppercase tracking-[0.14em] text-[#5a5646]">
+                  <div className="px-2">User</div>
+                  <div className="px-2">Email</div>
+                  <div className="px-2 text-center">Points</div>
+                  <div className="px-2 text-center">Time</div>
+                </div>
+                <div className="max-h-96 overflow-y-auto">
+                  {accountDirectoryEntries.length ? (
+                    accountDirectoryEntries.map((entry, idx) => (
+                      <div
+                        key={`account-directory-${entry.id}`}
+                        className={`grid grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_72px_90px] items-center border-b border-[#d6cfb7] px-3 py-2 text-sm last:border-b-0 ${
+                          idx % 2 === 0 ? "bg-[#faf7ec]" : "bg-[#f2ecd9]"
+                        }`}
+                      >
+                        <div className="min-w-0 px-2">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <AvatarBadge name={entry.name} avatarUrl={entry.avatarUrl} className="h-8 w-8" textClassName="text-[10px]" />
+                            <div className="min-w-0">
+                              <div className="truncate font-semibold text-[#23241d]">
+                                {entry.name}
+                                {entry.isAdmin ? <span className="ml-2 rounded-full bg-[#2f5b43] px-2 py-0.5 text-[10px] uppercase tracking-wide text-white">Admin</span> : null}
+                              </div>
+                              <div className="truncate text-[11px] text-[#6d6857]">{entry.teamCode}</div>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="min-w-0 truncate px-2 text-xs text-[#4f4b3f]">
+                          {entry.email || "No email saved"}
+                        </div>
+                        <div className="px-2 text-center font-black text-[#202119]">
+                          {entry.stats.totalPoints}
+                        </div>
+                        <div className="px-2 text-center text-xs font-semibold text-[#4f4b3f]">
+                          {formatDuration(entry.stats.secondsUsed)}
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="px-4 py-6 text-center text-sm text-[#6e6a5c]">
+                      No accounts loaded yet.
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : null}
             <div className={`overflow-hidden rounded-xl border shadow-[inset_0_1px_0_rgba(255,255,255,0.7)] ${selectedLeaderboardBoard.shellClass}`}>
               <div className={`border-b bg-gradient-to-b px-4 py-3 text-center ${selectedLeaderboardBoard.columnClass.split(" ")[0]} ${selectedLeaderboardBoard.headerClass}`}>
                 <div className="flex justify-center">
@@ -8601,9 +8776,7 @@ const existingStats =
                         </SelectTrigger>
                         <SelectContent className="max-h-80 overflow-y-auto">
                           <SelectItem value="study">Study</SelectItem>
-                          {filmSubmode === "read_key" ? (
-                            <SelectItem value="quiz">Quiz</SelectItem>
-                          ) : null}
+                          <SelectItem value="quiz">Quiz</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -9341,60 +9514,60 @@ const existingStats =
                       <Shuffle className="mr-2 h-4 w-4" />
                       Random Clip
                     </Button>
+                    {filmSubmode === "formation_key" ? (
+                      <div>
+                        <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Formation Key</div>
+                        <Select value={safeFilmFormationFilter} onValueChange={setFilmFormationFilter}>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent className="max-h-80 overflow-y-auto">
+                            <SelectItem value="all">All Tagged Formations</SelectItem>
+                            {filmFormationKeyOptions.length ? (
+                              filmFormationKeyOptions.map((group) => (
+                                <SelectGroup key={group.label}>
+                                  <SelectLabel>{group.label}</SelectLabel>
+                                  {group.options.map((option) => (
+                                    <SelectItem key={`${group.label}-${option}`} value={option}>
+                                      {option}
+                                    </SelectItem>
+                                  ))}
+                                </SelectGroup>
+                              ))
+                            ) : (
+                              <SelectGroup>
+                                <SelectLabel>No Formation Keys Yet</SelectLabel>
+                              </SelectGroup>
+                            )}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    ) : filmSubmode === "team_key" ? (
+                      <div>
+                        <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Team</div>
+                        <Select value={safeFilmTeamFilter} onValueChange={setFilmTeamFilter}>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent className="max-h-80 overflow-y-auto">
+                            <SelectItem value="all">All Tagged Teams</SelectItem>
+                            {filmTeamTagOptions.length ? (
+                              filmTeamTagOptions.map((teamTag) => (
+                                <SelectItem key={teamTag} value={teamTag}>
+                                  {teamTag}
+                                </SelectItem>
+                              ))
+                            ) : (
+                              <SelectGroup>
+                                <SelectLabel>No Team Tags Yet</SelectLabel>
+                              </SelectGroup>
+                            )}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    ) : null}
                     {filmViewMode === "study" ? (
                       <>
-                        {filmSubmode === "formation_key" ? (
-                          <div>
-                            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Formation Key</div>
-                            <Select value={filmFormationFilter} onValueChange={setFilmFormationFilter}>
-                              <SelectTrigger>
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent className="max-h-80 overflow-y-auto">
-                                <SelectItem value="all">All Tagged Formations</SelectItem>
-                                {filmFormationKeyOptions.length ? (
-                                  filmFormationKeyOptions.map((group) => (
-                                    <SelectGroup key={group.label}>
-                                      <SelectLabel>{group.label}</SelectLabel>
-                                      {group.options.map((option) => (
-                                        <SelectItem key={`${group.label}-${option}`} value={option}>
-                                          {option}
-                                        </SelectItem>
-                                      ))}
-                                    </SelectGroup>
-                                  ))
-                                ) : (
-                                  <SelectGroup>
-                                    <SelectLabel>No Formation Keys Yet</SelectLabel>
-                                  </SelectGroup>
-                                )}
-                              </SelectContent>
-                            </Select>
-                          </div>
-                        ) : filmSubmode === "team_key" ? (
-                          <div>
-                            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Team</div>
-                            <Select value={filmTeamFilter} onValueChange={setFilmTeamFilter}>
-                              <SelectTrigger>
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent className="max-h-80 overflow-y-auto">
-                                <SelectItem value="all">All Tagged Teams</SelectItem>
-                                {filmTeamTagOptions.length ? (
-                                  filmTeamTagOptions.map((teamTag) => (
-                                    <SelectItem key={teamTag} value={teamTag}>
-                                      {teamTag}
-                                    </SelectItem>
-                                  ))
-                                ) : (
-                                  <SelectGroup>
-                                    <SelectLabel>No Team Tags Yet</SelectLabel>
-                                  </SelectGroup>
-                                )}
-                              </SelectContent>
-                            </Select>
-                          </div>
-                        ) : null}
                         <div>
                           <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Clip</div>
                           <Select
@@ -9449,9 +9622,9 @@ const existingStats =
                         <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Film Quiz</div>
                         <div className="mt-1 text-sm text-slate-700">
                           {filmSubmode === "formation_key"
-                            ? "Formation Key quiz is not built yet. Use study mode to sort clips by tagged formation families."
+                            ? "Formation Key quiz cycles random clips from the selected tagged formation family."
                             : filmSubmode === "team_key"
-                              ? "Team Key quiz is not built yet. Use study mode to sort clips by tagged team cutups."
+                              ? "Team Key quiz cycles random clips from the selected tagged team cutup."
                             : <>Film quiz gives players <span className="font-semibold">0 replays</span>. Pass clips ask for <span className="font-semibold">Run / Pass</span> and <span className="font-semibold">Pass Type</span>, while run clips ask for <span className="font-semibold">Run / Pass</span>, <span className="font-semibold">Scheme</span>, <span className="font-semibold">Direction</span>, and extra zone or gap detail when needed.</>}
                         </div>
                       </div>
@@ -9459,9 +9632,9 @@ const existingStats =
 
                       <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
                         {filmSubmode === "formation_key"
-                          ? <>Film Mode is set up for <span className="font-semibold">Formation Key</span>. Study mode lets coaches sort clips by tagged formations using the same language as the formation and alignment tools.</>
+                          ? <>Film Mode is set up for <span className="font-semibold">Formation Key</span>. Pick a tagged formation family to study or quiz only that bucket of clips.</>
                           : filmSubmode === "team_key"
-                            ? <>Film Mode is set up for <span className="font-semibold">Team Key</span>. Study mode lets coaches sort clips by tagged opponent or scout-team material.</>
+                            ? <>Film Mode is set up for <span className="font-semibold">Team Key</span>. Pick a team tag to study or quiz only that cutup.</>
                           : <>Film Mode is set up for <span className="font-semibold">Read Key</span>. Study mode shows the full clip immediately, while quiz mode hides the preview until the rep starts.</>}
                       </div>
 
