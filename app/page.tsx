@@ -101,6 +101,7 @@ type RunFitSavedBoard = {
   baseBoardId?: BlitzBaseBoardId;
 };
 type BlitzBaseBoardId = "double" | "trey" | "quad" | "dog" | "trips" | "troop";
+type BlitzBoardSpot = "mof" | "hash";
 type BlitzCallId =
   | "newton"
   | "panthers"
@@ -161,6 +162,7 @@ type BlitzSavedBoard = RunFitSavedBoard & {
   baseBoardId: BlitzBaseBoardId;
   frontMode?: FrontMode;
   callId?: BlitzCallId;
+  boardSpot?: BlitzBoardSpot;
 };
 
 type YardReferenceLine = {
@@ -254,6 +256,7 @@ type LeaderboardEntry = {
 type ScoreSummary = {
   awarded: number;
   total: number;
+  blockedByReveal?: boolean;
 };
 
 type FilmQuizAnswers = {
@@ -399,6 +402,10 @@ const BLITZ_BOARD_STRUCTURE: Record<BlitzBaseBoardId, "2x2" | "3x1"> = {
   trips: "3x1",
   troop: "3x1",
 };
+const BLITZ_BOARD_SPOT_OPTIONS: { value: BlitzBoardSpot; label: string }[] = [
+  { value: "mof", label: "MOF" },
+  { value: "hash", label: "Hash" },
+];
 const BLITZ_CALL_OPTIONS: { value: BlitzCallId; label: string; family: string; detail: string }[] = [
   {
     value: "newton",
@@ -948,6 +955,10 @@ function getSlot(side: Side, wide = false) {
 
 function getHash(side: Side, wide = false) {
   return getSlot(side, wide);
+}
+
+function getBlitzHash(side: Side) {
+  return side === "right" ? 64 : 36;
 }
 
 function getMidpoint(a: number, b: number) {
@@ -2732,10 +2743,17 @@ function buildSingleHighRunFitMockup() {
   };
 }
 
-function buildBlitzBoardShell(baseBoardId: BlitzBaseBoardId, frontMode: FrontMode = "4-4") {
+function buildBlitzBoardShell(baseBoardId: BlitzBaseBoardId, frontMode: FrontMode = "4-4", boardSpot: BlitzBoardSpot = "mof") {
   const boardOption = BLITZ_BASE_BOARD_OPTIONS.find((option) => option.value === baseBoardId) ?? BLITZ_BASE_BOARD_OPTIONS[0];
   const call = boardOption.call;
-  const formation = buildFoothillFormation(call, true);
+  const baseFormation = buildFoothillFormation(call, true);
+  const ballX = boardSpot === "hash" ? getBlitzHash("right") : 50;
+  const horizontalShift = ballX - 50;
+  const shiftX = (player: PlayerDot) => ({ ...player, x: clamp(player.x + horizontalShift, 3, 97) });
+  const formation = {
+    ...baseFormation,
+    players: baseFormation.players.map(shiftX),
+  };
   const alignmentLandmarks = getAlignmentLandmarks(formation);
   const answerKey = getAlignmentAnswerKey(formation, alignmentLandmarks, frontMode);
   const ySurface = formation.players.find((player) => player.id === "Y");
@@ -2754,8 +2772,10 @@ function buildBlitzBoardShell(baseBoardId: BlitzBaseBoardId, frontMode: FrontMod
 
   return {
     id: baseBoardId,
-    title: `Newton ${frontMode} vs ${boardOption.label}`,
-    subtitle: `Default Newton ${frontMode} install board against ${boardOption.label}.`,
+    title: `Newton ${frontMode} vs ${boardOption.label}${boardSpot === "hash" ? " on Hash" : ""}`,
+    subtitle: `Default Newton ${frontMode} install board against ${boardOption.label}${boardSpot === "hash" ? " with the ball on the right hash" : ""}.`,
+    boardSpot,
+    hashXs: boardSpot === "hash" ? [getBlitzHash("left"), getBlitzHash("right")] : undefined,
     runStrength: formation.runStrength,
     passStrength: formation.passStrength,
     losY: blitzLosY,
@@ -2780,7 +2800,7 @@ function isDeepCoverageBlitzPathway(pathwayId: BlitzPathwayId) {
 }
 
 function getBlitzPathwayStroke(pathwayId: BlitzPathwayId, layer?: "pressure" | "coverage" | "dl") {
-  if (layer === "dl") return "#22d3ee";
+  if (layer === "dl") return "#39ff88";
   if (isDeepCoverageBlitzPathway(pathwayId)) return "#a855f7";
   if (isCoverageBlitzPathway(pathwayId)) return "#f4cf63";
   return "#ef4444";
@@ -2993,7 +3013,7 @@ function buildBlitzPathwayOverlay({
     const isSafety = ["FS", "BS"].includes(defender.id);
     path = makeCoveragePath(targetX, isSafety && frontMode === "4-3" ? getMidpoint(defender.y, losY) : defender.y + 14);
   } else if (pathwayId === "hole") {
-    path = makeCoveragePath(50, defender.y + 14);
+    path = makeCoveragePath(50, getMidpoint(losY, 88));
   } else if (pathwayId === "eyes" || pathwayId === "strong_eyes" || pathwayId === "weak_eyes") {
     const eyesSide = pathwayId === "strong_eyes" ? passStrength : pathwayId === "weak_eyes" ? passAway : side;
     const targetX = getBlitzEyesTargetX(offensePlayers, eyesSide, passStrength);
@@ -3148,6 +3168,44 @@ function getBlitzTemplateAssignments({
     const dropperPathway = getDropperPathway(dropperId, pressureSide);
     const dropperHasCurlFlat = dropperPathway === "drop_curl_flat";
 
+    if (frontMode === "4-3") {
+      if (blitzerId === "Ni") {
+        add("FS", "curl_flat", "coverage");
+        add("BS", "mof", "coverage");
+        add("M", "strong_hook", "coverage");
+        add("W", "weak_hook", "coverage");
+        add(dropperId, "drop_hook", "coverage");
+      } else if (blitzerId === "M") {
+        add("FS", "strong_hook", "coverage");
+        add("BS", "mof", "coverage");
+        add("Ni", "curl_flat", "coverage");
+        add("W", "weak_hook", "coverage");
+        add(dropperId, "drop_hook", "coverage");
+      } else if (blitzerId === "W") {
+        add("BS", "curl_flat", "coverage");
+        add("FS", "mof", "coverage");
+        add("Ni", "curl_flat", "coverage");
+        add("M", "strong_hook", "coverage");
+        add(dropperId, "drop_hook", "coverage");
+      } else if (blitzerId === "BS") {
+        add("W", "curl_flat", "coverage");
+        add(dropperId, "strong_hook", "coverage");
+        add("M", "weak_hook", "coverage");
+        add("Ni", "curl_flat", "coverage");
+        add("FS", "mof", "coverage");
+      } else {
+        add(dropperId, dropperPathway, "coverage");
+        add("FS", "curl_flat", "coverage");
+        add("BS", "mof", "coverage");
+        add("Ni", "curl_flat", "coverage");
+        add("M", "strong_hook", "coverage");
+        add("W", "weak_hook", "coverage");
+      }
+
+      addCornerThirds();
+      return;
+    }
+
     add(dropperId, dropperPathway, "coverage");
     add("FS", frontMode === "4-4" ? "mof" : "curl_flat", "coverage");
 
@@ -3192,6 +3250,39 @@ function getBlitzTemplateAssignments({
     const pressureSide = defenderSide(blitzerId);
     add(blitzerId, pressurePathway, "pressure");
     addDlSlants(pressureSide);
+
+    if (frontMode === "4-3") {
+      if (blitzerId === "Ni") {
+        add("FS", "wall_flat", "coverage");
+        add("BS", "mof", "coverage");
+        add("M", "hole", "coverage");
+        add("W", "wall_flat", "coverage");
+      } else if (blitzerId === "M") {
+        add("FS", "hole", "coverage");
+        add("BS", "mof", "coverage");
+        add("Ni", "wall_flat", "coverage");
+        add("W", "wall_flat", "coverage");
+      } else if (blitzerId === "W") {
+        add("BS", "wall_flat", "coverage");
+        add("FS", "mof", "coverage");
+        add("Ni", "wall_flat", "coverage");
+        add("M", "hole", "coverage");
+      } else if (blitzerId === "BS") {
+        add("W", "wall_flat", "coverage");
+        add("FS", "mof", "coverage");
+        add("Ni", "wall_flat", "coverage");
+        add("M", "hole", "coverage");
+      } else {
+        add("FS", "hole", "coverage");
+        add("BS", "mof", "coverage");
+        add("Ni", "wall_flat", "coverage");
+        add("M", "hole", "coverage");
+        add("W", "wall_flat", "coverage");
+      }
+
+      addCornerThirds();
+      return;
+    }
 
     add("FS", frontMode === "4-4" ? "mof" : "hole", "coverage");
     if (blitzerId === "Ni") {
@@ -3359,6 +3450,7 @@ function TrainingField({
   yardReferenceScale = 1.6,
   subtleHashMarks = false,
   wideFieldMarks = false,
+  fieldHashXs,
   losReferenceY = LOS_Y,
   offenseLandmarks = [],
   defensePlayers = [],
@@ -3389,6 +3481,7 @@ function TrainingField({
   yardReferenceScale?: number;
   subtleHashMarks?: boolean;
   wideFieldMarks?: boolean;
+  fieldHashXs?: number[];
   losReferenceY?: number;
   offenseLandmarks?: Landmark[];
   defensePlayers?: PlayerDot[];
@@ -3416,7 +3509,7 @@ function TrainingField({
   const maybeFlipX = (x: number, enabled: boolean) => (enabled ? 100 - x : x);
   const maybeFlipY = (y: number, enabled: boolean) => (enabled ? 100 - y : y);
   const fieldWide = editableDefense || wideFieldMarks;
-  const hashXs = [getHash("left", fieldWide), getHash("right", fieldWide)];
+  const hashXs = fieldHashXs ?? [getHash("left", fieldWide), getHash("right", fieldWide)];
   const losY = flipOffense ? 100 - losReferenceY : losReferenceY;
   const hashMarkRows = [13, 28, 43, 61, 76, 91];
   const sidelineInset = 1.5;
@@ -3888,6 +3981,7 @@ export default function FormationRecognitionWorkingApp() {
   const [showAccountDirectory, setShowAccountDirectory] = useState(false);
   const [lastScoreSummary, setLastScoreSummary] = useState<Partial<Record<"quiz" | "offense_build" | "alignment" | "film" | "concept", ScoreSummary>>>({});
   const [scoredAttemptKey, setScoredAttemptKey] = useState<string | null>(null);
+  const [revealedAttemptKeys, setRevealedAttemptKeys] = useState<Set<string>>(() => new Set());
   const [attemptStartedAt, setAttemptStartedAt] = useState<number>(Date.now());
   const [selectedPlaybooks, setSelectedPlaybooks] = useState<PlaybookKey[]>(["Foothill", "Pro", "Wing T"]);
   const [personnelFilter, setPersonnelFilter] = useState<string>("Any");
@@ -3932,6 +4026,7 @@ export default function FormationRecognitionWorkingApp() {
   const [selectedRunFitPathwayId, setSelectedRunFitPathwayId] = useState<RunFitPathwayId>("a_gap_fit");
   const [selectedBlitzBaseBoardId, setSelectedBlitzBaseBoardId] = useState<BlitzBaseBoardId>("double");
   const [selectedBlitzFrontMode, setSelectedBlitzFrontMode] = useState<FrontMode>("4-4");
+  const [selectedBlitzBoardSpot, setSelectedBlitzBoardSpot] = useState<BlitzBoardSpot>("mof");
   const [selectedBlitzCallId, setSelectedBlitzCallId] = useState<BlitzCallId>("newton");
   const [selectedBlitzCallFamilyId, setSelectedBlitzCallFamilyId] = useState<BlitzCallFamilyId>("newton");
   const [selectedBlitzCallType, setSelectedBlitzCallType] = useState<BlitzCallType>("last_name");
@@ -4789,7 +4884,10 @@ const existingStats =
       notes: [] as { title: string; body: string }[],
     };
   }, [selectedRunFitBaseBoardId]);
-  const blitzPreview = useMemo(() => buildBlitzBoardShell(selectedBlitzBaseBoardId, selectedBlitzFrontMode), [selectedBlitzBaseBoardId, selectedBlitzFrontMode]);
+  const blitzPreview = useMemo(
+    () => buildBlitzBoardShell(selectedBlitzBaseBoardId, selectedBlitzFrontMode, selectedBlitzBoardSpot),
+    [selectedBlitzBaseBoardId, selectedBlitzBoardSpot, selectedBlitzFrontMode],
+  );
   const passConceptDefinition = passConceptPreview;
   const runFitDraftOverlay = useMemo<RouteOverlay[]>(() => {
     if (runFitDraftPoints.length < 2) return [];
@@ -4851,8 +4949,9 @@ const existingStats =
       board.frontMode === selectedBlitzFrontMode
       && board.callId === selectedBlitzCallId
       && board.baseBoardId === selectedBlitzBaseBoardId
+      && (board.boardSpot ?? "mof") === selectedBlitzBoardSpot
     ))
-  ), [blitzSavedBoards, selectedBlitzBaseBoardId, selectedBlitzCallId, selectedBlitzFrontMode]);
+  ), [blitzSavedBoards, selectedBlitzBaseBoardId, selectedBlitzBoardSpot, selectedBlitzCallId, selectedBlitzFrontMode]);
 
   useEffect(() => {
     try {
@@ -4910,6 +5009,7 @@ const existingStats =
       const parsed = JSON.parse(raw) as {
         selectedBaseBoardId?: BlitzBaseBoardId;
         selectedFrontMode?: FrontMode;
+        selectedBoardSpot?: BlitzBoardSpot;
         selectedCallId?: BlitzCallId;
         working?: { title?: string; routeOverlays?: RouteOverlay[]; fieldTags?: FieldTag[] };
         boards?: BlitzSavedBoard[];
@@ -4919,15 +5019,17 @@ const existingStats =
         ? parsed.selectedBaseBoardId as BlitzBaseBoardId
         : "double";
       const savedFrontMode: FrontMode = parsed.selectedFrontMode === "4-3" ? "4-3" : "4-4";
+      const savedBoardSpot: BlitzBoardSpot = parsed.selectedBoardSpot === "hash" ? "hash" : "mof";
       const savedCallId: BlitzCallId = BLITZ_CALL_OPTIONS.some((option) => option.value === parsed.selectedCallId)
         ? parsed.selectedCallId as BlitzCallId
         : "newton";
       setSelectedBlitzBaseBoardId(savedBaseId);
       setSelectedBlitzFrontMode(savedFrontMode);
+      setSelectedBlitzBoardSpot(savedBoardSpot);
       setSelectedBlitzCallId(savedCallId);
       setSelectedBlitzCallFamilyId(getBlitzCallFamilyId(savedCallId));
       setSelectedBlitzCallType(getBlitzCallType(savedCallId));
-      const savedPreview = buildBlitzBoardShell(savedBaseId, savedFrontMode);
+      const savedPreview = buildBlitzBoardShell(savedBaseId, savedFrontMode, savedBoardSpot);
       setBlitzTitle(parsed.working?.title || savedPreview.title);
       setBlitzRouteOverlays(parsed.working?.routeOverlays || savedPreview.routeOverlays);
       setBlitzFieldTags(parsed.working?.fieldTags || savedPreview.fieldTags);
@@ -4949,6 +5051,7 @@ const existingStats =
         JSON.stringify({
           selectedBaseBoardId: selectedBlitzBaseBoardId,
           selectedFrontMode: selectedBlitzFrontMode,
+          selectedBoardSpot: selectedBlitzBoardSpot,
           selectedCallId: selectedBlitzCallId,
           working: {
             title: blitzTitle,
@@ -4959,7 +5062,7 @@ const existingStats =
         }),
       );
     } catch {}
-  }, [blitzBoardsHydrated, blitzFieldTags, blitzRouteOverlays, blitzSavedBoards, blitzTitle, selectedBlitzBaseBoardId, selectedBlitzCallId, selectedBlitzFrontMode]);
+  }, [blitzBoardsHydrated, blitzFieldTags, blitzRouteOverlays, blitzSavedBoards, blitzTitle, selectedBlitzBaseBoardId, selectedBlitzBoardSpot, selectedBlitzCallId, selectedBlitzFrontMode]);
   const passConceptQuizRoutePreview = useMemo(() => {
     if (passConceptViewMode !== "quiz") return [];
     if (passConceptQuizMode === "identify") return passConceptPreview.routesPreview;
@@ -5116,6 +5219,121 @@ const existingStats =
       if (fallback) setSelectedLeaderboardMode(fallback.key as LeaderboardMode);
     }
   }, [filteredLeaderboardBoards, selectedLeaderboardMode]);
+  const renderLeaderboardBoard = (board: (typeof leaderboardBoards)[number]) => (
+    <div key={`leaderboard-board-${board.key}`} className={`overflow-hidden rounded-xl border shadow-[inset_0_1px_0_rgba(255,255,255,0.7)] ${board.shellClass}`}>
+      <div className={`border-b bg-gradient-to-b px-4 py-3 text-center ${board.columnClass.split(" ")[0]} ${board.headerClass}`}>
+        <div className="flex justify-center">
+          <div className="border-b-2 border-[#7b6f42] px-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.24em] text-[#5f5b48]">
+            {board.title}
+          </div>
+        </div>
+        <div className="mt-1 text-lg font-black uppercase tracking-[0.12em] text-[#23241d]">Leaders</div>
+      </div>
+      <div className={`grid grid-cols-[42px_minmax(0,1fr)_56px_58px] items-center gap-0 border-b px-2 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] ${board.columnClass}`}>
+        <div className="border-r border-[#b7b09a] px-2 text-center">Pos</div>
+        <div className="border-r border-[#b7b09a] px-3">Player</div>
+        <div className="border-r border-[#b7b09a] px-2 text-center">Pts</div>
+        <div className="px-2 text-center">Best</div>
+      </div>
+      <div>
+        {board.entries.length ? (
+          board.entries.map((entry, idx) => (
+            <div
+              key={`${board.key}-${entry.id}`}
+              className={
+                entry.id === currentUser?.id
+                  ? "grid grid-cols-[42px_minmax(0,1fr)_56px_58px] items-center gap-0 border-b border-[#5d8d62] bg-[#dff0dd] text-sm last:border-b-0"
+                  : idx % 2 === 0
+                    ? `grid grid-cols-[42px_minmax(0,1fr)_56px_58px] items-center gap-0 border-b text-sm last:border-b-0 ${board.stripeOddClass}`
+                    : `grid grid-cols-[42px_minmax(0,1fr)_56px_58px] items-center gap-0 border-b text-sm last:border-b-0 ${board.stripeEvenClass}`
+              }
+            >
+              <div className="border-r border-[#d0c8ae] px-2 py-2 text-center">
+                <div
+                  className={
+                    idx === 0
+                      ? "inline-flex h-7 w-7 items-center justify-center rounded-full border border-[#9b8430] bg-[#d9bf55] text-[11px] font-black text-[#2b2618]"
+                      : idx === 1
+                        ? "inline-flex h-7 w-7 items-center justify-center rounded-full border border-[#8b8d93] bg-[#d7d9dd] text-[11px] font-black text-[#2b2d32]"
+                        : idx === 2
+                          ? "inline-flex h-7 w-7 items-center justify-center rounded-full border border-[#866243] bg-[#b88458] text-[11px] font-black text-white"
+                          : "inline-flex h-7 w-7 items-center justify-center rounded-full border border-[#b7b09a] bg-[#efe7cf] text-[11px] font-black text-[#474334]"
+                  }
+                >
+                  {entry.leaderboardRank}
+                </div>
+              </div>
+              <div className="min-w-0 border-r border-[#d0c8ae] px-3 py-2">
+                <div className="flex min-w-0 items-center gap-2">
+                  <AvatarBadge name={entry.name} avatarUrl={entry.avatarUrl} className="h-8 w-8" textClassName="text-[10px]" />
+                  <div className="truncate font-semibold uppercase tracking-[0.04em] text-[#23241d]">
+                    {entry.name}
+                  </div>
+                </div>
+                {entry.id === currentUser?.id ? (
+                  <div className="text-[11px] text-[#6d6857]">You</div>
+                ) : null}
+              </div>
+              <div className="border-r border-[#d0c8ae] px-2 py-2 text-center">
+                <div className="font-black text-[#202119]">{entry.stats[board.key].points}</div>
+                <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#78715b]">Pts</div>
+              </div>
+              <div className="px-2 py-2 text-center">
+                <div className="text-[11px] font-semibold text-[#4f4b3f]">
+                  {entry.stats[board.key].bestTimeMs
+                    ? `${(entry.stats[board.key].bestTimeMs / 1000).toFixed(1)}s best`
+                    : "—"}
+                </div>
+              </div>
+            </div>
+          ))
+        ) : (
+          <div className="px-4 py-6 text-sm text-[#6e6a5c]">
+            No scores yet for this team.
+          </div>
+        )}
+        {board.currentUserEntry ? (
+          <>
+            <div className="grid grid-cols-[42px_minmax(0,1fr)_56px_58px] items-center gap-0 border-b border-[#d6cfb7] bg-[#ddd4bc] text-[10px] font-bold uppercase tracking-[0.16em] text-[#6a654f] last:border-b-0">
+              <div className="col-span-4 px-4 py-1.5 text-center">Your Standing</div>
+            </div>
+            <div className="grid grid-cols-[42px_minmax(0,1fr)_56px_58px] items-center gap-0 border-b border-[#5d8d62] bg-[#dff0dd] text-sm last:border-b-0">
+              <div className="border-r border-[#b5cfb4] px-2 py-2 text-center">
+                <div className="inline-flex h-7 min-w-7 items-center justify-center rounded-full border border-[#5d8d62] bg-[#bfe0bd] px-2 text-[11px] font-black text-[#244127]">
+                  {board.currentUserEntry.leaderboardRank}
+                </div>
+              </div>
+              <div className="min-w-0 border-r border-[#b5cfb4] px-3 py-2">
+                <div className="flex min-w-0 items-center gap-2">
+                  <AvatarBadge
+                    name={board.currentUserEntry.name}
+                    avatarUrl={board.currentUserEntry.avatarUrl}
+                    className="h-8 w-8"
+                    textClassName="text-[10px]"
+                  />
+                  <div className="truncate font-semibold uppercase tracking-[0.04em] text-[#23241d]">
+                    {board.currentUserEntry.name}
+                  </div>
+                </div>
+                <div className="text-[11px] text-[#4c6a4f]">You</div>
+              </div>
+              <div className="border-r border-[#b5cfb4] px-2 py-2 text-center">
+                <div className="font-black text-[#202119]">{board.currentUserEntry.stats[board.key].points}</div>
+                <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#4c6a4f]">Pts</div>
+              </div>
+              <div className="px-2 py-2 text-center">
+                <div className="text-[11px] font-semibold text-[#36513a]">
+                  {board.currentUserEntry.stats[board.key].bestTimeMs
+                    ? `${(board.currentUserEntry.stats[board.key].bestTimeMs / 1000).toFixed(1)}s best`
+                    : "—"}
+                </div>
+              </div>
+            </div>
+          </>
+        ) : null}
+      </div>
+    </div>
+  );
   const formationSelectGroups = useMemo(() => {
     const personnelOrder = Array.from({ length: 12 }, (_, idx) => String(idx + 10));
     const nameCounts = new Map<string, number>();
@@ -6773,17 +6991,20 @@ const existingStats =
     callType = selectedBlitzCallType,
     baseBoardId = selectedBlitzBaseBoardId,
     frontMode = selectedBlitzFrontMode,
+    boardSpot = selectedBlitzBoardSpot,
   }: {
     familyId?: BlitzCallFamilyId;
     callType?: BlitzCallType;
     baseBoardId?: BlitzBaseBoardId;
     frontMode?: FrontMode;
+    boardSpot?: BlitzBoardSpot;
   }) => {
     const nextCallId = getBlitzCallId(familyId, callType);
     const selectedBoard = blitzSavedBoards.find((board) => (
       board.frontMode === frontMode
       && board.callId === nextCallId
       && board.baseBoardId === baseBoardId
+      && (board.boardSpot ?? "mof") === boardSpot
     ));
 
     setSelectedBlitzCallFamilyId(familyId);
@@ -6791,6 +7012,7 @@ const existingStats =
     setSelectedBlitzCallId(nextCallId);
     setSelectedBlitzBaseBoardId(baseBoardId);
     setSelectedBlitzFrontMode(frontMode);
+    setSelectedBlitzBoardSpot(boardSpot);
 
     if (selectedBoard) {
       setSelectedBlitzBoardId(selectedBoard.id);
@@ -6802,7 +7024,7 @@ const existingStats =
       return;
     }
 
-    const nextPreview = buildBlitzBoardShell(baseBoardId, frontMode);
+    const nextPreview = buildBlitzBoardShell(baseBoardId, frontMode, boardSpot);
     const routeOverlays = buildBlitzTemplateOverlays({
       callId: nextCallId,
       defensePlayers: nextPreview.defensePlayers,
@@ -6814,12 +7036,13 @@ const existingStats =
       frontMode,
     });
     const boardLabel = BLITZ_BASE_BOARD_OPTIONS.find((option) => option.value === baseBoardId)?.label ?? "Formation";
+    const spotLabel = BLITZ_BOARD_SPOT_OPTIONS.find((option) => option.value === boardSpot)?.label ?? "MOF";
     setSelectedBlitzBoardId("working");
-    setBlitzTitle(`${getBlitzCallLabel(nextCallId)} ${frontMode} vs ${boardLabel}`);
+    setBlitzTitle(`${getBlitzCallLabel(nextCallId)} ${frontMode} ${spotLabel} vs ${boardLabel}`);
     setBlitzRouteOverlays(routeOverlays);
     setBlitzFieldTags(nextPreview.fieldTags);
     setBlitzDraftPoints([]);
-    setBlitzSaveNotice(`Generated ${getBlitzCallLabel(nextCallId)} ${frontMode} vs ${boardLabel}. Save it if you want to keep edits.`);
+    setBlitzSaveNotice(`Generated ${getBlitzCallLabel(nextCallId)} ${frontMode} ${spotLabel} vs ${boardLabel}. Save it if you want to keep edits.`);
   };
 
   const loadBlitzFrontMode = (nextFrontMode: FrontMode) => {
@@ -6925,13 +7148,15 @@ const existingStats =
       ...overlays,
     ]);
     setBlitzDraftPoints([]);
-    setBlitzTitle(`${getBlitzCallLabel(selectedBlitzCallId)} ${selectedBlitzFrontMode} vs ${BLITZ_BASE_BOARD_OPTIONS.find((option) => option.value === selectedBlitzBaseBoardId)?.label ?? "Formation"}`);
+    const spotLabel = BLITZ_BOARD_SPOT_OPTIONS.find((option) => option.value === selectedBlitzBoardSpot)?.label ?? "MOF";
+    setBlitzTitle(`${getBlitzCallLabel(selectedBlitzCallId)} ${selectedBlitzFrontMode} ${spotLabel} vs ${BLITZ_BASE_BOARD_OPTIONS.find((option) => option.value === selectedBlitzBaseBoardId)?.label ?? "Formation"}`);
     setBlitzSaveNotice(`Applied ${getBlitzCallLabel(selectedBlitzCallId)} template.`);
   };
 
   const buildSavedBlitzBoard = (callId: BlitzCallId, boardOption: typeof BLITZ_BASE_BOARD_OPTIONS[number], index: number): BlitzSavedBoard => {
     const callLabel = getBlitzCallLabel(callId);
-    const preview = buildBlitzBoardShell(boardOption.value, selectedBlitzFrontMode);
+    const spotLabel = BLITZ_BOARD_SPOT_OPTIONS.find((option) => option.value === selectedBlitzBoardSpot)?.label ?? "MOF";
+    const preview = buildBlitzBoardShell(boardOption.value, selectedBlitzFrontMode, selectedBlitzBoardSpot);
     const routeOverlays = buildBlitzTemplateOverlays({
       callId,
       defensePlayers: preview.defensePlayers,
@@ -6944,11 +7169,12 @@ const existingStats =
     });
 
     return {
-      id: `blitz-${callId}-${selectedBlitzFrontMode}-${boardOption.value}-${Date.now()}-${index}`,
-      title: `${callLabel} ${selectedBlitzFrontMode} vs ${boardOption.label}`,
+      id: `blitz-${callId}-${selectedBlitzFrontMode}-${selectedBlitzBoardSpot}-${boardOption.value}-${Date.now()}-${index}`,
+      title: `${callLabel} ${selectedBlitzFrontMode} ${spotLabel} vs ${boardOption.label}`,
       baseBoardId: boardOption.value,
       frontMode: selectedBlitzFrontMode,
       callId,
+      boardSpot: selectedBlitzBoardSpot,
       routeOverlays,
       fieldTags: preview.fieldTags,
     };
@@ -6963,11 +7189,16 @@ const existingStats =
 
     const firstBoard = stampedBoards[0];
     setBlitzSavedBoards((prev) => [
-      ...prev.filter((board) => !(board.callId === selectedBlitzCallId && board.frontMode === selectedBlitzFrontMode)),
+      ...prev.filter((board) => !(
+        board.callId === selectedBlitzCallId
+        && board.frontMode === selectedBlitzFrontMode
+        && (board.boardSpot ?? "mof") === selectedBlitzBoardSpot
+      )),
       ...stampedBoards,
     ]);
     setSelectedBlitzBoardId(firstBoard.id);
     setSelectedBlitzBaseBoardId(firstBoard.baseBoardId);
+    setSelectedBlitzBoardSpot(firstBoard.boardSpot ?? "mof");
     setBlitzTitle(firstBoard.title);
     setBlitzRouteOverlays(firstBoard.routeOverlays);
     setBlitzFieldTags(firstBoard.fieldTags);
@@ -6984,13 +7215,20 @@ const existingStats =
     ));
 
     const activeBoard = stampedBoards.find((board) => (
-      board.callId === selectedBlitzCallId && board.baseBoardId === selectedBlitzBaseBoardId
+      board.callId === selectedBlitzCallId
+      && board.baseBoardId === selectedBlitzBaseBoardId
+      && (board.boardSpot ?? "mof") === selectedBlitzBoardSpot
     )) ?? stampedBoards[0];
     setBlitzSavedBoards((prev) => [
-      ...prev.filter((board) => board.frontMode !== selectedBlitzFrontMode),
+      ...prev.filter((board) => !(
+        board.frontMode === selectedBlitzFrontMode
+        && (board.boardSpot ?? "mof") === selectedBlitzBoardSpot
+      )),
       ...stampedBoards,
     ]);
     setSelectedBlitzBoardId(activeBoard.id);
+    setSelectedBlitzBaseBoardId(activeBoard.baseBoardId);
+    setSelectedBlitzBoardSpot(activeBoard.boardSpot ?? "mof");
     setBlitzTitle(activeBoard.title);
     setBlitzRouteOverlays(activeBoard.routeOverlays);
     setBlitzFieldTags(activeBoard.fieldTags);
@@ -7003,7 +7241,7 @@ const existingStats =
     if (selectedBlitzBoardId !== "working") {
       setBlitzSavedBoards((prev) => prev.map((board) => (
         board.id === selectedBlitzBoardId
-          ? { ...board, title: cleanTitle, baseBoardId: selectedBlitzBaseBoardId, frontMode: selectedBlitzFrontMode, callId: selectedBlitzCallId, routeOverlays: blitzRouteOverlays, fieldTags: blitzFieldTags }
+          ? { ...board, title: cleanTitle, baseBoardId: selectedBlitzBaseBoardId, frontMode: selectedBlitzFrontMode, callId: selectedBlitzCallId, boardSpot: selectedBlitzBoardSpot, routeOverlays: blitzRouteOverlays, fieldTags: blitzFieldTags }
           : board
       )));
       setBlitzSaveNotice(`Updated ${cleanTitle}.`);
@@ -7016,6 +7254,7 @@ const existingStats =
       baseBoardId: selectedBlitzBaseBoardId,
       frontMode: selectedBlitzFrontMode,
       callId: selectedBlitzCallId,
+      boardSpot: selectedBlitzBoardSpot,
       routeOverlays: blitzRouteOverlays,
       fieldTags: blitzFieldTags,
     };
@@ -7028,7 +7267,7 @@ const existingStats =
     if (selectedBlitzBoardId === "working") return;
     const deletedBoard = blitzSavedBoards.find((board) => board.id === selectedBlitzBoardId);
     setBlitzSavedBoards((prev) => prev.filter((board) => board.id !== selectedBlitzBoardId));
-    const nextPreview = buildBlitzBoardShell(selectedBlitzBaseBoardId, selectedBlitzFrontMode);
+    const nextPreview = buildBlitzBoardShell(selectedBlitzBaseBoardId, selectedBlitzFrontMode, selectedBlitzBoardSpot);
     setSelectedBlitzBoardId("working");
     setBlitzTitle(nextPreview.title);
     setBlitzRouteOverlays(nextPreview.routeOverlays);
@@ -7038,7 +7277,7 @@ const existingStats =
   };
 
   const resetBlitzSample = () => {
-    const nextPreview = buildBlitzBoardShell(selectedBlitzBaseBoardId, selectedBlitzFrontMode);
+    const nextPreview = buildBlitzBoardShell(selectedBlitzBaseBoardId, selectedBlitzFrontMode, selectedBlitzBoardSpot);
     setSelectedBlitzBoardId("working");
     setBlitzTitle(nextPreview.title);
     setBlitzRouteOverlays(nextPreview.routeOverlays);
@@ -7124,6 +7363,18 @@ const existingStats =
   ) => {
     if (!currentUser) return;
     const attemptKey = customAttemptKey ?? `${activeMode}::${formationKey}`;
+    if (revealedAttemptKeys.has(attemptKey)) {
+      setScoredAttemptKey(attemptKey);
+      setLastScoreSummary((prev) => ({
+        ...prev,
+        [activeMode]: {
+          awarded: 0,
+          total: currentUser.stats[activeMode].points,
+          blockedByReveal: true,
+        },
+      }));
+      return;
+    }
     if (scoredAttemptKey === attemptKey) return;
 
     const elapsedMs = Math.max(250, Date.now() - attemptStartedAt);
@@ -7168,6 +7419,26 @@ const existingStats =
     });
 
     void persistModeScore(currentUser.id, activeMode, nextModeStats);
+  };
+
+  const markAttemptRevealed = (
+    activeMode: "quiz" | "offense_build" | "alignment" | "film" | "concept",
+    customAttemptKey?: string,
+  ) => {
+    const attemptKey = customAttemptKey ?? `${activeMode}::${formationKey}`;
+    setRevealedAttemptKeys((prev) => {
+      const next = new Set(prev);
+      next.add(attemptKey);
+      return next;
+    });
+    setLastScoreSummary((prev) => ({
+      ...prev,
+      [activeMode]: {
+        awarded: 0,
+        total: currentUser?.stats[activeMode].points ?? 0,
+        blockedByReveal: true,
+      },
+    }));
   };
 
   useEffect(() => {
@@ -7238,9 +7509,9 @@ const existingStats =
       const placedCount = alignmentPlayers.length;
       const missing = Math.max(0, total - placedCount);
       const accuracy = Math.max(0, (total - wrong - missing) / total);
-      scoreAttempt("alignment", accuracy, alignmentCheck.isCorrect);
+      scoreAttempt("alignment", accuracy, alignmentCheck.isCorrect, `alignment::${formationKey}::${frontMode}`);
     }
-  }, [mode, alignmentViewMode, showAlignmentCheck, alignmentCheck.isCorrect, alignmentCheck.incorrectIds.length, formationKey, alignmentPlayers.length]);
+  }, [mode, alignmentViewMode, showAlignmentCheck, alignmentCheck.isCorrect, alignmentCheck.incorrectIds.length, formationKey, frontMode, alignmentPlayers.length]);
 
   if (!authChecked) {
     return (
@@ -7479,40 +7750,7 @@ const existingStats =
         <CardTitle className="text-center text-xl font-black uppercase tracking-[0.22em] text-[#f3ead0]">Mode Leaderboards</CardTitle>
       </CardHeader>
       <CardContent className="bg-[#2f5b43]">
-        {selectedLeaderboardBoard ? (
-          <div className="space-y-4 p-1">
-            <div className="mx-auto grid max-w-[540px] gap-3 md:grid-cols-2">
-              <Select
-                value={selectedLeaderboardSection}
-                onValueChange={(value: LeaderboardSection) => setSelectedLeaderboardSection(value)}
-              >
-                <SelectTrigger className="bg-white/95">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="max-h-80 overflow-y-auto">
-                  {leaderboardSectionOptions.map((section) => (
-                    <SelectItem key={`leaderboard-section-${section.value}`} value={section.value}>
-                      {section.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select
-                value={selectedLeaderboardBoard.key}
-                onValueChange={(value: LeaderboardMode) => setSelectedLeaderboardMode(value)}
-              >
-                <SelectTrigger className="bg-white/95">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="max-h-80 overflow-y-auto">
-                  {filteredLeaderboardBoards.map((board) => (
-                    <SelectItem key={`leaderboard-${board.key}`} value={board.key}>
-                      {board.title}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+          <div className="space-y-6 p-1">
             {currentUser?.isAdmin ? (
               <div className="mx-auto flex max-w-[540px] justify-center">
                 <Button
@@ -7580,128 +7818,25 @@ const existingStats =
                 </div>
               </div>
             ) : null}
-            <div className={`overflow-hidden rounded-xl border shadow-[inset_0_1px_0_rgba(255,255,255,0.7)] ${selectedLeaderboardBoard.shellClass}`}>
-              <div className={`border-b bg-gradient-to-b px-4 py-3 text-center ${selectedLeaderboardBoard.columnClass.split(" ")[0]} ${selectedLeaderboardBoard.headerClass}`}>
-                <div className="flex justify-center">
-                  <div className="border-b-2 border-[#7b6f42] px-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.24em] text-[#5f5b48]">
-                    {selectedLeaderboardBoard.title}
-                  </div>
+            <div className="space-y-6">
+              <section className="space-y-3">
+                <div className="rounded-xl border border-[#7e8a74] bg-[#eef3e7] px-4 py-3 text-center">
+                  <div className="text-xs font-black uppercase tracking-[0.24em] text-[#4f5d48]">Offense</div>
                 </div>
-                <div className="mt-1 text-lg font-black uppercase tracking-[0.12em] text-[#23241d]">Leaders</div>
-              </div>
-              <div className={`grid grid-cols-[42px_minmax(0,1fr)_56px_58px] items-center gap-0 border-b px-2 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] ${selectedLeaderboardBoard.columnClass}`}>
-                <div className="border-r border-[#b7b09a] px-2 text-center">Pos</div>
-                <div className="border-r border-[#b7b09a] px-3">Player</div>
-                <div className="border-r border-[#b7b09a] px-2 text-center">Pts</div>
-                <div className="px-2 text-center">Best</div>
-              </div>
-              <div>
-                {selectedLeaderboardBoard.entries.length ? (
-                  selectedLeaderboardBoard.entries.map((entry, idx) => (
-                    <div
-                      key={`${selectedLeaderboardBoard.key}-${entry.id}`}
-                      className={
-                        entry.id === currentUser?.id
-                          ? "grid grid-cols-[42px_minmax(0,1fr)_56px_58px] items-center gap-0 border-b border-[#5d8d62] bg-[#dff0dd] text-sm last:border-b-0"
-                          : idx % 2 === 0
-                            ? `grid grid-cols-[42px_minmax(0,1fr)_56px_58px] items-center gap-0 border-b text-sm last:border-b-0 ${selectedLeaderboardBoard.stripeOddClass}`
-                            : `grid grid-cols-[42px_minmax(0,1fr)_56px_58px] items-center gap-0 border-b text-sm last:border-b-0 ${selectedLeaderboardBoard.stripeEvenClass}`
-                      }
-                    >
-                      <div className="border-r border-[#d0c8ae] px-2 py-2 text-center">
-                        <div
-                          className={
-                            idx === 0
-                              ? "inline-flex h-7 w-7 items-center justify-center rounded-full border border-[#9b8430] bg-[#d9bf55] text-[11px] font-black text-[#2b2618]"
-                              : idx === 1
-                                ? "inline-flex h-7 w-7 items-center justify-center rounded-full border border-[#8b8d93] bg-[#d7d9dd] text-[11px] font-black text-[#2b2d32]"
-                                : idx === 2
-                                  ? "inline-flex h-7 w-7 items-center justify-center rounded-full border border-[#866243] bg-[#b88458] text-[11px] font-black text-white"
-                                  : "inline-flex h-7 w-7 items-center justify-center rounded-full border border-[#b7b09a] bg-[#efe7cf] text-[11px] font-black text-[#474334]"
-                          }
-                        >
-                          {entry.leaderboardRank}
-                        </div>
-                      </div>
-                      <div className="min-w-0 border-r border-[#d0c8ae] px-3 py-2">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <AvatarBadge name={entry.name} avatarUrl={entry.avatarUrl} className="h-8 w-8" textClassName="text-[10px]" />
-                          <div className="truncate font-semibold uppercase tracking-[0.04em] text-[#23241d]">
-                            {entry.name}
-                          </div>
-                        </div>
-                        <div className="text-[11px] text-[#6d6857]">
-                          {entry.stats[selectedLeaderboardBoard.key].attempts > 0
-                            ? `${Math.round((entry.stats[selectedLeaderboardBoard.key].correct / entry.stats[selectedLeaderboardBoard.key].attempts) * 100)}% correct`
-                            : "0% correct"}
-                          {entry.id === currentUser?.id ? " • You" : ""}
-                        </div>
-                      </div>
-                      <div className="border-r border-[#d0c8ae] px-2 py-2 text-center">
-                        <div className="font-black text-[#202119]">{entry.stats[selectedLeaderboardBoard.key].points}</div>
-                        <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#78715b]">Pts</div>
-                      </div>
-                      <div className="px-2 py-2 text-center">
-                        <div className="text-[11px] font-semibold text-[#4f4b3f]">
-                          {entry.stats[selectedLeaderboardBoard.key].bestTimeMs
-                            ? `${(entry.stats[selectedLeaderboardBoard.key].bestTimeMs / 1000).toFixed(1)}s best`
-                            : "—"}
-                        </div>
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="px-4 py-6 text-sm text-[#6e6a5c]">
-                    No scores yet for this team.
-                  </div>
-                )}
-                {selectedLeaderboardBoard.currentUserEntry ? (
-                  <>
-                    <div className="grid grid-cols-[42px_minmax(0,1fr)_56px_58px] items-center gap-0 border-b border-[#d6cfb7] bg-[#ddd4bc] text-[10px] font-bold uppercase tracking-[0.16em] text-[#6a654f] last:border-b-0">
-                      <div className="col-span-4 px-4 py-1.5 text-center">Your Standing</div>
-                    </div>
-                    <div className="grid grid-cols-[42px_minmax(0,1fr)_56px_58px] items-center gap-0 border-b border-[#5d8d62] bg-[#dff0dd] text-sm last:border-b-0">
-                      <div className="border-r border-[#b5cfb4] px-2 py-2 text-center">
-                        <div className="inline-flex h-7 min-w-7 items-center justify-center rounded-full border border-[#5d8d62] bg-[#bfe0bd] px-2 text-[11px] font-black text-[#244127]">
-                          {selectedLeaderboardBoard.currentUserEntry.leaderboardRank}
-                        </div>
-                      </div>
-                      <div className="min-w-0 border-r border-[#b5cfb4] px-3 py-2">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <AvatarBadge
-                            name={selectedLeaderboardBoard.currentUserEntry.name}
-                            avatarUrl={selectedLeaderboardBoard.currentUserEntry.avatarUrl}
-                            className="h-8 w-8"
-                            textClassName="text-[10px]"
-                          />
-                          <div className="truncate font-semibold uppercase tracking-[0.04em] text-[#23241d]">
-                            {selectedLeaderboardBoard.currentUserEntry.name}
-                          </div>
-                        </div>
-                        <div className="text-[11px] text-[#4c6a4f]">
-                          {selectedLeaderboardBoard.currentUserEntry.stats[selectedLeaderboardBoard.key].attempts > 0
-                            ? `${Math.round((selectedLeaderboardBoard.currentUserEntry.stats[selectedLeaderboardBoard.key].correct / selectedLeaderboardBoard.currentUserEntry.stats[selectedLeaderboardBoard.key].attempts) * 100)}% correct`
-                            : "0% correct"}{" • You"}
-                        </div>
-                      </div>
-                      <div className="border-r border-[#b5cfb4] px-2 py-2 text-center">
-                        <div className="font-black text-[#202119]">{selectedLeaderboardBoard.currentUserEntry.stats[selectedLeaderboardBoard.key].points}</div>
-                        <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#4c6a4f]">Pts</div>
-                      </div>
-                      <div className="px-2 py-2 text-center">
-                        <div className="text-[11px] font-semibold text-[#36513a]">
-                          {selectedLeaderboardBoard.currentUserEntry.stats[selectedLeaderboardBoard.key].bestTimeMs
-                            ? `${(selectedLeaderboardBoard.currentUserEntry.stats[selectedLeaderboardBoard.key].bestTimeMs / 1000).toFixed(1)}s best`
-                            : "—"}
-                        </div>
-                      </div>
-                    </div>
-                  </>
-                ) : null}
-              </div>
+                <div className="grid gap-4 xl:grid-cols-2">
+                  {leaderboardBoards.filter((board) => board.section === "offense").map(renderLeaderboardBoard)}
+                </div>
+              </section>
+              <section className="space-y-3">
+                <div className="rounded-xl border border-[#8a856f] bg-[#f8f4e6] px-4 py-3 text-center">
+                  <div className="text-xs font-black uppercase tracking-[0.24em] text-[#5a5646]">Defense</div>
+                </div>
+                <div className="grid gap-4 xl:grid-cols-3">
+                  {leaderboardBoards.filter((board) => board.section === "defense").map(renderLeaderboardBoard)}
+                </div>
+              </section>
             </div>
           </div>
-        ) : null}
       </CardContent>
     </Card>
   </div>
@@ -7860,7 +7995,7 @@ const existingStats =
                   <Button className="h-12 w-full rounded-xl text-base" onClick={submitQuiz}>
                     Check Answers
                   </Button>
-                      <Button variant="outline" className="h-12 w-full rounded-xl text-base" onClick={() => { setShowQuizAnswers(true); setShowQuizFeedback(true); setQuizReadyForNext(false); }}>
+                      <Button variant="outline" className="h-12 w-full rounded-xl text-base" onClick={() => { markAttemptRevealed("quiz"); setShowQuizAnswers(true); setShowQuizFeedback(false); setQuizReadyForNext(false); }}>
                         Show Answers
                       </Button>
                       {showQuizAnswers ? (
@@ -7885,6 +8020,9 @@ const existingStats =
                               <div>
                                 <span className="font-semibold">Quiz total:</span> {lastScoreSummary.quiz.total}
                               </div>
+                              {lastScoreSummary.quiz.blockedByReveal ? (
+                                <div className="mt-2 font-semibold text-amber-800">No points awarded because answers were revealed first.</div>
+                              ) : null}
                             </div>
                           ) : null}
                           <div className="space-y-2 text-sm">
@@ -8169,6 +8307,7 @@ const existingStats =
                       fieldTags={blitzFieldTags}
                       enhancedLandmarks
                       wideFieldMarks
+                      fieldHashXs={blitzPreview.hashXs}
                       losReferenceY={blitzPreview.losY}
                     />
                   </div>
@@ -8183,6 +8322,21 @@ const existingStats =
                       <SelectContent>
                         <SelectItem value="4-4">4-4</SelectItem>
                         <SelectItem value="4-3">4-3</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="rounded-xl border bg-slate-50 p-3">
+                    <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Board Spot</div>
+                    <Select value={selectedBlitzBoardSpot} onValueChange={(value: BlitzBoardSpot) => loadBlitzStructuredSelection({ boardSpot: value })}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {BLITZ_BOARD_SPOT_OPTIONS.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>
@@ -10136,7 +10290,7 @@ const existingStats =
                   <Button className="h-12 w-full rounded-xl text-base" onClick={submitQuiz}>
                     Check Answers
                   </Button>
-                  <Button variant="outline" className="h-12 w-full rounded-xl text-base" onClick={() => { setShowQuizAnswers(true); setShowQuizFeedback(true); setQuizReadyForNext(false); }}>
+                  <Button variant="outline" className="h-12 w-full rounded-xl text-base" onClick={() => { markAttemptRevealed("quiz"); setShowQuizAnswers(true); setShowQuizFeedback(false); setQuizReadyForNext(false); }}>
                     Show Answers
                   </Button>
                   {showQuizAnswers ? (
@@ -10161,6 +10315,9 @@ const existingStats =
                           <div>
                             <span className="font-semibold">Quiz total:</span> {lastScoreSummary.quiz.total}
                           </div>
+                          {lastScoreSummary.quiz.blockedByReveal ? (
+                            <div className="mt-2 font-semibold text-amber-800">No points awarded because answers were revealed first.</div>
+                          ) : null}
                         </div>
                       ) : null}
                       <div className="space-y-2 text-sm">
@@ -10246,6 +10403,9 @@ const existingStats =
                                 <div>
                                   <span className="font-semibold">Alignment total:</span> {lastScoreSummary.alignment.total}
                                 </div>
+                                {lastScoreSummary.alignment.blockedByReveal ? (
+                                  <div className="mt-2 font-semibold text-amber-800">No points awarded because answers were revealed first.</div>
+                                ) : null}
                               </div>
                             ) : null}
                             {alignmentCheck.isCorrect ? (
