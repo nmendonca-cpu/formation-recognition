@@ -82,16 +82,31 @@ type FieldTag = {
 type RunFitEditorTool = "arrow" | "tag";
 type RunFitArrowColor = "gold" | "cyan" | "sky" | "white" | "red";
 type RunFitLineEnd = "square" | "circle" | "arrow";
+type RunFitSavedPathway = {
+  id: string;
+  name: string;
+  positionId: string;
+  label: string;
+  color: RunFitArrowColor;
+  endCap: RunFitLineEnd;
+  offsets: { x: number; y: number }[];
+};
 type RunFitPathwayId =
   | "a_gap_fit"
   | "b_gap_fit"
   | "c_gap_fit"
   | "d_gap_fit"
+  | "strong_a_gap_fit"
+  | "strong_b_gap_fit"
+  | "strong_c_gap_fit"
+  | "strong_d_gap_fit"
+  | "weak_a_gap_fit"
+  | "weak_b_gap_fit"
+  | "weak_c_gap_fit"
+  | "weak_d_gap_fit"
   | "box_fit"
   | "spill_fit"
   | "under_box_fit"
-  | "over_box_fit"
-  | "under_spill_fit"
   | "over_spill_fit";
 type RunFitSavedBoard = {
   id: string;
@@ -368,6 +383,8 @@ const VIEW_STATE_STORAGE_KEY = "formation-recognition-view-state";
 const FILM_CLIPS_STORAGE_KEY = "formation-recognition-film-clips";
 const RUN_FIT_BOARDS_STORAGE_KEY = "formation-recognition-run-fit-boards-v3";
 const BLITZ_BOARDS_STORAGE_KEY = "formation-recognition-blitz-boards-v1";
+const DEMO_SESSION_STORAGE_KEY = "formation-recognition-demo-session";
+const DEMO_USER_ID = "demo-user";
 const FILM_BUCKET = "film-clips";
 const AVATAR_BUCKET = "profile-pics";
 const FILM_RUN_SCHEME_OPTIONS: Exclude<FilmRunScheme, "">[] = ["gap", "zone", "man"];
@@ -379,11 +396,17 @@ const RUN_FIT_PATHWAY_OPTIONS: { value: RunFitPathwayId; label: string }[] = [
   { value: "b_gap_fit", label: "B-Gap Fit" },
   { value: "c_gap_fit", label: "C-Gap Fit" },
   { value: "d_gap_fit", label: "D-Gap Fit" },
+  { value: "strong_a_gap_fit", label: "Strong A-Gap Fit" },
+  { value: "strong_b_gap_fit", label: "Strong B-Gap Fit" },
+  { value: "strong_c_gap_fit", label: "Strong C-Gap Fit" },
+  { value: "strong_d_gap_fit", label: "Strong D-Gap Fit" },
+  { value: "weak_a_gap_fit", label: "Weak A-Gap Fit" },
+  { value: "weak_b_gap_fit", label: "Weak B-Gap Fit" },
+  { value: "weak_c_gap_fit", label: "Weak C-Gap Fit" },
+  { value: "weak_d_gap_fit", label: "Weak D-Gap Fit" },
   { value: "box_fit", label: "Box" },
   { value: "spill_fit", label: "Spill" },
   { value: "under_box_fit", label: "Under Box" },
-  { value: "over_box_fit", label: "Over Box" },
-  { value: "under_spill_fit", label: "Under Spill" },
   { value: "over_spill_fit", label: "Over Spill" },
 ];
 const BLITZ_BASE_BOARD_OPTIONS: { value: BlitzBaseBoardId; label: string; call: string }[] = [
@@ -837,6 +860,22 @@ const ADMIN_EMAILS = [
   "nmendonca@pleasantonusd.net",
   "mendoncanick@gmail.com",
 ];
+const DEMO_USER: UserRecord = {
+  id: DEMO_USER_ID,
+  email: "demo",
+  name: "Demo",
+  teamCode: "Foothill",
+  isAdmin: false,
+  avatarUrl: null,
+  stats: {
+    ...DEFAULT_STATS,
+    quiz: { ...DEFAULT_MODE_STATS },
+    offense_build: { ...DEFAULT_MODE_STATS },
+    alignment: { ...DEFAULT_MODE_STATS },
+    film: { ...DEFAULT_MODE_STATS },
+    concept: { ...DEFAULT_MODE_STATS },
+  },
+};
 
 function normalize(value: string) {
   return value.trim().toLowerCase();
@@ -2796,6 +2835,31 @@ function buildBlitzBoardShell(baseBoardId: BlitzBaseBoardId, frontMode: FrontMod
   };
 }
 
+function buildRunFitBoardShell(baseBoardId: BlitzBaseBoardId) {
+  const shell = buildBlitzBoardShell(baseBoardId, "4-4");
+  const originX = getBlitzOriginX(shell.offensePlayers);
+  const widenFromBall = (x: number) => clamp(originX + (x - originX) * 1.1, 3, 97);
+  const deepenFromLos = (y: number) => (
+    Math.abs(y - shell.losY) < 1.25
+      ? y
+      : clamp(shell.losY + (y - shell.losY) * 1.1, 3, 97)
+  );
+  const expandPlayer = (player: PlayerDot) => ({
+    ...player,
+    x: widenFromBall(player.x),
+    y: deepenFromLos(player.y),
+  });
+
+  return {
+    ...shell,
+    offensePlayers: shell.offensePlayers.map(expandPlayer),
+    defensePlayers: shell.defensePlayers.map((player) => ({
+      ...expandPlayer(player),
+      y: clamp(deepenFromLos(player.y) + 4.5, 3, 97),
+    })),
+  };
+}
+
 function getBlitzPathwayLabel(pathwayId: BlitzPathwayId) {
   return BLITZ_PATHWAY_OPTIONS.find((option) => option.value === pathwayId)?.label ?? "Pathway";
 }
@@ -3059,8 +3123,21 @@ function buildBlitzPathwayOverlay({
       { x: targetX, y: defender.y + 15 },
     ];
   } else if (pathwayId === "drop_curl_flat") {
-    const targetX = getBlitzCoverageHashX(offensePlayers, side);
-    path = makeCoveragePath(targetX, defender.y + 13);
+    const isHashBoard = Math.abs(originX - getBlitzHash("right")) < 1.5 || Math.abs(originX - getBlitzHash("left")) < 1.5;
+    if (isHashBoard) {
+      const sidelineDirection = side === "left" ? -1 : 1;
+      const dropDistance = 13;
+      path = [
+        { x: defender.x, y: defender.y },
+        {
+          x: clamp(defender.x + sidelineDirection * dropDistance, 3, 97),
+          y: defender.y + dropDistance,
+        },
+      ];
+    } else {
+      const targetX = getBlitzCoverageHashX(offensePlayers, side);
+      path = makeCoveragePath(targetX, defender.y + 13);
+    }
   } else if (pathwayId === "mof") {
     path = makeCoveragePath(originX, 88);
   } else if (pathwayId === "deep_third_left") {
@@ -3129,7 +3206,9 @@ function getBlitzTemplateAssignments({
     const defender = defensePlayers.find((player) => player.id === defenderId);
     return defender && defender.x < originX ? "left" : "right";
   };
-  const oppositeEnd = (side: Side) => side === "left" ? "SDE" : "WDE";
+  const oppositeEnd = (side: Side) => (
+    ["WDE", "SDE"].find((defenderId) => defenderSide(defenderId) !== side) ?? (side === "left" ? "SDE" : "WDE")
+  );
   const slantAway = (side: Side): BlitzPathwayId => side === "left" ? "one_gap_slant_right" : "one_gap_slant_left";
   const add = (defenderId: string, pathwayId: BlitzPathwayId, layer?: "pressure" | "coverage" | "dl") => {
     if (usedDefenders.has(defenderId)) return;
@@ -3188,8 +3267,14 @@ function getBlitzTemplateAssignments({
     ![...FIXED_OL_IDS, "QB", "RB", "R", "F", "FB"].includes(player.id as any)
     && (passAway === "left" ? player.x < originX : player.x > originX)
   )).length;
+  const boundarySide: Side | null = Math.abs(originX - getBlitzHash("right")) < 1.5
+    ? "right"
+    : Math.abs(originX - getBlitzHash("left")) < 1.5
+      ? "left"
+      : null;
   const getDropperPathway = (dropperId: string, pressureSide: Side): BlitzPathwayId => {
     const dropperSide = pressureSide === "left" ? "right" : "left";
+    if (boundarySide && defenderSide(dropperId) === boundarySide) return "drop_curl_flat";
     return passAway === dropperSide && weakSideEligibleCount <= 1 ? "drop_curl_flat" : "drop_hook";
   };
   const hasThreeWrSide = ["left", "right"].some((side) => getBlitzOrderedEligibles(offensePlayers, side as Side).length >= 3);
@@ -3203,22 +3288,27 @@ function getBlitzTemplateAssignments({
         add("BS", "mof", "coverage");
         add("M", "strong_hook", "coverage");
         add("W", "weak_hook", "coverage");
-        add(dropperId, "drop_hook", "coverage");
+        add(dropperId, dropperPathway, "coverage");
       } else if (blitzerId === "M") {
         add("FS", "strong_hook", "coverage");
         add("BS", "mof", "coverage");
         add("Ni", "curl_flat", "coverage");
         add("W", "weak_hook", "coverage");
-        add(dropperId, "drop_hook", "coverage");
+        add(dropperId, dropperPathway, "coverage");
       } else if (blitzerId === "W") {
         add("BS", "curl_flat", "coverage");
         add("FS", "mof", "coverage");
         add("Ni", "curl_flat", "coverage");
         add("M", "strong_hook", "coverage");
-        add(dropperId, "drop_hook", "coverage");
+        add(dropperId, dropperPathway, "coverage");
       } else if (blitzerId === "BS") {
-        add("W", "curl_flat", "coverage");
-        add(dropperId, "strong_hook", "coverage");
+        if (dropperHasCurlFlat) {
+          add(dropperId, dropperPathway, "coverage");
+          add("W", "strong_hook", "coverage");
+        } else {
+          add("W", "curl_flat", "coverage");
+          add(dropperId, "strong_hook", "coverage");
+        }
         add("M", "weak_hook", "coverage");
         add("Ni", "curl_flat", "coverage");
         add("FS", "mof", "coverage");
@@ -3472,6 +3562,7 @@ function TrainingField({
   offensePlayers,
   routeOverlays = [],
   routeOverlaysOnTop = false,
+  compactAnnotations = false,
   fieldTags = [],
   onFieldClick,
   onFieldDoubleClick,
@@ -3505,6 +3596,7 @@ function TrainingField({
   offensePlayers: PlayerDot[];
   routeOverlays?: RouteOverlay[];
   routeOverlaysOnTop?: boolean;
+  compactAnnotations?: boolean;
   fieldTags?: FieldTag[];
   yardReferenceLines?: YardReferenceLine[];
   yardReferenceScale?: number;
@@ -3543,6 +3635,7 @@ function TrainingField({
   const hashMarkRows = [13, 28, 43, 61, 76, 91];
   const sidelineInset = 1.5;
   const numberInset = 12;
+  const annotationScale = compactAnnotations ? 0.72 : 1;
 
   const getRawPoint = (clientX: number, clientY: number, rect: DOMRect) => {
     const x = clamp(((clientX - rect.left) / rect.width) * 100, 2, 98);
@@ -3591,18 +3684,18 @@ function TrainingField({
           <marker
             key={`marker-${route.id}`}
             id={`marker-${route.id}`}
-            markerWidth={route.endCap === "circle" ? "5" : route.endCap === "square" ? "4.8" : "5"}
-            markerHeight={route.endCap === "circle" ? "5" : route.endCap === "square" ? "4.8" : "5"}
-            refX={route.endCap === "circle" ? "2.5" : route.endCap === "square" ? "2.4" : "3.6"}
-            refY={route.endCap === "circle" ? "2.5" : route.endCap === "square" ? "2.4" : "2.5"}
+            markerWidth={(route.endCap === "circle" ? 5 : route.endCap === "square" ? 4.8 : 5) * annotationScale}
+            markerHeight={(route.endCap === "circle" ? 5 : route.endCap === "square" ? 4.8 : 5) * annotationScale}
+            refX={(route.endCap === "circle" ? 2.5 : route.endCap === "square" ? 2.4 : 3.6) * annotationScale}
+            refY={(route.endCap === "circle" ? 2.5 : route.endCap === "square" ? 2.4 : 2.5) * annotationScale}
             orient="auto"
           >
             {route.endCap === "circle" ? (
-              <circle cx="2.5" cy="2.5" r="2" fill={route.color} />
+              <circle cx={2.5 * annotationScale} cy={2.5 * annotationScale} r={2 * annotationScale} fill={route.color} />
             ) : route.endCap === "square" ? (
-              <rect x="0.6" y="0.6" width="3.6" height="3.6" rx="0.3" fill={route.color} />
+              <rect x={0.6 * annotationScale} y={0.6 * annotationScale} width={3.6 * annotationScale} height={3.6 * annotationScale} rx={0.3 * annotationScale} fill={route.color} />
             ) : (
-              <path d="M0,0 L5,2.5 L0,5 z" fill={route.color} />
+              <path d={`M0,0 L${5 * annotationScale},${2.5 * annotationScale} L0,${5 * annotationScale} z`} fill={route.color} />
             )}
           </marker>
         ))}
@@ -3613,7 +3706,7 @@ function TrainingField({
             points={route.path.map((point) => `${maybeFlipX(point.x, flipHorizontalPerspective)},${maybeFlipY(point.y, flipOffense)}`).join(" ")}
             fill="none"
             stroke={route.color}
-            strokeWidth="0.7"
+            strokeWidth={0.7 * annotationScale}
             strokeLinecap="round"
             strokeLinejoin="round"
             markerEnd={`url(#marker-${route.id})`}
@@ -3622,19 +3715,19 @@ function TrainingField({
           {route.labelX !== undefined && route.labelY !== undefined ? (
             <>
               <rect
-                x={maybeFlipX(route.labelX, flipHorizontalPerspective) - 2.8}
-                y={maybeFlipY(route.labelY, flipOffense) - 2.45}
-                width="7.2"
-                height="4.2"
-                rx="1.15"
+                x={maybeFlipX(route.labelX, flipHorizontalPerspective) - 2.8 * annotationScale}
+                y={maybeFlipY(route.labelY, flipOffense) - 2.45 * annotationScale}
+                width={7.2 * annotationScale}
+                height={4.2 * annotationScale}
+                rx={1.15 * annotationScale}
                 fill="rgba(15,23,42,0.68)"
               />
               <text
-                x={maybeFlipX(route.labelX, flipHorizontalPerspective) + 0.8}
+                x={maybeFlipX(route.labelX, flipHorizontalPerspective) + 0.8 * annotationScale}
                 y={maybeFlipY(route.labelY, flipOffense)}
                 textAnchor="middle"
                 dominantBaseline="middle"
-                fontSize="1.25"
+                fontSize={1.25 * annotationScale}
                 letterSpacing="0.04em"
                 fontWeight="700"
                 fill="white"
@@ -3778,7 +3871,7 @@ function TrainingField({
         return (
           <div
             key={tag.id}
-            className={`absolute -translate-x-1/2 -translate-y-1/2 rounded-md border px-2 py-1 text-[10px] font-black uppercase tracking-[0.12em] shadow-sm ${toneClass}`}
+            className={`absolute -translate-x-1/2 -translate-y-1/2 rounded border px-1.5 py-0.5 ${compactAnnotations ? "text-[7px]" : "text-[10px]"} font-black uppercase tracking-[0.10em] shadow-sm ${toneClass}`}
             style={{ left: `${maybeFlipX(tag.x, flipHorizontalPerspective)}%`, top: `${maybeFlipY(tag.y, flipOffense)}%` }}
           >
             {tag.label}
@@ -4048,6 +4141,9 @@ export default function FormationRecognitionWorkingApp() {
   const [runFitTagLabel, setRunFitTagLabel] = useState("SPILL");
   const [runFitTagTone, setRunFitTagTone] = useState<FieldTag["tone"]>("gold");
   const [runFitSavedBoards, setRunFitSavedBoards] = useState<RunFitSavedBoard[]>([]);
+  const [runFitSavedPathways, setRunFitSavedPathways] = useState<RunFitSavedPathway[]>([]);
+  const [selectedRunFitSavedPathwayId, setSelectedRunFitSavedPathwayId] = useState("");
+  const [runFitSavedPathwayName, setRunFitSavedPathwayName] = useState("Over Spill");
   const [selectedRunFitBaseBoardId, setSelectedRunFitBaseBoardId] = useState<BlitzBaseBoardId>("double");
   const [selectedRunFitBoardId, setSelectedRunFitBoardId] = useState("working");
   const [runFitSaveNotice, setRunFitSaveNotice] = useState<string | null>(null);
@@ -4555,6 +4651,22 @@ export default function FormationRecognitionWorkingApp() {
 
    useEffect(() => {
   const checkAuth = async () => {
+    if (window.localStorage.getItem(DEMO_SESSION_STORAGE_KEY) === "true") {
+      setCurrentUser((prev) => (prev?.id === DEMO_USER_ID ? prev : {
+        ...DEMO_USER,
+        stats: {
+          ...DEMO_USER.stats,
+          quiz: { ...DEMO_USER.stats.quiz },
+          offense_build: { ...DEMO_USER.stats.offense_build },
+          alignment: { ...DEMO_USER.stats.alignment },
+          film: { ...DEMO_USER.stats.film },
+          concept: { ...DEMO_USER.stats.concept },
+        },
+      }));
+      setAuthChecked(true);
+      return;
+    }
+
     const supabase = createClient();
     const { data, error } = await supabase.auth.getUser();
 
@@ -4858,6 +4970,7 @@ const existingStats =
 
   useEffect(() => {
     if (!currentUser) return;
+    if (currentUser.id === DEMO_USER_ID) return;
 
     setLeaderboardEntries((prev) => {
       const existing = prev.find((entry) => entry.id === currentUser.id);
@@ -4905,7 +5018,7 @@ const existingStats =
     [effectivePassConceptBoardKind, selectedFrontsideConcept, selectedBacksideConcept, selectedThreeByOneConcept],
   );
   const runFitPreview = useMemo(() => {
-    const shell = buildBlitzBoardShell(selectedRunFitBaseBoardId, "4-4");
+    const shell = buildRunFitBoardShell(selectedRunFitBaseBoardId);
     const boardLabel = BLITZ_BASE_BOARD_OPTIONS.find((option) => option.value === selectedRunFitBaseBoardId)?.label ?? "Formation";
     return {
       ...shell,
@@ -4995,12 +5108,14 @@ const existingStats =
       const parsed = JSON.parse(raw) as {
         working?: { title?: string; routeOverlays?: RouteOverlay[]; fieldTags?: FieldTag[] };
         boards?: RunFitSavedBoard[];
+        savedPathways?: RunFitSavedPathway[];
       };
 
       setRunFitTitle(parsed.working?.title || runFitPreview.title);
       setRunFitRouteOverlays(parsed.working?.routeOverlays || runFitPreview.routeOverlays);
       setRunFitFieldTags(parsed.working?.fieldTags || runFitPreview.fieldTags);
       setRunFitSavedBoards(Array.isArray(parsed.boards) ? parsed.boards : []);
+      setRunFitSavedPathways(Array.isArray(parsed.savedPathways) ? parsed.savedPathways : []);
     } catch {
       setRunFitTitle(runFitPreview.title);
       setRunFitRouteOverlays(runFitPreview.routeOverlays);
@@ -5019,10 +5134,11 @@ const existingStats =
             fieldTags: runFitFieldTags,
           },
           boards: runFitSavedBoards,
+          savedPathways: runFitSavedPathways,
         }),
       );
     } catch {}
-  }, [runFitFieldTags, runFitRouteOverlays, runFitSavedBoards, runFitTitle]);
+  }, [runFitFieldTags, runFitRouteOverlays, runFitSavedBoards, runFitSavedPathways, runFitTitle]);
 
   useEffect(() => {
     try {
@@ -5122,13 +5238,23 @@ const existingStats =
   }, [passConceptAnswers, passConceptDefinition.activePlayers, passConceptDefinition.boardKind, passConceptPreview, passConceptQuizMode, passConceptViewMode, showPassConceptAnswers]);
   const displayFormation = useMemo(() => {
     let base;
+    const buildName = mode === "offense_build" ? flipCallSide(current.name) : current.name;
 
     if (current.playbook === "Wing T" || current.name.startsWith("Wing T")) {
-      base = buildWingTFormation(current.name, mode === "alignment");
+      base = buildWingTFormation(buildName, mode === "alignment");
     } else if (current.playbook === "Foothill") {
-      base = buildFoothillFormation(current.name, mode === "alignment");
+      base = buildFoothillFormation(buildName, mode === "alignment");
     } else {
-      base = buildProFormation(current.name, mode === "alignment");
+      base = buildProFormation(buildName, mode === "alignment");
+    }
+
+    if (mode === "offense_build") {
+      base = {
+        ...base,
+        name: current.name,
+        runStrength: current.runStrength,
+        passStrength: current.passStrength,
+      };
     }
 
     const override = editorOverrides[formationKey];
@@ -6726,6 +6852,13 @@ const existingStats =
   }, [currentUser?.id]);
 
   const handleLogout = async () => {
+  if (currentUser?.id === DEMO_USER_ID) {
+    window.localStorage.removeItem(DEMO_SESSION_STORAGE_KEY);
+    setCurrentUser(null);
+    router.push("/login");
+    return;
+  }
+
   const supabase = createClient();
 
   if (currentUser?.id) {
@@ -6789,8 +6922,73 @@ const existingStats =
     commitRunFitLine([...runFitDraftPoints, { x, y }]);
   };
 
+  const saveRunFitDraftAsPathway = () => {
+    if (!currentUser?.isAdmin) return;
+    const defender = runFitPreview.defensePlayers.find((player) => player.id === selectedRunFitPathwayDefenderId);
+    if (!defender || runFitDraftPoints.length < 2) {
+      setRunFitSaveNotice("Draw at least two points and choose the position this pathway belongs to.");
+      return;
+    }
+
+    const cleanName = runFitSavedPathwayName.trim() || runFitArrowLabel.trim() || `${defender.id} Pathway`;
+    const savedPathway: RunFitSavedPathway = {
+      id: `run-fit-saved-pathway-${Date.now()}`,
+      name: cleanName,
+      positionId: defender.id,
+      label: runFitArrowLabel.trim(),
+      color: runFitArrowColor,
+      endCap: runFitLineEnd,
+      offsets: runFitDraftPoints.map((point) => ({
+        x: point.x - defender.x,
+        y: point.y - defender.y,
+      })),
+    };
+
+    setRunFitSavedPathways((prev) => [...prev, savedPathway]);
+    setSelectedRunFitSavedPathwayId(savedPathway.id);
+    setRunFitDraftPoints([]);
+    setRunFitSaveNotice(`Saved ${cleanName} as a reusable ${defender.id} pathway.`);
+  };
+
+  const stampSavedRunFitPathway = () => {
+    if (!currentUser?.isAdmin) return;
+    const savedPathway = runFitSavedPathways.find((pathway) => pathway.id === selectedRunFitSavedPathwayId);
+    const defender = runFitPreview.defensePlayers.find((player) => player.id === selectedRunFitPathwayDefenderId);
+    if (!savedPathway || !defender) {
+      setRunFitSaveNotice("Choose a saved pathway and defender first.");
+      return;
+    }
+
+    const path = savedPathway.offsets.map((offset) => ({
+      x: clamp(defender.x + offset.x, 2, 98),
+      y: clamp(defender.y + offset.y, 2, 98),
+    }));
+
+    setRunFitRouteOverlays((prev) => [
+      ...prev.filter((existing) => existing.pathway?.defenderId !== defender.id),
+      {
+        id: `run-fit-custom-${savedPathway.id}-${defender.id}-${Date.now()}`,
+        label: savedPathway.label,
+        color: getRunFitArrowStroke(savedPathway.color),
+        path,
+        labelX: savedPathway.label ? path[path.length - 1]?.x : undefined,
+        labelY: savedPathway.label ? (path[path.length - 1]?.y ?? LOS_Y) - 3 : undefined,
+        endCap: savedPathway.endCap,
+      },
+    ]);
+    setRunFitSaveNotice(`Added ${savedPathway.name} for ${defender.id}.`);
+  };
+
+  const deleteSavedRunFitPathway = () => {
+    if (!currentUser?.isAdmin || !selectedRunFitSavedPathwayId) return;
+    const deletedPathway = runFitSavedPathways.find((pathway) => pathway.id === selectedRunFitSavedPathwayId);
+    setRunFitSavedPathways((prev) => prev.filter((pathway) => pathway.id !== selectedRunFitSavedPathwayId));
+    setSelectedRunFitSavedPathwayId("");
+    setRunFitSaveNotice(deletedPathway ? `Deleted saved pathway ${deletedPathway.name}.` : "Deleted saved pathway.");
+  };
+
   const loadRunFitBaseBoard = (baseBoardId: BlitzBaseBoardId) => {
-    const shell = buildBlitzBoardShell(baseBoardId, "4-4");
+    const shell = buildRunFitBoardShell(baseBoardId);
     const boardLabel = BLITZ_BASE_BOARD_OPTIONS.find((option) => option.value === baseBoardId)?.label ?? "Formation";
     setSelectedRunFitBaseBoardId(baseBoardId);
     setSelectedRunFitBoardId("working");
@@ -6801,6 +6999,142 @@ const existingStats =
     setRunFitSaveNotice(`Loaded Run Fit 4-4 vs ${boardLabel}.`);
   };
 
+  const applyRunFitPowerWeakTemplate = () => {
+    if (!currentUser?.isAdmin) return;
+    const shell = buildRunFitBoardShell("dog");
+    const offenseById = Object.fromEntries(shell.offensePlayers.map((player) => [player.id, player])) as Record<string, PlayerDot | undefined>;
+    const defenseById = Object.fromEntries(shell.defensePlayers.map((player) => [player.id, player])) as Record<string, PlayerDot | undefined>;
+    const point = (player: PlayerDot | undefined, fallback: { x: number; y: number }) => ({
+      x: player?.x ?? fallback.x,
+      y: player?.y ?? fallback.y,
+    });
+    const makeOverlay = (
+      id: string,
+      label: string,
+      color: string,
+      path: { x: number; y: number }[],
+      endCap: RunFitLineEnd = "circle",
+    ): RouteOverlay => ({
+      id,
+      label,
+      color,
+      path,
+      labelX: path[path.length - 1]?.x,
+      labelY: (path[path.length - 1]?.y ?? shell.losY) - 3,
+      endCap,
+    });
+    const weakSide: Side = getOppositeSide(shell.runStrength);
+    const weakDirection = weakSide === "left" ? -1 : 1;
+    const qb = point(offenseById.QB, { x: 50, y: shell.losY - 12 });
+    const rb = point(offenseById.RB ?? offenseById.R, { x: 50, y: shell.losY - 24 });
+    const hWing = point(offenseById.H, { x: getBlitzGapTargetX(shell.offensePlayers, "C", weakSide), y: shell.wingY });
+    const nose = point(defenseById.N, { x: getBlitzGapTargetX(shell.offensePlayers, "A", weakSide), y: shell.losY + 3 });
+    const threeTech = point(defenseById.T, { x: getBlitzGapTargetX(shell.offensePlayers, "B", shell.runStrength), y: shell.losY + 3 });
+    const weakEnd = point(defenseById.WDE, { x: getBlitzEdgePressureTargetX(shell.offensePlayers, weakSide, shell.losY, shell.wingY), y: shell.losY + 3 });
+    const strongEnd = point(defenseById.SDE, { x: getBlitzEdgePressureTargetX(shell.offensePlayers, shell.runStrength, shell.losY, shell.wingY), y: shell.losY + 3 });
+    const puller = point(offenseById.RG ?? offenseById.LG, { x: shell.runStrength === "right" ? 58 : 42, y: shell.losY });
+    const weakAGap = getBlitzGapTargetX(shell.offensePlayers, "A", weakSide);
+    const weakBGap = getBlitzGapTargetX(shell.offensePlayers, "B", weakSide);
+    const strongBGap = getBlitzGapTargetX(shell.offensePlayers, "B", shell.runStrength);
+    const strongAGap = getBlitzGapTargetX(shell.offensePlayers, "A", shell.runStrength);
+    const strongCGap = getBlitzGapTargetX(shell.offensePlayers, "C", shell.runStrength);
+    const bs = point(defenseById.BS, { x: shell.runStrength === "right" ? 72 : 28, y: shell.losY + 18 });
+    const bsTargetBGap = Math.abs(bs.x - weakBGap) <= Math.abs(bs.x - strongBGap) ? weakBGap : strongBGap;
+    const frontSideClimbPoint = {
+      x: weakEnd.x + weakDirection * 5,
+      y: shell.losY - 13,
+    };
+    const pullerFit = {
+      x: weakEnd.x + weakDirection * 2,
+      y: getMidpoint(weakEnd.y, qb.y),
+    };
+    const overSpillFit = {
+      x: pullerFit.x + weakDirection * 4,
+      y: getMidpoint(pullerFit.y, rb.y),
+    };
+    const overlays: RouteOverlay[] = [
+      makeOverlay("power-weak-lt-combo", "Combo", "#f4cf63", [
+        point(offenseById.LT, { x: 34, y: shell.losY }),
+        nose,
+      ], "square"),
+      makeOverlay("power-weak-lg-combo", "Combo", "#f4cf63", [
+        point(offenseById.LG, { x: 42, y: shell.losY }),
+        nose,
+      ], "square"),
+      makeOverlay("power-weak-center-down", "Down", "#f4cf63", [
+        point(offenseById.C, { x: 50, y: shell.losY }),
+        threeTech,
+      ], "square"),
+      makeOverlay("power-weak-rt-base", "Base", "#f4cf63", [
+        point(offenseById.RT, { x: 66, y: shell.losY }),
+        { x: strongCGap, y: shell.losY - 5 },
+      ], "square"),
+      makeOverlay("power-weak-y-base", "Base", "#f4cf63", [
+        point(offenseById.Y, { x: 74, y: shell.losY }),
+        strongEnd,
+      ], "square"),
+      makeOverlay("power-weak-h-climb", "Climb", "#f4cf63", [
+        hWing,
+        frontSideClimbPoint,
+      ], "square"),
+      makeOverlay("power-weak-guard-pull", "Pull", "#f4cf63", [
+        puller,
+        { x: puller.x + weakDirection * 10, y: shell.losY - 8 },
+        pullerFit,
+      ], "arrow"),
+      makeOverlay("power-weak-rb-track", "RB Track", "#f4cf63", [
+        rb,
+        { x: getMidpoint(rb.x, weakBGap), y: getMidpoint(rb.y, qb.y) },
+        { x: weakBGap, y: shell.losY - 9 },
+      ], "arrow"),
+      makeOverlay("power-weak-ni-force", "Force", "#ef4444", [
+        point(defenseById.Ni, { x: weakEnd.x + weakDirection * 10, y: shell.losY + 16 }),
+        { x: weakEnd.x + weakDirection * 9, y: shell.losY - 9 },
+      ], "circle"),
+      makeOverlay("power-weak-wde-spill", "Spill", "#ef4444", [
+        point(defenseById.WDE, weakEnd),
+        { x: weakEnd.x + weakDirection * 1.5, y: shell.losY - 4 },
+        pullerFit,
+      ], "circle"),
+      makeOverlay("power-weak-m-over-spill", "Over Spill", "#ef4444", [
+        point(defenseById.M, { x: 44, y: shell.losY + 12 }),
+        { x: weakEnd.x + weakDirection * 1.5, y: shell.losY - 5 },
+        overSpillFit,
+      ], "circle"),
+      makeOverlay("power-weak-w-a-gap", "A Gap", "#ef4444", [
+        point(defenseById.W, { x: 56, y: shell.losY + 12 }),
+        { x: strongAGap, y: shell.losY - 7 },
+      ], "circle"),
+      makeOverlay("power-weak-n-a-gap", "A Gap", "#ef4444", [
+        point(defenseById.N, nose),
+        { x: weakAGap, y: shell.losY - 6 },
+      ], "circle"),
+      makeOverlay("power-weak-t-c-gap", "C Gap", "#ef4444", [
+        point(defenseById.T, threeTech),
+        { x: strongCGap, y: shell.losY - 6 },
+      ], "circle"),
+      makeOverlay("power-weak-sde-c-gap", "C Gap", "#ef4444", [
+        point(defenseById.SDE, strongEnd),
+        { x: strongCGap + (shell.runStrength === "left" ? -3 : 3), y: shell.losY - 6 },
+      ], "circle"),
+      makeOverlay("power-weak-bs-fold", "Fold B", "#ef4444", [
+        bs,
+        { x: bsTargetBGap, y: shell.losY - 6 },
+      ], "circle"),
+    ];
+
+    setSelectedRunFitBaseBoardId("dog");
+    setSelectedRunFitBoardId("working");
+    setRunFitTitle("11p Power Weak vs Dog 4-4");
+    setRunFitRouteOverlays(overlays);
+    setRunFitFieldTags([
+      { id: "power-weak-tag", label: "11p Power Weak", x: 50, y: shell.losY - 18, tone: "gold" },
+      { id: "power-weak-fit-tag", label: "1 Puller = Spill + Overlap", x: 50, y: shell.losY + 30, tone: "cyan" },
+    ]);
+    setRunFitDraftPoints([]);
+    setRunFitSaveNotice("Applied 11p Power Weak template.");
+  };
+
   const addRunFitPathway = () => {
     if (!currentUser?.isAdmin) return;
     const defender = runFitPreview.defensePlayers.find((player) => player.id === selectedRunFitPathwayDefenderId);
@@ -6809,139 +7143,210 @@ const existingStats =
       return;
     }
 
-    const side: Side = defender.x < 50 ? "left" : "right";
-    const awayFromCenter = side === "left" ? -1 : 1;
-    const trimStart = (rawPath: { x: number; y: number }[]) => {
-      if (rawPath.length < 2) return rawPath;
-      const [start, next, ...rest] = rawPath;
-      const dx = next.x - start.x;
-      const dy = next.y - start.y;
-      const distance = Math.hypot(dx, dy);
-      if (distance <= 0.1) return rawPath;
-      const trimDistance = Math.min(3.1, distance - 0.1);
+    const originX = getBlitzOriginX(runFitPreview.offensePlayers);
+    const side: Side = defender.x < originX ? "left" : "right";
+    const strongSide = runFitPreview.runStrength;
+    const weakSide = getOppositeSide(strongSide);
+    const qbDepth = runFitPreview.offensePlayers.find((player) => player.id === "QB")?.y ?? runFitPreview.losY - 12;
+    const capToQbDepth = (path: { x: number; y: number }[]) => path.map((point) => ({
+      ...point,
+      y: point.y < qbDepth ? qbDepth : point.y,
+    }));
+    const getRunFitSurface = (targetSide: Side) => {
+      const byId = Object.fromEntries(runFitPreview.offensePlayers.map((player) => [player.id, player])) as Record<string, PlayerDot | undefined>;
+      const tackle = targetSide === "left" ? byId.LT : byId.RT;
+      const tackleX = tackle?.x ?? getBlitzGapTargetX(runFitPreview.offensePlayers, "C", targetSide);
+      const sidePlayers = runFitPreview.offensePlayers.filter((player) => (
+        ![...FIXED_OL_IDS, "QB", "RB", "R", "F", "FB"].includes(player.id as any)
+        && (targetSide === "left" ? player.x < originX : player.x > originX)
+      ));
+      const tightLineSurface = sidePlayers
+        .filter((player) => Math.abs(player.y - runFitPreview.losY) < 1.25 && Math.abs(player.x - tackleX) <= 9)
+        .sort((a, b) => targetSide === "left" ? a.x - b.x : b.x - a.x)[0] ?? tackle;
+      const tightWingSurface = sidePlayers
+        .filter((player) => Math.abs(player.y - runFitPreview.wingY) < 1.75)
+        .filter((player) => Math.abs(player.x - (tightLineSurface?.x ?? tackleX)) <= 12)
+        .sort((a, b) => targetSide === "left" ? a.x - b.x : b.x - a.x)[0];
+      const edgeSurface = tightWingSurface ?? tightLineSurface;
+
+      return { edgeSurface, tackleX };
+    };
+    const getRunFitDGapX = (targetSide: Side) => {
+      const { edgeSurface, tackleX } = getRunFitSurface(targetSide);
+      const outside = targetSide === "left" ? -1 : 1;
+      return clamp((edgeSurface?.x ?? tackleX) + outside * 3.4, 3, 97);
+    };
+    const getRunFitInsideEdgeX = (targetSide: Side) => {
+      const { edgeSurface, tackleX } = getRunFitSurface(targetSide);
+      const inside = targetSide === "left" ? 1 : -1;
+      return clamp((edgeSurface?.x ?? tackleX) + inside * 2.2, 3, 97);
+    };
+    const getRunFitOutsideEdgeX = (targetSide: Side) => {
+      const { edgeSurface, tackleX } = getRunFitSurface(targetSide);
+      const outside = targetSide === "left" ? -1 : 1;
+      return clamp((edgeSurface?.x ?? tackleX) + outside * 2.6, 3, 97);
+    };
+    const makeGapFitPath = (gap: "A" | "B" | "C", targetSide: Side) => capToQbDepth([
+      { x: defender.x, y: defender.y },
+      {
+        x: getMidpoint(defender.x, getBlitzGapTargetX(runFitPreview.offensePlayers, gap, targetSide)),
+        y: getMidpoint(defender.y, runFitPreview.losY),
+      },
+      { x: getBlitzGapTargetX(runFitPreview.offensePlayers, gap, targetSide), y: runFitPreview.losY - 4 },
+    ]);
+    const makeDGapFitPath = (targetSide: Side) => {
+      const targetX = getRunFitDGapX(targetSide);
+      return capToQbDepth([
+        { x: defender.x, y: defender.y },
+        {
+          x: getMidpoint(defender.x, targetX),
+          y: getMidpoint(defender.y, runFitPreview.losY),
+        },
+        { x: targetX, y: runFitPreview.losY - 4 },
+      ]);
+    };
+    const makeBoxSpillPath = (targetSide: Side) => {
+      const targetX = getRunFitInsideEdgeX(targetSide);
       return [
-        { x: start.x + (dx / distance) * trimDistance, y: start.y + (dy / distance) * trimDistance },
-        next,
-        ...rest,
+        { x: defender.x, y: defender.y },
+        {
+          x: getMidpoint(defender.x, targetX),
+          y: getMidpoint(defender.y, qbDepth),
+        },
+        { x: targetX, y: qbDepth },
       ];
     };
-    const segmentDistanceToPoint = (a: { x: number; y: number }, b: { x: number; y: number }, p: { x: number; y: number }) => {
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
-      const lengthSquared = dx * dx + dy * dy;
-      if (lengthSquared === 0) return Math.hypot(p.x - a.x, p.y - a.y);
-      const t = clamp(((p.x - a.x) * dx + (p.y - a.y) * dy) / lengthSquared, 0, 1);
-      return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+    const makeFitOffBoxPath = (targetSide: Side) => {
+      const boxX = getRunFitInsideEdgeX(targetSide);
+      const insideX = clamp(boxX + (targetSide === "left" ? 3 : -3), 3, 97);
+      const overEdgeX = getRunFitOutsideEdgeX(targetSide);
+      return [
+        { x: defender.x, y: defender.y },
+        { x: overEdgeX, y: getMidpoint(defender.y, runFitPreview.losY) },
+        { x: insideX, y: qbDepth },
+      ];
     };
-    const routeAroundPlayers = (rawPath: { x: number; y: number }[]) => {
-      const blockers = [...runFitPreview.offensePlayers, ...runFitPreview.defensePlayers]
-        .filter((player) => player.id !== defender.id);
-      const nextPath: { x: number; y: number }[] = [rawPath[0]];
-      for (let i = 1; i < rawPath.length; i += 1) {
-        const start = nextPath[nextPath.length - 1];
-        const end = rawPath[i];
-        const blocker = blockers.find((player) => segmentDistanceToPoint(start, end, player) < 3.7);
-        if (blocker) {
-          const detourDirection = blocker.x < 50 ? -1 : 1;
-          nextPath.push({
-            x: clamp(blocker.x + detourDirection * 5, 3, 97),
-            y: clamp(getMidpoint(start.y, end.y), 3, 97),
-          });
-        }
-        nextPath.push(end);
-      }
-      return nextPath;
+    const makeFitOffSpillPath = (targetSide: Side) => {
+      const spillX = getRunFitInsideEdgeX(targetSide);
+      const outsideX = clamp(spillX + (targetSide === "left" ? -3 : 3), 3, 97);
+      const overEdgeX = getRunFitOutsideEdgeX(targetSide);
+      return [
+        { x: defender.x, y: defender.y },
+        { x: overEdgeX, y: getMidpoint(defender.y, runFitPreview.losY) },
+        { x: outsideX, y: qbDepth },
+      ];
     };
-    const makeFitPath = (targetX: number, targetY = LOS_Y - 4) => trimStart(routeAroundPlayers([
-      { x: defender.x, y: defender.y },
-      { x: defender.x, y: LOS_Y + 8 },
-      { x: targetX, y: LOS_Y + 8 },
-      { x: targetX, y: targetY },
-    ]));
-    const edgeX = getBlitzEdgePressureTargetX(runFitPreview.offensePlayers, side, LOS_Y, WING_Y);
+    const fitPathwayMap: Partial<Record<RunFitPathwayId, BlitzPathwayId>> = {
+      a_gap_fit: "a_gap_blitz",
+      b_gap_fit: "b_gap_blitz",
+      c_gap_fit: "c_gap_blitz",
+    };
+    const buildFromBlitzPathway = (pathwayId: BlitzPathwayId) => capToQbDepth(buildBlitzPathwayOverlay({
+      defender,
+      offensePlayers: runFitPreview.offensePlayers,
+      pathwayId,
+      runStrength: runFitPreview.runStrength,
+      passStrength: runFitPreview.passStrength,
+      losY: runFitPreview.losY,
+      wingY: runFitPreview.wingY,
+      frontMode: "4-4",
+      layer: "pressure",
+    }).path);
     const pathwayConfig: Record<RunFitPathwayId, { label: string; color: RunFitArrowColor; path: { x: number; y: number }[]; endCap: RunFitLineEnd }> = {
       a_gap_fit: {
         label: "A Fit",
         color: "gold",
-        path: makeFitPath(getBlitzGapTargetX(runFitPreview.offensePlayers, "A", side)),
-        endCap: "square",
+        path: buildFromBlitzPathway(fitPathwayMap.a_gap_fit!),
+        endCap: "circle",
       },
       b_gap_fit: {
         label: "B Fit",
         color: "gold",
-        path: makeFitPath(getBlitzGapTargetX(runFitPreview.offensePlayers, "B", side)),
-        endCap: "square",
+        path: buildFromBlitzPathway(fitPathwayMap.b_gap_fit!),
+        endCap: "circle",
       },
       c_gap_fit: {
         label: "C Fit",
         color: "gold",
-        path: makeFitPath(getBlitzGapTargetX(runFitPreview.offensePlayers, "C", side)),
-        endCap: "square",
+        path: buildFromBlitzPathway(fitPathwayMap.c_gap_fit!),
+        endCap: "circle",
       },
       d_gap_fit: {
         label: "D Fit",
         color: "gold",
-        path: makeFitPath(edgeX),
-        endCap: "square",
+        path: makeDGapFitPath(side),
+        endCap: "circle",
+      },
+      strong_a_gap_fit: {
+        label: "Str A",
+        color: "gold",
+        path: makeGapFitPath("A", strongSide),
+        endCap: "circle",
+      },
+      strong_b_gap_fit: {
+        label: "Str B",
+        color: "gold",
+        path: makeGapFitPath("B", strongSide),
+        endCap: "circle",
+      },
+      strong_c_gap_fit: {
+        label: "Str C",
+        color: "gold",
+        path: makeGapFitPath("C", strongSide),
+        endCap: "circle",
+      },
+      strong_d_gap_fit: {
+        label: "Str D",
+        color: "gold",
+        path: makeDGapFitPath(strongSide),
+        endCap: "circle",
+      },
+      weak_a_gap_fit: {
+        label: "Wk A",
+        color: "gold",
+        path: makeGapFitPath("A", weakSide),
+        endCap: "circle",
+      },
+      weak_b_gap_fit: {
+        label: "Wk B",
+        color: "gold",
+        path: makeGapFitPath("B", weakSide),
+        endCap: "circle",
+      },
+      weak_c_gap_fit: {
+        label: "Wk C",
+        color: "gold",
+        path: makeGapFitPath("C", weakSide),
+        endCap: "circle",
+      },
+      weak_d_gap_fit: {
+        label: "Wk D",
+        color: "gold",
+        path: makeDGapFitPath(weakSide),
+        endCap: "circle",
       },
       box_fit: {
         label: "Box",
         color: "red",
-        path: trimStart(routeAroundPlayers([
-          { x: defender.x, y: defender.y },
-          { x: defender.x, y: LOS_Y - 3 },
-          { x: defender.x + awayFromCenter * 1.5, y: LOS_Y - 3 },
-        ])),
-        endCap: "square",
+        path: makeBoxSpillPath(side),
+        endCap: "circle",
       },
       spill_fit: {
         label: "Spill",
         color: "red",
-        path: trimStart(routeAroundPlayers([
-          { x: defender.x, y: defender.y },
-          { x: edgeX, y: LOS_Y },
-          { x: edgeX + awayFromCenter * 3, y: LOS_Y - 1 },
-        ])),
+        path: makeBoxSpillPath(side),
         endCap: "circle",
       },
       under_box_fit: {
         label: "Under Box",
         color: "red",
-        path: trimStart(routeAroundPlayers([
-          { x: defender.x, y: defender.y },
-          { x: edgeX - awayFromCenter * 2, y: LOS_Y + 2 },
-          { x: edgeX + awayFromCenter * 3, y: LOS_Y - 5 },
-        ])),
-        endCap: "square",
-      },
-      over_box_fit: {
-        label: "Over Box",
-        color: "red",
-        path: trimStart(routeAroundPlayers([
-          { x: defender.x, y: defender.y },
-          { x: edgeX + awayFromCenter * 2, y: LOS_Y - 1 },
-          { x: edgeX + awayFromCenter * 5, y: LOS_Y - 6 },
-        ])),
-        endCap: "square",
-      },
-      under_spill_fit: {
-        label: "Under Spill",
-        color: "red",
-        path: trimStart(routeAroundPlayers([
-          { x: defender.x, y: defender.y },
-          { x: edgeX - awayFromCenter * 3, y: LOS_Y + 2 },
-          { x: edgeX - awayFromCenter * 5, y: LOS_Y - 1 },
-        ])),
+        path: makeFitOffBoxPath(side),
         endCap: "circle",
       },
       over_spill_fit: {
         label: "Over Spill",
         color: "red",
-        path: trimStart(routeAroundPlayers([
-          { x: defender.x, y: defender.y },
-          { x: edgeX + awayFromCenter * 1.5, y: LOS_Y + 1 },
-          { x: edgeX - awayFromCenter * 3, y: LOS_Y - 1 },
-        ])),
+        path: makeFitOffSpillPath(side),
         endCap: "circle",
       },
     };
@@ -7346,6 +7751,7 @@ const existingStats =
     activeMode: "quiz" | "offense_build" | "alignment" | "film" | "concept",
     nextModeStats: ModeScoreStats,
   ) => {
+    if (userId === DEMO_USER_ID) return;
     const supabase = createClient();
     const { error } = await supabase.from("mode_scores").upsert(
       {
@@ -7373,6 +7779,7 @@ const existingStats =
   };
 
   const persistSecondsUsed = async (userId: string, secondsUsed: number) => {
+    if (userId === DEMO_USER_ID) return;
     const supabase = createClient();
     const { error } = await supabase
       .from("profiles")
@@ -8090,7 +8497,9 @@ const existingStats =
                       offensePlayers={runFitPreview.offensePlayers}
                       defensePlayers={runFitPreview.defensePlayers}
                       routeOverlays={runFitDisplayOverlays}
+                      routeOverlaysOnTop
                       fieldTags={runFitFieldTags}
+                      compactAnnotations
                       enhancedLandmarks
                       onFieldClick={showRunFitAdminTools ? handleRunFitFieldClick : undefined}
                       onFieldDoubleClick={showRunFitAdminTools ? handleRunFitFieldDoubleClick : undefined}
@@ -8174,6 +8583,9 @@ const existingStats =
                             Stamp common fits for DL/LBs: gap fits plus Box and Spill at the EMOLOS.
                           </div>
                         </div>
+                        <Button variant="outline" className="w-full rounded-xl border-emerald-700 text-emerald-900" onClick={applyRunFitPowerWeakTemplate}>
+                          Apply 11p Power Weak Template
+                        </Button>
                         <div className="grid grid-cols-2 gap-2">
                           <div>
                             <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Defender</div>
@@ -8209,6 +8621,66 @@ const existingStats =
                         <Button className="w-full rounded-xl bg-emerald-700 text-white hover:bg-emerald-800" onClick={addRunFitPathway}>
                           Add Run Fit Pathway
                         </Button>
+                      </div>
+                      <div className="space-y-3 rounded-xl border border-red-200 bg-red-50/70 p-3">
+                        <div>
+                          <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-red-800">Saved Custom Pathways</div>
+                          <div className="text-xs leading-5 text-red-950/80">
+                            Draw a pathway once, save it for a position, then stamp that exact shape onto future boards.
+                          </div>
+                        </div>
+                        <div>
+                          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Pathway Name</div>
+                          <Input value={runFitSavedPathwayName} onChange={(e) => setRunFitSavedPathwayName(e.target.value)} />
+                        </div>
+                        <Button variant="outline" className="w-full rounded-xl border-red-700 text-red-900" onClick={saveRunFitDraftAsPathway} disabled={runFitDraftPoints.length < 2}>
+                          Save Current Draft as Pathway
+                        </Button>
+                        <div>
+                          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Saved Pathway</div>
+                          <Select
+                            value={selectedRunFitSavedPathwayId || "none"}
+                            onValueChange={(value) => setSelectedRunFitSavedPathwayId(value === "none" ? "" : value)}
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent className="max-h-80 overflow-y-auto">
+                              <SelectItem value="none">Choose saved pathway</SelectItem>
+                              {runFitSavedPathways.map((pathway) => (
+                                <SelectItem key={pathway.id} value={pathway.id}>
+                                  {pathway.positionId}: {pathway.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div>
+                          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Apply To Position</div>
+                          <Select value={selectedRunFitPathwayDefenderId} onValueChange={setSelectedRunFitPathwayDefenderId}>
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent className="max-h-80 overflow-y-auto">
+                              {runFitPreview.defensePlayers.map((defender) => (
+                                <SelectItem key={`saved-pathway-${defender.id}`} value={defender.id}>
+                                  {defender.id}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <div className="mt-1 text-xs text-red-950/70">
+                            Stamp the saved pathway onto this selected defender.
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <Button className="rounded-xl bg-red-700 text-white hover:bg-red-800" onClick={stampSavedRunFitPathway} disabled={!selectedRunFitSavedPathwayId}>
+                            Stamp Saved
+                          </Button>
+                          <Button variant="outline" className="rounded-xl" onClick={deleteSavedRunFitPathway} disabled={!selectedRunFitSavedPathwayId}>
+                            Delete Saved
+                          </Button>
+                        </div>
                       </div>
                       {runFitEditorTool === "arrow" ? (
                         <div className="rounded-xl border bg-slate-50 p-3 space-y-3">

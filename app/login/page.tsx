@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 
+const DEMO_SESSION_STORAGE_KEY = "formation-recognition-demo-session";
+
 export default function LoginPage() {
   const router = useRouter();
   const supabase = createClient();
@@ -19,6 +21,13 @@ export default function LoginPage() {
     setMessage("");
 
     const cleanEmail = email.trim().toLowerCase();
+
+    if (cleanEmail === "demo" && password === "demo") {
+      window.localStorage.setItem(DEMO_SESSION_STORAGE_KEY, "true");
+      setLoading(false);
+      router.push("/");
+      return;
+    }
 
     if (!cleanEmail || !password) {
       setMessage("Please enter both email and password.");
@@ -37,6 +46,7 @@ export default function LoginPage() {
       return;
     }
 
+    window.localStorage.removeItem(DEMO_SESSION_STORAGE_KEY);
     setLoading(false);
     router.push("/");
   };
@@ -52,8 +62,8 @@ export default function LoginPage() {
         <div className="space-y-4">
           <input
             className="w-full rounded-xl border px-4 py-3 text-sm"
-            placeholder="Email"
-            type="email"
+            placeholder="Email or demo"
+            type="text"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
           />
