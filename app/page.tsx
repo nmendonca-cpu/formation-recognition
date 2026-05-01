@@ -828,16 +828,16 @@ const FIXED_OL_IDS = ["LT", "LG", "C", "RG", "RT"] as const;
 
 const TIGHT_OLINE_X = [40, 45, 50, 55, 60] as const;
 const ALIGNMENT_OLINE_X = [38, 44, 50, 56, 62] as const;
-const LOS_Y = 52;
-const OFF_Y = 44;
+const LOS_Y = 36;
+const OFF_Y = 28;
 const WING_Y = LOS_Y - (LOS_Y - OFF_Y) * 0.75;
-const QB_UNDER_Y = 42;
-const QB_GUN_Y = 24;
-const RB_DOT_Y = 24;
-const LB_Y = 66;
-const CB_Y = 76;
-const DB_Y = 86;
-const DL_Y = 58;
+const QB_UNDER_Y = 26;
+const QB_GUN_Y = 10;
+const RB_DOT_Y = 8;
+const LB_Y = 64;
+const CB_Y = 79;
+const DB_Y = 94;
+const DL_Y = 47;
 const FIELD_LABELS = { left: "Left", right: "Right" } as const;
 const DEFAULT_MODE_STATS: ModeScoreStats = {
   points: 0,
@@ -1217,7 +1217,8 @@ function buildFoothillFormation(call: string, wide = false): FormationMeta {
   }
 
   if (isEmpty && base !== "Bunch") {
-    add("RB", getSlot(other, wide), OFF_Y);
+    const emptyBackSide: Side = base === "Doubles" ? side : other;
+    add("RB", getSlot(emptyBackSide, wide), OFF_Y);
   }
 
   const passStrength: Side = computePassStrengthFromEligibles(players, side, {
@@ -2018,6 +2019,10 @@ function isAttachedOrWingNumberThree(formation: FormationMeta, side: Side) {
   return false;
 }
 
+function hasTeAndWingSurface(formation: FormationMeta, side: Side) {
+  return Boolean(getInlineSurface(formation, side) && getWingSurface(formation, side));
+}
+
 function getAlignmentSpecialCases(formation: FormationMeta, frontMode: FrontMode = "4-3"): string[] {
   const notes: string[] = [];
   const passStrength = formation.passStrength;
@@ -2057,17 +2062,17 @@ function getAlignmentSpecialCases(formation: FormationMeta, frontMode: FrontMode
   if (closedAndBoss43Notes) {
     notes.push("Closed + boss: Mike and Will to 20T toward TE/FB.");
   } else if (closedThreeByOne44Notes) {
-    notes.push("Closed 3x1 in 4-4: Mike 60T and Will 30T to pass strength, BS 10T weak.");
+    notes.push("Closed 3x1 in 4-4: Mike 6T vs TE+Wing, otherwise 70T; Will 30T to pass strength, BS 10T weak.");
   } else if ((leftCount === 3 && isClosedSurfaceOnlySide(formation, "right")) || (rightCount === 3 && isClosedSurfaceOnlySide(formation, "left"))) {
-    notes.push("Closed 3x1: Mike 60T if #3 is attached, Apex if #3 is flexed.");
+    notes.push("Closed 3x1: Mike 6T vs TE+Wing, 70T if #3 is attached, Apex if #3 is flexed.");
   } else if (mikeStrengthEligibles === 3) {
-    notes.push("Mike: to strength. 60T if #3 attached, apex if #3 flexed.");
+    notes.push("Mike: to strength. 6T vs TE+Wing, 70T if #3 attached, apex if #3 flexed.");
   } else {
     notes.push("Mike: to strength. 10T with run strength, 30T away.");
   }
 
   if (formation.name.includes("Empty") && is32) {
-    notes.push("3x2 Empty: Ni on #2 WR, Will 50T weak, Mike 60T or apex.");
+    notes.push("3x2 Empty: Ni on #2 WR, Will 50T weak, Mike 6T/70T or apex.");
     notes.push("Empty: BS inside #2 weak.");
   }
 
@@ -2221,6 +2226,11 @@ function getAlignmentAnswerKey(formation: FormationMeta, landmarks: Landmark[], 
   const mikeNumberThree = getNumberThreeReceiver(formation, mikeSide);
   const answerLineXs = getFormationLineXs(formation);
   const mikeTackleX = mikeSide === "left" ? answerLineXs[0] : answerLineXs[4];
+  const mikeTeWingLandmark = () => (
+    hasTeAndWingSurface(formation, mikeSide)
+      ? findLandmarkByLabel(landmarks, "lb", "60T", mikeSide) || findLandmarkByLabel(landmarks, "lb", "70T", mikeSide)
+      : findLandmarkByLabel(landmarks, "lb", "70T", mikeSide)
+  );
 
   const mikeStrengthEligibles = findTrueEligiblesOnSide(formation, mikeSide).length;
   const mikeLandmark = (() => {
@@ -2228,10 +2238,10 @@ function getAlignmentAnswerKey(formation: FormationMeta, landmarks: Landmark[], 
       return getLbApexBetween(mikeSide, mikeNumberThree, mikeTackleX) || findLandmarkByLabel(landmarks, "lb", "Apex", mikeSide);
     }
     if (frontMode === "4-4" && closedThreeByOne) {
-      return findLandmarkByLabel(landmarks, "lb", "60T", mikeSide) || findLandmarkByLabel(landmarks, "lb", "50T", mikeSide);
+      return mikeTeWingLandmark() || findLandmarkByLabel(landmarks, "lb", "60T", mikeSide) || findLandmarkByLabel(landmarks, "lb", "50T", mikeSide);
     }
     if (closedThreeByOne) {
-      return findLandmarkByLabel(landmarks, "lb", "60T", mikeSide) || findLandmarkByLabel(landmarks, "lb", "50T", mikeSide);
+      return mikeTeWingLandmark() || findLandmarkByLabel(landmarks, "lb", "60T", mikeSide) || findLandmarkByLabel(landmarks, "lb", "50T", mikeSide);
     }
     if (nonClosedBoss43) return findLandmarkByLabel(landmarks, "lb", "20T", mikeSide) || findLandmarkByLabel(landmarks, "lb", mikeOnRunSide ? "10T" : "30T", mikeSide);
     if (nonClosedBoss44) return findLandmarkByLabel(landmarks, "lb", "20T", mikeSide) || findLandmarkByLabel(landmarks, "lb", mikeOnRunSide ? "10T" : "30T", mikeSide);
@@ -2241,7 +2251,7 @@ function getAlignmentAnswerKey(formation: FormationMeta, landmarks: Landmark[], 
     if (strongBunch?.numberThree) return findLandmarkByLabel(landmarks, "lb", "50T", mikeSide);
     if (formation.name.includes("Quad")) return findLandmarkByLabel(landmarks, "lb", "30T", mikeSide);
     if (mikeStrengthEligibles === 3) {
-      if (isAttachedOrWingNumberThree(formation, mikeSide)) return findLandmarkByLabel(landmarks, "lb", "60T", mikeSide);
+      if (isAttachedOrWingNumberThree(formation, mikeSide)) return mikeTeWingLandmark() || findLandmarkByLabel(landmarks, "lb", "60T", mikeSide);
       return findLandmarkByLabel(landmarks, "lb", "Apex", mikeSide);
     }
     return findLandmarkByLabel(landmarks, "lb", mikeOnRunSide ? "10T" : "30T", mikeSide);
@@ -2474,6 +2484,9 @@ function getAlignmentAnswerKey(formation: FormationMeta, landmarks: Landmark[], 
     } else if (fsStrengthEligibleCount === 3 && fsNumberTwo && fsNumberThree) {
       const fs = getDbApexBetween(passStrength, fsNumberTwo, fsNumberThree) || (fsApex && (is31 || is32) ? fsApex : null);
       if (fs) answer.FS = { x: fs.x, y: fs.y };
+    } else if (is22 && fsStrengthEligibleCount === 2 && fsNumberTwo && (isWingLikePlayer(fsNumberTwo) || getInlineSurface(formation, passStrength)?.id === fsNumberTwo.id)) {
+      const fs = getShade(fsNumberTwo, "db", "O");
+      if (fs) answer.FS = { x: fs.x, y: fs.y };
     } else if (fsStrengthEligibleCount === 2) {
       const fs = getSafetyShadeForTwoEligibleSide(passStrength, fsNumberTwo);
       if (fs) answer.FS = { x: fs.x, y: fs.y };
@@ -2494,6 +2507,12 @@ function getAlignmentAnswerKey(formation: FormationMeta, landmarks: Landmark[], 
     } else if (cometSide && cometSide === passAway) {
       const cometFirstEligible = getNumberTwoReceiver(formation, cometSide) || getOutsideReceiver(formation, cometSide) || getInlineSurface(formation, cometSide) || getWingSurface(formation, cometSide);
       const bs = getShade(cometFirstEligible, "db", "I");
+      if (bs) answer.BS = { x: bs.x, y: bs.y };
+    } else if (fsStrengthEligibleCount === 3 && bsWeakEligibleCount === 2 && bsSlot) {
+      const bs = bsApex || findLandmarkByLabel(landmarks, "db", "Apex", passAway);
+      if (bs) answer.BS = { x: bs.x, y: bs.y };
+    } else if (is22 && bsWeakEligibleCount === 2 && bsNumberTwo && (isWingLikePlayer(bsNumberTwo) || getInlineSurface(formation, passAway)?.id === bsNumberTwo.id)) {
+      const bs = getShade(bsNumberTwo, "db", "O");
       if (bs) answer.BS = { x: bs.x, y: bs.y };
     } else if (bsWeakEligibleCount === 2) {
       const bs = getSafetyShadeForTwoEligibleSide(passAway, bsNumberTwo);
@@ -5858,7 +5877,7 @@ const existingStats =
     setQuizAnswers({ formation: "", runStrength: "", passStrength: "" });
     setScoredAttemptKey(null);
     setAttemptStartedAt(Date.now());
-  }, [current.name, mode, formationTrainerViewMode]);
+  }, [current.name, mode, formationTrainerViewMode, alignmentViewMode, frontMode]);
 
   useEffect(() => {
     if (passConceptFamilyFilter !== "all") {
@@ -10850,7 +10869,19 @@ const existingStats =
                       </Select>
                     </div>
                     <div className="min-w-[110px]">
-                      <Select value={frontMode} onValueChange={(value: FrontMode) => setFrontMode(value)}>
+                      <Select
+                        value={frontMode}
+                        onValueChange={(value: FrontMode) => {
+                          setFrontMode(value);
+                          setShowAlignmentCheck(false);
+                          setScoredAttemptKey(null);
+                          setAttemptStartedAt(Date.now());
+                          setLastScoreSummary((prev) => {
+                            const { alignment, ...rest } = prev;
+                            return rest;
+                          });
+                        }}
+                      >
                         <SelectTrigger>
                           <SelectValue />
                         </SelectTrigger>
