@@ -1141,7 +1141,7 @@ function buildFoothillFormation(call: string, wide = false): FormationMeta {
     case "Troop": {
       const yX = getFlexTe(side, wide);
       const zX = wide ? (side === "right" ? 96 : 4) : getWide(side);
-      const hX = getMidpoint(yX, zX);
+      const hX = getSlot(side, wide);
       add("Y", yX, LOS_Y);
       add("H", hX, OFF_Y);
       add("Z", zX, OFF_Y);
@@ -1217,16 +1217,7 @@ function buildFoothillFormation(call: string, wide = false): FormationMeta {
   }
 
   if (isEmpty && base !== "Bunch") {
-    const emptySide: Side = base === "Doubles" ? side : other;
-    const slotOccupied = players.some(
-      (p) =>
-        p.id !== "QB" &&
-        p.id !== "RB" &&
-        Math.abs(p.y - OFF_Y) < 0.2 &&
-        (emptySide === "left" ? p.x < 50 : p.x > 50) &&
-        Math.abs(p.x - getSlot(emptySide, wide)) < 8,
-    );
-    add("RB", slotOccupied ? getWing(emptySide, wide) : getSlot(emptySide, wide), OFF_Y);
+    add("RB", getSlot(other, wide), OFF_Y);
   }
 
   const passStrength: Side = computePassStrengthFromEligibles(players, side, {
@@ -1404,6 +1395,8 @@ function getOffenseBuildLandmarks(): Landmark[] {
     { id: "o-y-flex-right", x: getFlexTe("right", false), y: LOS_Y, layer: "offense" },
     { id: "o-h-wing-left", x: getWing("left", false), y: WING_Y, layer: "offense" },
     { id: "o-h-wing-right", x: getWing("right", false), y: WING_Y, layer: "offense" },
+    { id: "o-slot-left-on", x: leftSlot, y: LOS_Y, layer: "offense" },
+    { id: "o-slot-right-on", x: rightSlot, y: LOS_Y, layer: "offense" },
     { id: "o-slot-left", x: leftSlot, y: OFF_Y, layer: "offense" },
     { id: "o-slot-right", x: rightSlot, y: OFF_Y, layer: "offense" },
     { id: "o-wide-left-on", x: 8, y: LOS_Y, layer: "offense" },
