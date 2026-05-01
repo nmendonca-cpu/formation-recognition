@@ -2589,6 +2589,8 @@ function buildTwoByTwoPassConceptPreview(
     Z: backsideConcept.outsideRoute,
     Y: backsideConcept.insideRoute,
   };
+  const xConceptName = `X ${frontsideConcept.name}`;
+  const zConceptName = `Z ${backsideConcept.name}`;
 
   const routes: RouteOverlay[] = [
     {
@@ -2636,16 +2638,16 @@ function buildTwoByTwoPassConceptPreview(
   return {
     boardKind: "2x2",
     formation: formation.name,
-    title: `${frontsideConcept.name} / ${backsideConcept.name}`,
-    conceptName: `${frontsideConcept.name} / ${backsideConcept.name}`,
+    title: `${xConceptName} / ${zConceptName}`,
+    conceptName: `${xConceptName} / ${zConceptName}`,
     frontsideConceptName: frontsideConcept.name,
     backsideConceptName: backsideConcept.name,
     routes: routesByPlayer,
     activePlayers: ["X", "H", "Y", "Z"],
     cards: [
       {
-        label: "Frontside",
-        name: frontsideConcept.name,
+        label: "X Concept",
+        name: xConceptName,
         assignments: [
           { player: "X", roleLabel: "#1", route: routesByPlayer.X },
           { player: "H", roleLabel: "#2", route: routesByPlayer.H },
@@ -2653,8 +2655,8 @@ function buildTwoByTwoPassConceptPreview(
         detail: frontsideConcept.detail,
       },
       {
-        label: "Backside",
-        name: backsideConcept.name,
+        label: "Z Concept",
+        name: zConceptName,
         assignments: [
           { player: "Z", roleLabel: "#1", route: routesByPlayer.Z },
           { player: "Y", roleLabel: "#2", route: routesByPlayer.Y },
@@ -9119,7 +9121,7 @@ const existingStats =
                       effectivePassConceptBoardKind === "2x2" ? (
                         <>
                           <div>
-                            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Frontside Concept</div>
+                            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">X Concept</div>
                             <Select value={selectedFrontsideConceptId} onValueChange={setSelectedFrontsideConceptId}>
                               <SelectTrigger>
                                 <SelectValue />
@@ -9127,14 +9129,14 @@ const existingStats =
                               <SelectContent className="max-h-80 overflow-y-auto">
                                 {TWO_BY_TWO_CONCEPTS.map((concept) => (
                                   <SelectItem key={`front-${concept.id}`} value={concept.id}>
-                                    {concept.name}
+                                    X {concept.name}
                                   </SelectItem>
                                 ))}
                               </SelectContent>
                             </Select>
                           </div>
                           <div>
-                            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Backside Concept</div>
+                            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Z Concept</div>
                             <Select value={selectedBacksideConceptId} onValueChange={setSelectedBacksideConceptId}>
                               <SelectTrigger>
                                 <SelectValue />
@@ -9142,7 +9144,7 @@ const existingStats =
                               <SelectContent className="max-h-80 overflow-y-auto">
                                 {TWO_BY_TWO_CONCEPTS.map((concept) => (
                                   <SelectItem key={`back-${concept.id}`} value={concept.id}>
-                                    {concept.name}
+                                    Z {concept.name}
                                   </SelectItem>
                                 ))}
                               </SelectContent>
