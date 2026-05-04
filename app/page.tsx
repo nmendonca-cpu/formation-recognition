@@ -13,6 +13,7 @@ type AppMode = "study" | "alignment" | "offense_build" | "film" | "quiz" | "edit
 type AppSection = "offense" | "defense" | "admin";
 type LeaderboardMode = "quiz" | "offense_build" | "alignment" | "film" | "concept";
 type LeaderboardSection = "offense" | "defense";
+type AccountDirectorySort = "points_desc" | "points_asc" | "time_desc" | "time_asc" | "name_asc";
 type FrontMode = "4-3" | "4-4";
 type AlignmentViewMode = "study" | "quiz";
 type OffenseBuildViewMode = "study" | "quiz";
@@ -63,6 +64,8 @@ type RouteOverlay = {
   path: { x: number; y: number }[];
   labelX?: number;
   labelY?: number;
+  strokeWidth?: number;
+  dashed?: boolean;
   endCap?: "arrow" | "square" | "circle";
   pathway?: {
     defenderId: string;
@@ -79,9 +82,10 @@ type FieldTag = {
   tone?: "default" | "gold" | "cyan" | "sky";
 };
 
-type RunFitEditorTool = "arrow" | "tag";
+type RunFitEditorTool = "select" | "line" | "arrow" | "tag";
 type RunFitArrowColor = "gold" | "cyan" | "sky" | "white" | "red";
 type RunFitLineEnd = "square" | "circle" | "arrow";
+type RunFitLineStyle = "solid" | "dashed";
 type RunFitSavedPathway = {
   id: string;
   name: string;
@@ -89,6 +93,8 @@ type RunFitSavedPathway = {
   label: string;
   color: RunFitArrowColor;
   endCap: RunFitLineEnd;
+  strokeWidth?: number;
+  dashed?: boolean;
   offsets: { x: number; y: number }[];
 };
 type RunFitPathwayId =
@@ -144,6 +150,7 @@ type BlitzCallType = "last_name" | "team_name" | "location_name";
 type BlitzPathwayId =
   | "a_gap_blitz"
   | "weak_a_gap_blitz"
+  | "c_read_blitz"
   | "b_gap_blitz"
   | "c_gap_blitz"
   | "d_gap_blitz"
@@ -166,10 +173,15 @@ type BlitzPathwayId =
   | "weak_eyes"
   | "vert_hook"
   | "cb_flat"
+  | "field_flat"
+  | "weak_flat"
+  | "tampa_pole"
   | "quarter"
   | "drop_hook"
   | "drop_curl_flat"
   | "mof"
+  | "deep_half_left"
+  | "deep_half_right"
   | "deep_third_left"
   | "deep_third_middle"
   | "deep_third_right";
@@ -272,6 +284,7 @@ type ScoreSummary = {
   awarded: number;
   total: number;
   blockedByReveal?: boolean;
+  alreadyScored?: boolean;
 };
 
 type FilmQuizAnswers = {
@@ -583,6 +596,7 @@ const BLITZ_CALL_MATRIX: Record<BlitzCallFamilyId, Record<BlitzCallType, BlitzCa
 const BLITZ_PATHWAY_OPTIONS: { value: BlitzPathwayId; label: string }[] = [
   { value: "a_gap_blitz", label: "A-Gap Blitz" },
   { value: "weak_a_gap_blitz", label: "Weak A-Gap Blitz" },
+  { value: "c_read_blitz", label: "C-Read Blitz" },
   { value: "b_gap_blitz", label: "B-Gap Blitz" },
   { value: "c_gap_blitz", label: "C-Gap Blitz" },
   { value: "d_gap_blitz", label: "D-Gap Blitz" },
@@ -605,10 +619,15 @@ const BLITZ_PATHWAY_OPTIONS: { value: BlitzPathwayId; label: string }[] = [
   { value: "weak_eyes", label: "Weak Eyes" },
   { value: "vert_hook", label: "Vert Hook" },
   { value: "cb_flat", label: "CB Flat" },
+  { value: "field_flat", label: "Field Flat" },
+  { value: "weak_flat", label: "Weak Flat" },
+  { value: "tampa_pole", label: "Tampa Pole" },
   { value: "quarter", label: "1/4" },
   { value: "drop_hook", label: "DE Drop Hook" },
   { value: "drop_curl_flat", label: "DE Drop C/F" },
   { value: "mof", label: "MOF" },
+  { value: "deep_half_left", label: "1/2 Left" },
+  { value: "deep_half_right", label: "1/2 Right" },
   { value: "deep_third_left", label: "1/3 Left" },
   { value: "deep_third_middle", label: "1/3 Middle" },
   { value: "deep_third_right", label: "1/3 Right" },
@@ -625,6 +644,9 @@ const getBlitzCallType = (callId: BlitzCallId): BlitzCallType => (
 );
 const getBlitzCallId = (familyId: BlitzCallFamilyId, callType: BlitzCallType) => BLITZ_CALL_MATRIX[familyId][callType];
 const getBlitzCallLabel = (callId: BlitzCallId) => BLITZ_CALL_OPTIONS.find((option) => option.value === callId)?.label ?? "Blitz";
+const getBlitzBoardCallLabel = (callId: BlitzCallId, frontMode: FrontMode) => (
+  callId === "carr" && frontMode === "4-4" ? "Carr Bounce" : getBlitzCallLabel(callId)
+);
 const FILM_GAP_ONE_PULLER_CONCEPT_OPTIONS: Exclude<FilmGapOnePullerConcept, "">[] = ["Power", "Dart (Tackle Power)", "G Lead", "Trap", "Center Pull", "Pin N Pull"];
 const FILM_GAP_TWO_PULLER_CONCEPT_OPTIONS: Exclude<FilmGapTwoPullerConcept, "">[] = ["GT", "GY/GH", "CG/CT", "Buck Sweep"];
 const FILM_MAN_CONCEPT_OPTIONS: Exclude<FilmManConcept, "">[] = ["Duo", "Lead"];
@@ -2741,71 +2763,6 @@ function buildThreeByOnePassConceptPreview(
   };
 }
 
-function buildSingleHighRunFitMockup() {
-  const baseFormation = buildProFormation("I Dot Right", true);
-  const runFitSpreadX: Record<string, number> = {
-    X: 10,
-    LT: 34,
-    LG: 42,
-    C: 50,
-    RG: 58,
-    RT: 66,
-    Y: 74,
-    Z: 90,
-  };
-  const formation = {
-    ...baseFormation,
-    players: baseFormation.players.map((player) => ({
-      ...player,
-      x: runFitSpreadX[player.id] ?? player.x,
-    })),
-  };
-  const offensePlayers = formation.players.map((player) => {
-    if (player.id === "QB") return { ...player, y: 39 };
-    if (player.id === "RB") return { ...player, id: "R", y: 18 };
-    if (player.id === "F") return { ...player, id: "FB", x: 46, y: 28 };
-    return player;
-  });
-  const alignmentLandmarks = getAlignmentLandmarks(formation);
-  const answerKey = getAlignmentAnswerKey(formation, alignmentLandmarks, "4-4");
-  const ySurface = formation.players.find((player) => player.id === "Y");
-  const defenders = getDefensePlayersFromAnswerKey(answerKey).map((defender) => (
-    defender.id === "SDE" && ySurface
-      ? { ...defender, x: ySurface.x, y: DL_Y }
-      : defender
-  ));
-
-  const routeOverlays: RouteOverlay[] = [];
-  const fieldTags: FieldTag[] = [];
-
-  return {
-    title: "Single High vs Power Strong",
-    subtitle: "(11p) Power Strong teaching shell built from the Single High board style.",
-    offensePlayers,
-    defensePlayers: defenders,
-    routeOverlays,
-    fieldTags,
-    notes: [
-      {
-        title: "Why This Slide",
-        body: "This style translates best because the shell stays consistent and the board teaches with repeated fit pills instead of full paragraphs. It feels like your PowerPoint boards, just cleaner for the app.",
-      },
-      {
-        title: "Offensive Picture",
-        body: "I Dot Right gives us the clean power surface: backside guard pulls, fullback reads the puller and wraps if the edge spills, the RB tracks downhill into the front-side C-gap picture, and the backside tackle hinges.",
-      },
-      {
-        title: "Defensive Language",
-        body: "The short pills are the key: HK, C/F, SPILL, FORCE, DEEP 1/3, POST / SEAM, and BOOT / REVERSE. That is the right visual vocabulary for the mode because it mirrors how your teaching slides repeat the same shell and just change the assignment tags.",
-      },
-      {
-        title: "Implementation Path",
-        body: "The clean version of Run Fit Mode would build each rep from four layers: offensive shell, defensive shell, play arrows, and fit pills. Then quiz mode can ask who owns force, spill, hook, or cutback without redrawing the whole board every time.",
-      },
-    ],
-  };
-}
-
 function buildBlitzBoardShell(baseBoardId: BlitzBaseBoardId, frontMode: FrontMode = "4-4", boardSpot: BlitzBoardSpot = "mof") {
   const boardOption = BLITZ_BASE_BOARD_OPTIONS.find((option) => option.value === baseBoardId) ?? BLITZ_BASE_BOARD_OPTIONS[0];
   const call = boardOption.call;
@@ -2818,7 +2775,7 @@ function buildBlitzBoardShell(baseBoardId: BlitzBaseBoardId, frontMode: FrontMod
   const alignmentLandmarks = getAlignmentLandmarks(fieldFormation);
   const answerKey = getAlignmentAnswerKey(fieldFormation, alignmentLandmarks, frontMode);
   const ySurface = fieldFormation.players.find((player) => player.id === "Y");
-  const verticalShift = -14;
+  const verticalShift = -4;
   const blitzLosY = LOS_Y + verticalShift;
   const blitzWingY = WING_Y + verticalShift;
   const shiftY = (player: PlayerDot) => ({ ...player, y: clamp(player.y + verticalShift, 3, 97) });
@@ -2879,11 +2836,11 @@ function getBlitzPathwayLabel(pathwayId: BlitzPathwayId) {
 }
 
 function isCoverageBlitzPathway(pathwayId: BlitzPathwayId) {
-  return ["curl_flat", "weak_curl_flat", "wall_flat", "weak_wall_flat", "strong_hook", "weak_hook", "hole", "eyes", "strong_eyes", "weak_eyes", "vert_hook", "cb_flat", "quarter", "drop_hook", "drop_curl_flat", "mof", "deep_third_left", "deep_third_middle", "deep_third_right"].includes(pathwayId);
+  return ["curl_flat", "weak_curl_flat", "wall_flat", "weak_wall_flat", "strong_hook", "weak_hook", "hole", "eyes", "strong_eyes", "weak_eyes", "vert_hook", "cb_flat", "field_flat", "weak_flat", "tampa_pole", "quarter", "drop_hook", "drop_curl_flat", "mof", "deep_half_left", "deep_half_right", "deep_third_left", "deep_third_middle", "deep_third_right"].includes(pathwayId);
 }
 
 function isDeepCoverageBlitzPathway(pathwayId: BlitzPathwayId) {
-  return ["mof", "deep_third_left", "deep_third_middle", "deep_third_right", "quarter"].includes(pathwayId);
+  return ["mof", "tampa_pole", "deep_half_left", "deep_half_right", "deep_third_left", "deep_third_middle", "deep_third_right", "quarter"].includes(pathwayId);
 }
 
 function getBlitzPathwayStroke(pathwayId: BlitzPathwayId, layer?: "pressure" | "coverage" | "dl") {
@@ -2907,10 +2864,15 @@ function getBlitzCoverageLabel(pathwayId: BlitzPathwayId) {
     weak_eyes: "Eyes",
     vert_hook: "Vert Hk",
     cb_flat: "Flat",
+    field_flat: "Flat",
+    weak_flat: "Flat",
+    tampa_pole: "Tampa",
     quarter: "1/4",
     drop_hook: "Drop Hk",
     drop_curl_flat: "Drop C/F",
     mof: "MOF",
+    deep_half_left: "1/2",
+    deep_half_right: "1/2",
     deep_third_left: "1/3",
     deep_third_middle: "1/3",
     deep_third_right: "1/3",
@@ -2941,7 +2903,8 @@ function getBlitzRelativeX(offensePlayers: PlayerDot[], centeredX: number) {
 
 function getBlitzCoverageHashX(offensePlayers: PlayerDot[], side: Side) {
   const originX = getBlitzOriginX(offensePlayers);
-  if (Math.abs(originX - getBlitzHash("right")) < 1.5) return getBlitzHash(side);
+  if (Math.abs(originX - getBlitzHash("right")) < 1.5) return side === "right" ? 82 : getBlitzHash("left");
+  if (Math.abs(originX - getBlitzHash("left")) < 1.5) return side === "left" ? 18 : getBlitzHash("right");
   return getHash(side, true);
 }
 
@@ -3084,7 +3047,10 @@ function buildBlitzPathwayOverlay({
   let path: { x: number; y: number }[];
   let endCap: RunFitLineEnd = isCoverageBlitzPathway(pathwayId) && !isDeepCoverageBlitzPathway(pathwayId) ? "circle" : "arrow";
 
-  if (pathwayId === "a_gap_blitz" || pathwayId === "weak_a_gap_blitz") {
+  if (pathwayId === "c_read_blitz") {
+    const centerX = offensePlayers.find((player) => player.id === "C")?.x ?? originX;
+    path = makePressurePath(centerX);
+  } else if (pathwayId === "a_gap_blitz" || pathwayId === "weak_a_gap_blitz") {
     const gapSide = pathwayId === "weak_a_gap_blitz" ? runWeak : side;
     path = makePressurePath(getBlitzGapTargetX(offensePlayers, "A", gapSide));
   } else if (pathwayId === "b_gap_blitz") {
@@ -3127,6 +3093,12 @@ function buildBlitzPathwayOverlay({
     path = makeCoveragePath(getBlitzRelativeX(offensePlayers, side === "left" ? 43 : 57), defender.y + 17);
   } else if (pathwayId === "cb_flat") {
     path = makeCoveragePath(getBlitzCoverageHashX(offensePlayers, side), getMidpoint(defender.y, losY));
+  } else if (pathwayId === "field_flat" || pathwayId === "weak_flat") {
+    const targetSide = side;
+    const targetX = getBlitzRelativeX(offensePlayers, targetSide === "left" ? 22 : 78);
+    path = makeCoveragePath(targetX, getMidpoint(defender.y, losY));
+  } else if (pathwayId === "tampa_pole") {
+    path = makeCoveragePath(originX, clamp(defender.y + 24, 3, 94));
   } else if (pathwayId === "quarter") {
     path = makeCoveragePath(getBlitzRelativeX(offensePlayers, side === "left" ? 25 : 75), 88);
   } else if (pathwayId === "drop_hook") {
@@ -3153,7 +3125,11 @@ function buildBlitzPathwayOverlay({
       path = makeCoveragePath(targetX, defender.y + 13);
     }
   } else if (pathwayId === "mof") {
-    path = makeCoveragePath(originX, 88);
+    path = makeCoveragePath(originX, clamp(defender.y + 20, 3, 94));
+  } else if (pathwayId === "deep_half_left") {
+    path = makeCoveragePath(getBlitzRelativeX(offensePlayers, 30), 88);
+  } else if (pathwayId === "deep_half_right") {
+    path = makeCoveragePath(getBlitzRelativeX(offensePlayers, 70), 88);
   } else if (pathwayId === "deep_third_left") {
     path = makeCoveragePath(getBlitzRelativeX(offensePlayers, 20), 88);
   } else if (pathwayId === "deep_third_middle") {
@@ -3205,6 +3181,7 @@ function getBlitzTemplateAssignments({
   runStrength,
   passStrength,
   frontMode = "4-4",
+  boardSpot = "mof",
 }: {
   callId: BlitzCallId;
   defensePlayers: PlayerDot[];
@@ -3212,6 +3189,7 @@ function getBlitzTemplateAssignments({
   runStrength?: Side;
   passStrength: Side;
   frontMode?: FrontMode;
+  boardSpot?: BlitzBoardSpot;
 }): { defenderId: string; pathwayId: BlitzPathwayId; layer?: "pressure" | "coverage" | "dl" }[] {
   const assignments: { defenderId: string; pathwayId: BlitzPathwayId; layer?: "pressure" | "coverage" | "dl" }[] = [];
   const usedDefenders = new Set<string>();
@@ -3222,6 +3200,9 @@ function getBlitzTemplateAssignments({
   };
   const oppositeEnd = (side: Side) => (
     ["WDE", "SDE"].find((defenderId) => defenderSide(defenderId) !== side) ?? (side === "left" ? "SDE" : "WDE")
+  );
+  const endOnSide = (side: Side) => (
+    ["WDE", "SDE"].find((defenderId) => defenderSide(defenderId) === side) ?? (side === "left" ? "SDE" : "WDE")
   );
   const slantAway = (side: Side): BlitzPathwayId => side === "left" ? "one_gap_slant_right" : "one_gap_slant_left";
   const add = (defenderId: string, pathwayId: BlitzPathwayId, layer?: "pressure" | "coverage" | "dl") => {
@@ -3281,22 +3262,43 @@ function getBlitzTemplateAssignments({
     ![...FIXED_OL_IDS, "QB", "RB", "R", "F", "FB"].includes(player.id as any)
     && (passAway === "left" ? player.x < originX : player.x > originX)
   )).length;
-  const boundarySide: Side | null = Math.abs(originX - getBlitzHash("right")) < 1.5
+  const boundarySide: Side | null = boardSpot === "hash"
+    ? "right"
+    : Math.abs(originX - getBlitzHash("right")) < 1.5
     ? "right"
     : Math.abs(originX - getBlitzHash("left")) < 1.5
       ? "left"
       : null;
+  const formationLosY = offensePlayers.find((player) => player.id === "C")?.y ?? LOS_Y;
   const getDropperPathway = (dropperId: string, pressureSide: Side): BlitzPathwayId => {
     const dropperSide = pressureSide === "left" ? "right" : "left";
     if (boundarySide && defenderSide(dropperId) === boundarySide) return "drop_curl_flat";
     return passAway === dropperSide && weakSideEligibleCount <= 1 ? "drop_curl_flat" : "drop_hook";
   };
   const hasThreeWrSide = ["left", "right"].some((side) => getBlitzOrderedEligibles(offensePlayers, side as Side).length >= 3);
+  const hasDetachedNumberTwoThreeByOne = ["left", "right"].some((side) => {
+    const eligibles = getBlitzOrderedEligibles(offensePlayers, side as Side);
+    const oppositeEligibles = getBlitzOrderedEligibles(offensePlayers, side === "left" ? "right" : "left");
+    const numberTwo = eligibles[1];
+    if (!numberTwo || eligibles.length < 3 || oppositeEligibles.length > 1) return false;
+    return Math.abs(numberTwo.y - formationLosY) > 1.25 && Math.abs(numberTwo.x - originX) > 15;
+  });
   const addLastNameCoverage = (blitzerId: string, dropperId: string, pressureSide: Side) => {
     const dropperPathway = getDropperPathway(dropperId, pressureSide);
     const dropperHasCurlFlat = dropperPathway === "drop_curl_flat";
 
     if (frontMode === "4-3") {
+      if (["FC", "BC"].includes(blitzerId)) {
+        add(dropperId, dropperPathway, "coverage");
+        add("FS", "mof", "coverage");
+        add("BS", defenderSide(blitzerId) === "left" ? "deep_third_left" : "deep_third_right", "coverage");
+        add("Ni", "curl_flat", "coverage");
+        add("M", "strong_hook", "coverage");
+        add("W", "weak_hook", "coverage");
+        addCornerThirds();
+        return;
+      }
+
       if (blitzerId === "Ni") {
         add("FS", "curl_flat", "coverage");
         add("BS", "mof", "coverage");
@@ -3339,8 +3341,48 @@ function getBlitzTemplateAssignments({
       return;
     }
 
+    if (frontMode === "4-4" && ["FC", "BC"].includes(blitzerId)) {
+      const boundaryHalf = pressureSide === "left" ? "deep_half_left" : "deep_half_right";
+      const fieldHalf = pressureSide === "left" ? "deep_half_right" : "deep_half_left";
+      add(dropperId, "strong_hook", "coverage");
+      add("FS", boundaryHalf, "coverage");
+      add(blitzerId === "BC" ? "FC" : "BC", fieldHalf, "coverage");
+      add("Ni", "field_flat", "coverage");
+      add("M", "tampa_pole", "coverage");
+      add("W", "weak_hook", "coverage");
+      add("BS", "weak_flat", "coverage");
+      return;
+    }
+
     add(dropperId, dropperPathway, "coverage");
     add("FS", frontMode === "4-4" ? "mof" : "curl_flat", "coverage");
+
+    if (frontMode === "4-4" && dropperHasCurlFlat) {
+      if (blitzerId === "Ni") {
+        add("M", "curl_flat", "coverage");
+        add("W", "strong_hook", "coverage");
+        add("BS", "weak_hook", "coverage");
+      } else if (blitzerId === "BS") {
+        add("W", "weak_curl_flat", "coverage");
+        add("M", "weak_hook", "coverage");
+        add("Ni", "strong_hook", "coverage");
+      } else if (blitzerId === "M") {
+        add("Ni", "curl_flat", "coverage");
+        add("W", "strong_hook", "coverage");
+        add("BS", "weak_hook", "coverage");
+      } else if (blitzerId === "W") {
+        add("BS", "weak_curl_flat", "coverage");
+        add("M", "weak_hook", "coverage");
+        add("Ni", "strong_hook", "coverage");
+      } else {
+        add("Ni", "curl_flat", "coverage");
+        add("M", "strong_hook", "coverage");
+        add("W", "weak_hook", "coverage");
+        add("BS", "weak_hook", "coverage");
+      }
+      addCornerThirds();
+      return;
+    }
 
     if (blitzerId === "Ni") {
       if (dropperHasCurlFlat) {
@@ -3450,7 +3492,8 @@ function getBlitzTemplateAssignments({
     addBaseCoverage("eyes");
   };
 
-  if (callId === "newton") runQbNamePressure("Ni", "edge_pressure");
+  if (callId === "newton" && hasDetachedNumberTwoThreeByOne) runQbNamePressure("M", "edge_pressure");
+  else if (callId === "newton") runQbNamePressure("Ni", "edge_pressure", boundarySide ? endOnSide(boundarySide) : undefined);
   if (callId === "panthers") runTeamNamePressure("Ni", "edge_pressure");
   if (callId === "carolina" && hasThreeWrSide) runCityNamePressure("M", "edge_pressure", "W", "weak_a_gap_blitz");
   else if (callId === "carolina") runCityNamePressure("Ni", "edge_pressure", "M", "weak_a_gap_blitz");
@@ -3460,13 +3503,13 @@ function getBlitzTemplateAssignments({
   if (callId === "brees") runQbNamePressure("W", "edge_pressure");
   if (callId === "saints") runTeamNamePressure("W", "edge_pressure");
   if (callId === "nola") runCityNamePressure("W", "edge_pressure", "M", "weak_a_gap_blitz");
-  if (callId === "bradshaw") runQbNamePressure("BS", "edge_pressure");
+  if (callId === "bradshaw") runQbNamePressure("BS", "edge_pressure", "SDE");
   if (callId === "steelers") runTeamNamePressure("BS", "edge_pressure");
   if (callId === "pitt") runCityNamePressure("BS", "edge_pressure", "W", "weak_a_gap_blitz");
   if (callId === "carr") runQbNamePressure("BC", "edge_pressure");
   if (callId === "raiders") runTeamNamePressure("BC", "edge_pressure");
   if (callId === "oakland") runCityNamePressure("BC", "edge_pressure", "M", "weak_a_gap_blitz");
-  if (callId === "allen") runQbNamePressure("M", "a_gap_blitz", passStrength === "left" ? "WDE" : "SDE");
+  if (callId === "allen") runQbNamePressure("M", "c_read_blitz", passStrength === "left" ? "WDE" : "SDE");
   if (callId === "bills") runTeamNamePressure("M", "a_gap_blitz");
   if (callId === "buffalo") runCityNamePressure("M", "a_gap_blitz", "W", "weak_a_gap_blitz");
   if (callId === "brady") runQbNamePressure("W", "b_gap_blitz");
@@ -3485,6 +3528,7 @@ function buildBlitzTemplateOverlays({
   losY,
   wingY,
   frontMode = "4-4",
+  boardSpot = "mof",
 }: {
   callId: BlitzCallId;
   defensePlayers: PlayerDot[];
@@ -3494,8 +3538,9 @@ function buildBlitzTemplateOverlays({
   losY: number;
   wingY: number;
   frontMode?: FrontMode;
+  boardSpot?: BlitzBoardSpot;
 }) {
-  return getBlitzTemplateAssignments({ callId, defensePlayers, offensePlayers, passStrength, frontMode }).flatMap((assignment) => {
+  return getBlitzTemplateAssignments({ callId, defensePlayers, offensePlayers, passStrength, frontMode, boardSpot }).flatMap((assignment) => {
     const defender = defensePlayers.find((player) => player.id === assignment.defenderId);
     if (!defender) return [];
     return buildBlitzPathwayOverlay({
@@ -3518,6 +3563,13 @@ function getRunFitArrowStroke(color: RunFitArrowColor) {
   if (color === "sky") return "#89c6ff";
   if (color === "red") return "#ef4444";
   return "#ffffff";
+}
+
+function getRunFitLineStrokeWidth(weight: string) {
+  if (weight === "thin") return 0.55;
+  if (weight === "thick") return 0.95;
+  if (weight === "heavy") return 1.2;
+  return 0.7;
 }
 
 function Circle({ player, color = "bg-orange-600", text = "text-white", border = "border-white/30" }: {
@@ -3605,6 +3657,10 @@ function TrainingField({
   onMoveOffense,
   onMoveDefense,
   onMoveDefenseGhost,
+  selectedRouteOverlayId,
+  selectedFieldTagId,
+  onRouteOverlayClick,
+  onFieldTagClick,
 }: {
   enhancedLandmarks?: boolean;
   offensePlayers: PlayerDot[];
@@ -3639,6 +3695,10 @@ function TrainingField({
   onMoveDefenseGhost?: (id: string, x: number, y: number) => void;
   onFieldClick?: (x: number, y: number) => void;
   onFieldDoubleClick?: (x: number, y: number) => void;
+  selectedRouteOverlayId?: string | null;
+  selectedFieldTagId?: string | null;
+  onRouteOverlayClick?: (id: string) => void;
+  onFieldTagClick?: (id: string) => void;
 }) {
   const [drag, setDrag] = useState<{ id: string; type: "offense" | "defense" | "defense_ghost" } | null>(null);
   const maybeFlipX = (x: number, enabled: boolean) => (enabled ? 100 - x : x);
@@ -3716,16 +3776,53 @@ function TrainingField({
       </defs>
       {routeOverlays.map((route) => (
         <g key={route.id}>
+          {selectedRouteOverlayId === route.id ? (
+            <polyline
+              points={route.path.map((point) => `${maybeFlipX(point.x, flipHorizontalPerspective)},${maybeFlipY(point.y, flipOffense)}`).join(" ")}
+              fill="none"
+              stroke="white"
+              strokeWidth={((route.strokeWidth ?? 0.7) + 0.55) * annotationScale}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              opacity="0.45"
+            />
+          ) : null}
           <polyline
             points={route.path.map((point) => `${maybeFlipX(point.x, flipHorizontalPerspective)},${maybeFlipY(point.y, flipOffense)}`).join(" ")}
             fill="none"
             stroke={route.color}
-            strokeWidth={0.7 * annotationScale}
+            strokeWidth={(route.strokeWidth ?? 0.7) * annotationScale}
             strokeLinecap="round"
             strokeLinejoin="round"
+            strokeDasharray={route.dashed ? `${1.8 * annotationScale} ${1.4 * annotationScale}` : undefined}
             markerEnd={`url(#marker-${route.id})`}
             opacity="0.95"
           />
+          <polyline
+            points={route.path.map((point) => `${maybeFlipX(point.x, flipHorizontalPerspective)},${maybeFlipY(point.y, flipOffense)}`).join(" ")}
+            fill="none"
+            stroke="transparent"
+            strokeWidth={4 * annotationScale}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={onRouteOverlayClick ? "cursor-pointer" : undefined}
+            onClick={(event) => {
+              if (!onRouteOverlayClick) return;
+              event.stopPropagation();
+              onRouteOverlayClick(route.id);
+            }}
+          />
+          {selectedRouteOverlayId === route.id ? route.path.map((point, pointIndex) => (
+            <circle
+              key={`${route.id}-vertex-${pointIndex}`}
+              cx={maybeFlipX(point.x, flipHorizontalPerspective)}
+              cy={maybeFlipY(point.y, flipOffense)}
+              r={0.8 * annotationScale}
+              fill="white"
+              stroke={route.color}
+              strokeWidth={0.25 * annotationScale}
+            />
+          )) : null}
           {route.labelX !== undefined && route.labelY !== undefined ? (
             <>
               <rect
@@ -3735,6 +3832,12 @@ function TrainingField({
                 height={4.2 * annotationScale}
                 rx={1.15 * annotationScale}
                 fill="rgba(15,23,42,0.68)"
+                className={onRouteOverlayClick ? "cursor-pointer" : undefined}
+                onClick={(event) => {
+                  if (!onRouteOverlayClick) return;
+                  event.stopPropagation();
+                  onRouteOverlayClick(route.id);
+                }}
               />
               <text
                 x={maybeFlipX(route.labelX, flipHorizontalPerspective) + 0.8 * annotationScale}
@@ -3745,6 +3848,12 @@ function TrainingField({
                 letterSpacing="0.04em"
                 fontWeight="700"
                 fill="white"
+                className={onRouteOverlayClick ? "cursor-pointer select-none" : undefined}
+                onClick={(event) => {
+                  if (!onRouteOverlayClick) return;
+                  event.stopPropagation();
+                  onRouteOverlayClick(route.id);
+                }}
               >
                 {route.label}
               </text>
@@ -3885,8 +3994,13 @@ function TrainingField({
         return (
           <div
             key={tag.id}
-            className={`absolute -translate-x-1/2 -translate-y-1/2 rounded border px-1.5 py-0.5 ${compactAnnotations ? "text-[7px]" : "text-[10px]"} font-black uppercase tracking-[0.10em] shadow-sm ${toneClass}`}
+            className={`absolute -translate-x-1/2 -translate-y-1/2 rounded border px-1.5 py-0.5 ${compactAnnotations ? "text-[7px]" : "text-[10px]"} font-black uppercase tracking-[0.10em] shadow-sm ${toneClass} ${selectedFieldTagId === tag.id ? "ring-2 ring-white/80" : ""} ${onFieldTagClick ? "cursor-pointer" : ""}`}
             style={{ left: `${maybeFlipX(tag.x, flipHorizontalPerspective)}%`, top: `${maybeFlipY(tag.y, flipOffense)}%` }}
+            onClick={(event) => {
+              if (!onFieldTagClick) return;
+              event.stopPropagation();
+              onFieldTagClick(tag.id);
+            }}
           >
             {tag.label}
           </div>
@@ -4095,6 +4209,7 @@ export default function FormationRecognitionWorkingApp() {
   const skipNextModeRandomizeRef = useRef(false);
   const previousModeRef = useRef<AppMode>("study");
   const previousAlignmentViewModeRef = useRef<AlignmentViewMode>("study");
+  const previousFormationFilterSignatureRef = useRef("");
   const lastFilmRandomizeSignatureRef = useRef<string>("");
   const videoObjectUrlsRef = useRef<string[]>([]);
   const filmQuizVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -4115,13 +4230,14 @@ export default function FormationRecognitionWorkingApp() {
   const [leaderboardEntries, setLeaderboardEntries] = useState<LeaderboardEntry[]>([]);
   const [accountDirectoryEntries, setAccountDirectoryEntries] = useState<LeaderboardEntry[]>([]);
   const [showAccountDirectory, setShowAccountDirectory] = useState(false);
+  const [accountDirectorySort, setAccountDirectorySort] = useState<AccountDirectorySort>("points_desc");
   const [lastScoreSummary, setLastScoreSummary] = useState<Partial<Record<"quiz" | "offense_build" | "alignment" | "film" | "concept", ScoreSummary>>>({});
-  const [scoredAttemptKey, setScoredAttemptKey] = useState<string | null>(null);
+  const [scoredAttemptKeys, setScoredAttemptKeys] = useState<Set<string>>(() => new Set());
   const [revealedAttemptKeys, setRevealedAttemptKeys] = useState<Set<string>>(() => new Set());
   const [attemptStartedAt, setAttemptStartedAt] = useState<number>(Date.now());
   const [selectedPlaybooks, setSelectedPlaybooks] = useState<PlaybookKey[]>(["Foothill", "Pro", "Wing T"]);
   const [personnelFilter, setPersonnelFilter] = useState<string>("Any");
-  const [appSection, setAppSection] = useState<AppSection>("offense");
+  const [appSection, setAppSection] = useState<AppSection>("defense");
   const [selectedLeaderboardSection, setSelectedLeaderboardSection] = useState<LeaderboardSection>("defense");
   const [selectedLeaderboardMode, setSelectedLeaderboardMode] = useState<LeaderboardMode>("quiz");
   const [passConceptFamilyFilter, setPassConceptFamilyFilter] = useState<PassConceptFamilyFilter>("2x2");
@@ -4144,14 +4260,18 @@ export default function FormationRecognitionWorkingApp() {
   const [showPassConceptAnswers, setShowPassConceptAnswers] = useState(false);
   const [showBlitzAdminTools, setShowBlitzAdminTools] = useState(false);
   const [showRunFitAdminTools, setShowRunFitAdminTools] = useState(false);
-  const [runFitTitle, setRunFitTitle] = useState("Single High vs Power Strong");
-  const [runFitEditorTool, setRunFitEditorTool] = useState<RunFitEditorTool>("arrow");
+  const [runFitTitle, setRunFitTitle] = useState("Run Fit Drawing Board");
+  const [runFitEditorTool, setRunFitEditorTool] = useState<RunFitEditorTool>("select");
   const [runFitArrowColor, setRunFitArrowColor] = useState<RunFitArrowColor>("gold");
   const [runFitLineEnd, setRunFitLineEnd] = useState<RunFitLineEnd>("square");
+  const [runFitLineWeight, setRunFitLineWeight] = useState("normal");
+  const [runFitLineStyle, setRunFitLineStyle] = useState<RunFitLineStyle>("solid");
   const [runFitArrowLabel, setRunFitArrowLabel] = useState("PULL / KICK");
   const [runFitDraftPoints, setRunFitDraftPoints] = useState<{ x: number; y: number }[]>([]);
   const [runFitFieldTags, setRunFitFieldTags] = useState<FieldTag[]>([]);
   const [runFitRouteOverlays, setRunFitRouteOverlays] = useState<RouteOverlay[]>([]);
+  const [selectedRunFitOverlayId, setSelectedRunFitOverlayId] = useState<string | null>(null);
+  const [selectedRunFitTagId, setSelectedRunFitTagId] = useState<string | null>(null);
   const [runFitTagLabel, setRunFitTagLabel] = useState("SPILL");
   const [runFitTagTone, setRunFitTagTone] = useState<FieldTag["tone"]>("gold");
   const [runFitSavedBoards, setRunFitSavedBoards] = useState<RunFitSavedBoard[]>([]);
@@ -4323,18 +4443,26 @@ export default function FormationRecognitionWorkingApp() {
         selectedFilmClipId?: string;
       };
 
+      const hasSavedMode = Boolean(
+        savedViewState.mode && MODE_OPTIONS.some((option) => option.value === savedViewState.mode),
+      );
+
       if (savedViewState.mode === "quiz") {
         setMode("study");
-        setAppSection("offense");
+        setAppSection(getSectionForMode("study"));
         setFormationTrainerViewMode("quiz");
         skipNextModeRandomizeRef.current = true;
       } else if (savedViewState.mode && MODE_OPTIONS.some((option) => option.value === savedViewState.mode)) {
         setMode(savedViewState.mode);
-        setAppSection(savedViewState.appSection ?? getSectionForMode(savedViewState.mode));
+        setAppSection(getSectionForMode(savedViewState.mode));
         skipNextModeRandomizeRef.current = true;
       }
 
-      if (savedViewState.appSection && APP_SECTION_OPTIONS.some((option) => option.value === savedViewState.appSection)) {
+      if (
+        !hasSavedMode &&
+        savedViewState.appSection &&
+        APP_SECTION_OPTIONS.some((option) => option.value === savedViewState.appSection)
+      ) {
         setAppSection(savedViewState.appSection);
       }
 
@@ -5006,6 +5134,12 @@ const existingStats =
     });
   }, [currentUser]);
 
+  useEffect(() => {
+    setScoredAttemptKeys(new Set());
+    setRevealedAttemptKeys(new Set());
+    setLastScoreSummary({});
+  }, [currentUser?.id]);
+
   const effectivePlaybooks: PlaybookKey[] = mode === "offense_build" ? ["Foothill"] : selectedPlaybooks;
   const sectionModeOptions = MODE_OPTIONS.filter((option) => (
     option.section === appSection
@@ -5018,6 +5152,7 @@ const existingStats =
   const pool = useMemo(() => {
     return ALL_FORMATIONS.filter((f) => effectivePlaybooks.includes(f.playbook) && (personnelFilter === "Any" || f.personnel === personnelFilter));
   }, [effectivePlaybooks, personnelFilter]);
+  const formationFilterSignature = `${effectivePlaybooks.join("|")}::${personnelFilter}`;
   const current = pool[index % Math.max(pool.length, 1)] ?? ALL_FORMATIONS[0];
   const formationKey = `${current.playbook}::${current.name}`;
   const currentFormationIdentity = `${current.playbook}::${current.name}::${current.personnel}`;
@@ -5054,9 +5189,11 @@ const existingStats =
       path: runFitDraftPoints,
       labelX: runFitDraftPoints[runFitDraftPoints.length - 1]?.x ?? 50,
       labelY: (runFitDraftPoints[runFitDraftPoints.length - 1]?.y ?? 50) - 3,
+      strokeWidth: getRunFitLineStrokeWidth(runFitLineWeight),
+      dashed: runFitLineStyle === "dashed",
       endCap: runFitLineEnd,
     }];
-  }, [runFitArrowColor, runFitArrowLabel, runFitDraftPoints, runFitLineEnd]);
+  }, [runFitArrowColor, runFitArrowLabel, runFitDraftPoints, runFitLineEnd, runFitLineStyle, runFitLineWeight]);
   const runFitDisplayOverlays = useMemo(
     () => [...runFitRouteOverlays, ...runFitDraftOverlay],
     [runFitRouteOverlays, runFitDraftOverlay],
@@ -5382,6 +5519,24 @@ const existingStats =
   const filteredLeaderboardBoards = leaderboardBoards.filter((board) => board.section === selectedLeaderboardSection);
   const selectedLeaderboardBoard =
     filteredLeaderboardBoards.find((board) => board.key === selectedLeaderboardMode) ?? filteredLeaderboardBoards[0] ?? leaderboardBoards[0];
+  const sortedAccountDirectoryEntries = useMemo(() => {
+    return [...accountDirectoryEntries].sort((a, b) => {
+      if (accountDirectorySort === "points_desc") {
+        return b.stats.totalPoints - a.stats.totalPoints || a.name.localeCompare(b.name);
+      }
+      if (accountDirectorySort === "points_asc") {
+        return a.stats.totalPoints - b.stats.totalPoints || a.name.localeCompare(b.name);
+      }
+      if (accountDirectorySort === "time_desc") {
+        return b.stats.secondsUsed - a.stats.secondsUsed || a.name.localeCompare(b.name);
+      }
+      if (accountDirectorySort === "time_asc") {
+        return a.stats.secondsUsed - b.stats.secondsUsed || a.name.localeCompare(b.name);
+      }
+
+      return a.name.localeCompare(b.name);
+    });
+  }, [accountDirectoryEntries, accountDirectorySort]);
   useEffect(() => {
     if (!filteredLeaderboardBoards.some((board) => board.key === selectedLeaderboardMode)) {
       const fallback = filteredLeaderboardBoards[0];
@@ -5875,7 +6030,6 @@ const existingStats =
     setLastScoreSummary({});
     setEditingAlignmentAnswers(false);
     setQuizAnswers({ formation: "", runStrength: "", passStrength: "" });
-    setScoredAttemptKey(null);
     setAttemptStartedAt(Date.now());
   }, [current.name, mode, formationTrainerViewMode, alignmentViewMode, frontMode]);
 
@@ -5886,7 +6040,7 @@ const existingStats =
   }, [passConceptFamilyFilter]);
 
   useEffect(() => {
-    if (passConceptViewMode !== "quiz" || passConceptQuizMode !== "build") return;
+    if (passConceptViewMode !== "quiz") return;
 
     const nextBoardKind: PassConceptBoardKind =
       passConceptFamilyFilter === "all"
@@ -5922,7 +6076,6 @@ const existingStats =
     setPassConceptNameAnswer("");
     setPassConceptFrontsideNameAnswer("");
     setPassConceptBacksideNameAnswer("");
-    setScoredAttemptKey(null);
     setAttemptStartedAt(Date.now());
   }, [passConceptViewMode, passConceptQuizMode, effectivePassConceptBoardKind, selectedFrontsideConceptId, selectedBacksideConceptId, selectedThreeByOneConceptId]);
 
@@ -5966,6 +6119,40 @@ const existingStats =
     previousModeRef.current = mode;
     previousAlignmentViewModeRef.current = alignmentViewMode;
   }, [mode, formationTrainerViewMode, alignmentViewMode, pool.length]);
+
+  useEffect(() => {
+    if (!pool.length) return;
+
+    const previousSignature = previousFormationFilterSignatureRef.current;
+    previousFormationFilterSignatureRef.current = formationFilterSignature;
+
+    if (!previousSignature || previousSignature === formationFilterSignature) return;
+
+    const shouldRefreshQuizRep =
+      (mode === "study" && formationTrainerViewMode === "quiz") ||
+      mode === "quiz" ||
+      (mode === "alignment" && alignmentViewMode === "quiz") ||
+      (mode === "offense_build" && offenseBuildViewMode === "quiz");
+
+    if (!shouldRefreshQuizRep) return;
+
+    setIndex((prev) => getRandomPoolIndex(pool.length, prev));
+    setShowQuizFeedback(false);
+    setShowQuizAnswers(false);
+    setQuizReadyForNext(false);
+    setQuizAnswers({ formation: "", runStrength: "", passStrength: "" });
+    setShowAlignmentCheck(false);
+    setShowOffenseCheck(false);
+    setLastScoreSummary({});
+    setAttemptStartedAt(Date.now());
+  }, [
+    alignmentViewMode,
+    formationFilterSignature,
+    formationTrainerViewMode,
+    mode,
+    offenseBuildViewMode,
+    pool.length,
+  ]);
 
   useEffect(() => {
     if (!pool.length) return;
@@ -6152,7 +6339,6 @@ const existingStats =
     setFilmQuizStarted(false);
     setFilmQuizFinished(false);
     setFilmQuizPlaysUsed(0);
-    setScoredAttemptKey(null);
     setAttemptStartedAt(Date.now());
   };
 
@@ -6884,8 +7070,112 @@ const existingStats =
   router.push("/login");
 };
 
+  const selectedRunFitOverlay = runFitRouteOverlays.find((overlay) => overlay.id === selectedRunFitOverlayId) ?? null;
+  const selectedRunFitTag = runFitFieldTags.find((tag) => tag.id === selectedRunFitTagId) ?? null;
+  const clearRunFitSelection = () => {
+    setSelectedRunFitOverlayId(null);
+    setSelectedRunFitTagId(null);
+  };
+  const selectRunFitOverlay = (id: string) => {
+    setRunFitEditorTool("select");
+    setSelectedRunFitOverlayId(id);
+    setSelectedRunFitTagId(null);
+    setRunFitSaveNotice("Selected line.");
+  };
+  const selectRunFitTag = (id: string) => {
+    setRunFitEditorTool("select");
+    setSelectedRunFitTagId(id);
+    setSelectedRunFitOverlayId(null);
+    setRunFitSaveNotice("Selected tag.");
+  };
+  const updateSelectedRunFitOverlay = (patch: Partial<RouteOverlay>) => {
+    if (!selectedRunFitOverlayId) return;
+    setRunFitRouteOverlays((prev) => prev.map((overlay) => (
+      overlay.id === selectedRunFitOverlayId ? { ...overlay, ...patch } : overlay
+    )));
+  };
+  const updateSelectedRunFitTag = (patch: Partial<FieldTag>) => {
+    if (!selectedRunFitTagId) return;
+    setRunFitFieldTags((prev) => prev.map((tag) => (
+      tag.id === selectedRunFitTagId ? { ...tag, ...patch } : tag
+    )));
+  };
+  const nudgeSelectedRunFitObject = (dx: number, dy: number) => {
+    if (selectedRunFitOverlayId) {
+      setRunFitRouteOverlays((prev) => prev.map((overlay) => (
+        overlay.id === selectedRunFitOverlayId
+          ? {
+              ...overlay,
+              path: overlay.path.map((point) => ({ x: clamp(point.x + dx, 2, 98), y: clamp(point.y + dy, 2, 98) })),
+              labelX: overlay.labelX === undefined ? undefined : clamp(overlay.labelX + dx, 2, 98),
+              labelY: overlay.labelY === undefined ? undefined : clamp(overlay.labelY + dy, 2, 98),
+            }
+          : overlay
+      )));
+    }
+    if (selectedRunFitTagId) {
+      setRunFitFieldTags((prev) => prev.map((tag) => (
+        tag.id === selectedRunFitTagId ? { ...tag, x: clamp(tag.x + dx, 2, 98), y: clamp(tag.y + dy, 2, 98) } : tag
+      )));
+    }
+  };
+  const duplicateSelectedRunFitObject = () => {
+    if (selectedRunFitOverlay) {
+      const duplicate: RouteOverlay = {
+        ...selectedRunFitOverlay,
+        id: `run-fit-copy-${Date.now()}`,
+        path: selectedRunFitOverlay.path.map((point) => ({ x: clamp(point.x + 2, 2, 98), y: clamp(point.y + 2, 2, 98) })),
+        labelX: selectedRunFitOverlay.labelX === undefined ? undefined : clamp(selectedRunFitOverlay.labelX + 2, 2, 98),
+        labelY: selectedRunFitOverlay.labelY === undefined ? undefined : clamp(selectedRunFitOverlay.labelY + 2, 2, 98),
+      };
+      setRunFitRouteOverlays((prev) => [...prev, duplicate]);
+      setSelectedRunFitOverlayId(duplicate.id);
+      return;
+    }
+    if (selectedRunFitTag) {
+      const duplicate: FieldTag = {
+        ...selectedRunFitTag,
+        id: `tag-copy-${Date.now()}`,
+        x: clamp(selectedRunFitTag.x + 2, 2, 98),
+        y: clamp(selectedRunFitTag.y + 2, 2, 98),
+      };
+      setRunFitFieldTags((prev) => [...prev, duplicate]);
+      setSelectedRunFitTagId(duplicate.id);
+    }
+  };
+  const deleteSelectedRunFitObject = () => {
+    if (selectedRunFitOverlayId) {
+      setRunFitRouteOverlays((prev) => prev.filter((overlay) => overlay.id !== selectedRunFitOverlayId));
+    }
+    if (selectedRunFitTagId) {
+      setRunFitFieldTags((prev) => prev.filter((tag) => tag.id !== selectedRunFitTagId));
+    }
+    clearRunFitSelection();
+  };
+  const bringSelectedRunFitLineForward = () => {
+    if (!selectedRunFitOverlayId) return;
+    setRunFitRouteOverlays((prev) => {
+      const selected = prev.find((overlay) => overlay.id === selectedRunFitOverlayId);
+      if (!selected) return prev;
+      return [...prev.filter((overlay) => overlay.id !== selectedRunFitOverlayId), selected];
+    });
+  };
+  const sendSelectedRunFitLineBackward = () => {
+    if (!selectedRunFitOverlayId) return;
+    setRunFitRouteOverlays((prev) => {
+      const selected = prev.find((overlay) => overlay.id === selectedRunFitOverlayId);
+      if (!selected) return prev;
+      return [selected, ...prev.filter((overlay) => overlay.id !== selectedRunFitOverlayId)];
+    });
+  };
+
   const handleRunFitFieldClick = (x: number, y: number) => {
     if (!currentUser?.isAdmin) return;
+
+    if (runFitEditorTool === "select") {
+      clearRunFitSelection();
+      return;
+    }
 
     if (runFitEditorTool === "tag") {
       const cleanLabel = runFitTagLabel.trim();
@@ -6904,6 +7194,7 @@ const existingStats =
       return;
     }
 
+    if (runFitEditorTool !== "line") return;
     setRunFitDraftPoints((prev) => [...prev, { x, y }]);
     setRunFitSaveNotice(null);
   };
@@ -6920,10 +7211,13 @@ const existingStats =
         path: points,
         labelX: cleanLabel ? points[points.length - 1]?.x ?? 50 : undefined,
         labelY: cleanLabel ? (points[points.length - 1]?.y ?? 50) - 3 : undefined,
+        strokeWidth: getRunFitLineStrokeWidth(runFitLineWeight),
+        dashed: runFitLineStyle === "dashed",
         endCap: runFitLineEnd,
       },
     ]);
     setRunFitDraftPoints([]);
+    setRunFitEditorTool("select");
     setRunFitSaveNotice("Line added to the board.");
   };
 
@@ -6932,27 +7226,38 @@ const existingStats =
   };
 
   const handleRunFitFieldDoubleClick = (x: number, y: number) => {
-    if (!currentUser?.isAdmin || runFitEditorTool !== "arrow") return;
+    if (!currentUser?.isAdmin || runFitEditorTool !== "line") return;
     commitRunFitLine([...runFitDraftPoints, { x, y }]);
   };
 
   const saveRunFitDraftAsPathway = () => {
     if (!currentUser?.isAdmin) return;
     const defender = runFitPreview.defensePlayers.find((player) => player.id === selectedRunFitPathwayDefenderId);
-    if (!defender || runFitDraftPoints.length < 2) {
-      setRunFitSaveNotice("Draw at least two points and choose the position this pathway belongs to.");
+    const sourcePath = runFitDraftPoints.length >= 2 ? runFitDraftPoints : selectedRunFitOverlay?.path ?? [];
+    if (!defender || sourcePath.length < 2) {
+      setRunFitSaveNotice("Draw or select a line with at least two points, then choose the position this pathway belongs to.");
       return;
     }
 
-    const cleanName = runFitSavedPathwayName.trim() || runFitArrowLabel.trim() || `${defender.id} Pathway`;
+    const cleanName = runFitSavedPathwayName.trim() || selectedRunFitOverlay?.label || runFitArrowLabel.trim() || `${defender.id} Pathway`;
     const savedPathway: RunFitSavedPathway = {
       id: `run-fit-saved-pathway-${Date.now()}`,
       name: cleanName,
       positionId: defender.id,
-      label: runFitArrowLabel.trim(),
-      color: runFitArrowColor,
-      endCap: runFitLineEnd,
-      offsets: runFitDraftPoints.map((point) => ({
+      label: selectedRunFitOverlay?.label ?? runFitArrowLabel.trim(),
+      color: selectedRunFitOverlay
+        ? (Object.entries({
+            gold: getRunFitArrowStroke("gold"),
+            cyan: getRunFitArrowStroke("cyan"),
+            sky: getRunFitArrowStroke("sky"),
+            white: getRunFitArrowStroke("white"),
+            red: getRunFitArrowStroke("red"),
+          }).find(([, stroke]) => stroke === selectedRunFitOverlay.color)?.[0] as RunFitArrowColor | undefined) ?? runFitArrowColor
+        : runFitArrowColor,
+      endCap: selectedRunFitOverlay?.endCap ?? runFitLineEnd,
+      strokeWidth: selectedRunFitOverlay?.strokeWidth ?? getRunFitLineStrokeWidth(runFitLineWeight),
+      dashed: selectedRunFitOverlay?.dashed ?? runFitLineStyle === "dashed",
+      offsets: sourcePath.map((point) => ({
         x: point.x - defender.x,
         y: point.y - defender.y,
       })),
@@ -6987,6 +7292,8 @@ const existingStats =
         path,
         labelX: savedPathway.label ? path[path.length - 1]?.x : undefined,
         labelY: savedPathway.label ? (path[path.length - 1]?.y ?? LOS_Y) - 3 : undefined,
+        strokeWidth: savedPathway.strokeWidth,
+        dashed: savedPathway.dashed,
         endCap: savedPathway.endCap,
       },
     ]);
@@ -7010,143 +7317,8 @@ const existingStats =
     setRunFitRouteOverlays(shell.routeOverlays);
     setRunFitFieldTags(shell.fieldTags);
     setRunFitDraftPoints([]);
+    clearRunFitSelection();
     setRunFitSaveNotice(`Loaded Run Fit 4-4 vs ${boardLabel}.`);
-  };
-
-  const applyRunFitPowerWeakTemplate = () => {
-    if (!currentUser?.isAdmin) return;
-    const shell = buildRunFitBoardShell("dog");
-    const offenseById = Object.fromEntries(shell.offensePlayers.map((player) => [player.id, player])) as Record<string, PlayerDot | undefined>;
-    const defenseById = Object.fromEntries(shell.defensePlayers.map((player) => [player.id, player])) as Record<string, PlayerDot | undefined>;
-    const point = (player: PlayerDot | undefined, fallback: { x: number; y: number }) => ({
-      x: player?.x ?? fallback.x,
-      y: player?.y ?? fallback.y,
-    });
-    const makeOverlay = (
-      id: string,
-      label: string,
-      color: string,
-      path: { x: number; y: number }[],
-      endCap: RunFitLineEnd = "circle",
-    ): RouteOverlay => ({
-      id,
-      label,
-      color,
-      path,
-      labelX: path[path.length - 1]?.x,
-      labelY: (path[path.length - 1]?.y ?? shell.losY) - 3,
-      endCap,
-    });
-    const weakSide: Side = getOppositeSide(shell.runStrength);
-    const weakDirection = weakSide === "left" ? -1 : 1;
-    const qb = point(offenseById.QB, { x: 50, y: shell.losY - 12 });
-    const rb = point(offenseById.RB ?? offenseById.R, { x: 50, y: shell.losY - 24 });
-    const hWing = point(offenseById.H, { x: getBlitzGapTargetX(shell.offensePlayers, "C", weakSide), y: shell.wingY });
-    const nose = point(defenseById.N, { x: getBlitzGapTargetX(shell.offensePlayers, "A", weakSide), y: shell.losY + 3 });
-    const threeTech = point(defenseById.T, { x: getBlitzGapTargetX(shell.offensePlayers, "B", shell.runStrength), y: shell.losY + 3 });
-    const weakEnd = point(defenseById.WDE, { x: getBlitzEdgePressureTargetX(shell.offensePlayers, weakSide, shell.losY, shell.wingY), y: shell.losY + 3 });
-    const strongEnd = point(defenseById.SDE, { x: getBlitzEdgePressureTargetX(shell.offensePlayers, shell.runStrength, shell.losY, shell.wingY), y: shell.losY + 3 });
-    const puller = point(offenseById.RG ?? offenseById.LG, { x: shell.runStrength === "right" ? 58 : 42, y: shell.losY });
-    const weakAGap = getBlitzGapTargetX(shell.offensePlayers, "A", weakSide);
-    const weakBGap = getBlitzGapTargetX(shell.offensePlayers, "B", weakSide);
-    const strongBGap = getBlitzGapTargetX(shell.offensePlayers, "B", shell.runStrength);
-    const strongAGap = getBlitzGapTargetX(shell.offensePlayers, "A", shell.runStrength);
-    const strongCGap = getBlitzGapTargetX(shell.offensePlayers, "C", shell.runStrength);
-    const bs = point(defenseById.BS, { x: shell.runStrength === "right" ? 72 : 28, y: shell.losY + 18 });
-    const bsTargetBGap = Math.abs(bs.x - weakBGap) <= Math.abs(bs.x - strongBGap) ? weakBGap : strongBGap;
-    const frontSideClimbPoint = {
-      x: weakEnd.x + weakDirection * 5,
-      y: shell.losY - 13,
-    };
-    const pullerFit = {
-      x: weakEnd.x + weakDirection * 2,
-      y: getMidpoint(weakEnd.y, qb.y),
-    };
-    const overSpillFit = {
-      x: pullerFit.x + weakDirection * 4,
-      y: getMidpoint(pullerFit.y, rb.y),
-    };
-    const overlays: RouteOverlay[] = [
-      makeOverlay("power-weak-lt-combo", "Combo", "#f4cf63", [
-        point(offenseById.LT, { x: 34, y: shell.losY }),
-        nose,
-      ], "square"),
-      makeOverlay("power-weak-lg-combo", "Combo", "#f4cf63", [
-        point(offenseById.LG, { x: 42, y: shell.losY }),
-        nose,
-      ], "square"),
-      makeOverlay("power-weak-center-down", "Down", "#f4cf63", [
-        point(offenseById.C, { x: 50, y: shell.losY }),
-        threeTech,
-      ], "square"),
-      makeOverlay("power-weak-rt-base", "Base", "#f4cf63", [
-        point(offenseById.RT, { x: 66, y: shell.losY }),
-        { x: strongCGap, y: shell.losY - 5 },
-      ], "square"),
-      makeOverlay("power-weak-y-base", "Base", "#f4cf63", [
-        point(offenseById.Y, { x: 74, y: shell.losY }),
-        strongEnd,
-      ], "square"),
-      makeOverlay("power-weak-h-climb", "Climb", "#f4cf63", [
-        hWing,
-        frontSideClimbPoint,
-      ], "square"),
-      makeOverlay("power-weak-guard-pull", "Pull", "#f4cf63", [
-        puller,
-        { x: puller.x + weakDirection * 10, y: shell.losY - 8 },
-        pullerFit,
-      ], "arrow"),
-      makeOverlay("power-weak-rb-track", "RB Track", "#f4cf63", [
-        rb,
-        { x: getMidpoint(rb.x, weakBGap), y: getMidpoint(rb.y, qb.y) },
-        { x: weakBGap, y: shell.losY - 9 },
-      ], "arrow"),
-      makeOverlay("power-weak-ni-force", "Force", "#ef4444", [
-        point(defenseById.Ni, { x: weakEnd.x + weakDirection * 10, y: shell.losY + 16 }),
-        { x: weakEnd.x + weakDirection * 9, y: shell.losY - 9 },
-      ], "circle"),
-      makeOverlay("power-weak-wde-spill", "Spill", "#ef4444", [
-        point(defenseById.WDE, weakEnd),
-        { x: weakEnd.x + weakDirection * 1.5, y: shell.losY - 4 },
-        pullerFit,
-      ], "circle"),
-      makeOverlay("power-weak-m-over-spill", "Over Spill", "#ef4444", [
-        point(defenseById.M, { x: 44, y: shell.losY + 12 }),
-        { x: weakEnd.x + weakDirection * 1.5, y: shell.losY - 5 },
-        overSpillFit,
-      ], "circle"),
-      makeOverlay("power-weak-w-a-gap", "A Gap", "#ef4444", [
-        point(defenseById.W, { x: 56, y: shell.losY + 12 }),
-        { x: strongAGap, y: shell.losY - 7 },
-      ], "circle"),
-      makeOverlay("power-weak-n-a-gap", "A Gap", "#ef4444", [
-        point(defenseById.N, nose),
-        { x: weakAGap, y: shell.losY - 6 },
-      ], "circle"),
-      makeOverlay("power-weak-t-c-gap", "C Gap", "#ef4444", [
-        point(defenseById.T, threeTech),
-        { x: strongCGap, y: shell.losY - 6 },
-      ], "circle"),
-      makeOverlay("power-weak-sde-c-gap", "C Gap", "#ef4444", [
-        point(defenseById.SDE, strongEnd),
-        { x: strongCGap + (shell.runStrength === "left" ? -3 : 3), y: shell.losY - 6 },
-      ], "circle"),
-      makeOverlay("power-weak-bs-fold", "Fold B", "#ef4444", [
-        bs,
-        { x: bsTargetBGap, y: shell.losY - 6 },
-      ], "circle"),
-    ];
-
-    setSelectedRunFitBaseBoardId("dog");
-    setSelectedRunFitBoardId("working");
-    setRunFitTitle("11p Power Weak vs Dog 4-4");
-    setRunFitRouteOverlays(overlays);
-    setRunFitFieldTags([
-      { id: "power-weak-tag", label: "11p Power Weak", x: 50, y: shell.losY - 18, tone: "gold" },
-      { id: "power-weak-fit-tag", label: "1 Puller = Spill + Overlap", x: 50, y: shell.losY + 30, tone: "cyan" },
-    ]);
-    setRunFitDraftPoints([]);
-    setRunFitSaveNotice("Applied 11p Power Weak template.");
   };
 
   const addRunFitPathway = () => {
@@ -7341,25 +7513,25 @@ const existingStats =
       },
       box_fit: {
         label: "Box",
-        color: "red",
+        color: "gold",
         path: makeBoxSpillPath(side),
         endCap: "circle",
       },
       spill_fit: {
         label: "Spill",
-        color: "red",
+        color: "gold",
         path: makeBoxSpillPath(side),
         endCap: "circle",
       },
       under_box_fit: {
         label: "Under Box",
-        color: "red",
+        color: "gold",
         path: makeFitOffBoxPath(side),
         endCap: "circle",
       },
       over_spill_fit: {
         label: "Over Spill",
-        color: "red",
+        color: "gold",
         path: makeFitOffSpillPath(side),
         endCap: "circle",
       },
@@ -7482,15 +7654,17 @@ const existingStats =
       losY: nextPreview.losY,
       wingY: nextPreview.wingY,
       frontMode,
+      boardSpot,
     });
     const boardLabel = BLITZ_BASE_BOARD_OPTIONS.find((option) => option.value === baseBoardId)?.label ?? "Formation";
     const spotLabel = BLITZ_BOARD_SPOT_OPTIONS.find((option) => option.value === boardSpot)?.label ?? "MOF";
+    const callLabel = getBlitzBoardCallLabel(nextCallId, frontMode);
     setSelectedBlitzBoardId("working");
-    setBlitzTitle(`${getBlitzCallLabel(nextCallId)} ${frontMode} ${spotLabel} vs ${boardLabel}`);
+    setBlitzTitle(`${callLabel} ${frontMode} ${spotLabel} vs ${boardLabel}`);
     setBlitzRouteOverlays(routeOverlays);
     setBlitzFieldTags(nextPreview.fieldTags);
     setBlitzDraftPoints([]);
-    setBlitzSaveNotice(`Generated ${getBlitzCallLabel(nextCallId)} ${frontMode} ${spotLabel} vs ${boardLabel}. Save it if you want to keep edits.`);
+    setBlitzSaveNotice(`Generated ${callLabel} ${frontMode} ${spotLabel} vs ${boardLabel}. Save it if you want to keep edits.`);
   };
 
   const loadBlitzFrontMode = (nextFrontMode: FrontMode) => {
@@ -7585,6 +7759,7 @@ const existingStats =
       losY: blitzPreview.losY,
       wingY: blitzPreview.wingY,
       frontMode: selectedBlitzFrontMode,
+      boardSpot: selectedBlitzBoardSpot,
     });
     const templateDefenderIds = new Set(overlays.map((overlay) => overlay.pathway?.defenderId).filter(Boolean));
 
@@ -7597,12 +7772,13 @@ const existingStats =
     ]);
     setBlitzDraftPoints([]);
     const spotLabel = BLITZ_BOARD_SPOT_OPTIONS.find((option) => option.value === selectedBlitzBoardSpot)?.label ?? "MOF";
-    setBlitzTitle(`${getBlitzCallLabel(selectedBlitzCallId)} ${selectedBlitzFrontMode} ${spotLabel} vs ${BLITZ_BASE_BOARD_OPTIONS.find((option) => option.value === selectedBlitzBaseBoardId)?.label ?? "Formation"}`);
-    setBlitzSaveNotice(`Applied ${getBlitzCallLabel(selectedBlitzCallId)} template.`);
+    const callLabel = getBlitzBoardCallLabel(selectedBlitzCallId, selectedBlitzFrontMode);
+    setBlitzTitle(`${callLabel} ${selectedBlitzFrontMode} ${spotLabel} vs ${BLITZ_BASE_BOARD_OPTIONS.find((option) => option.value === selectedBlitzBaseBoardId)?.label ?? "Formation"}`);
+    setBlitzSaveNotice(`Applied ${callLabel} template.`);
   };
 
   const buildSavedBlitzBoard = (callId: BlitzCallId, boardOption: typeof BLITZ_BASE_BOARD_OPTIONS[number], index: number): BlitzSavedBoard => {
-    const callLabel = getBlitzCallLabel(callId);
+    const callLabel = getBlitzBoardCallLabel(callId, selectedBlitzFrontMode);
     const spotLabel = BLITZ_BOARD_SPOT_OPTIONS.find((option) => option.value === selectedBlitzBoardSpot)?.label ?? "MOF";
     const preview = buildBlitzBoardShell(boardOption.value, selectedBlitzFrontMode, selectedBlitzBoardSpot);
     const routeOverlays = buildBlitzTemplateOverlays({
@@ -7614,6 +7790,7 @@ const existingStats =
       losY: preview.losY,
       wingY: preview.wingY,
       frontMode: selectedBlitzFrontMode,
+      boardSpot: selectedBlitzBoardSpot,
     });
 
     return {
@@ -7814,7 +7991,6 @@ const existingStats =
     if (!currentUser) return;
     const attemptKey = customAttemptKey ?? `${activeMode}::${formationKey}`;
     if (revealedAttemptKeys.has(attemptKey)) {
-      setScoredAttemptKey(attemptKey);
       setLastScoreSummary((prev) => ({
         ...prev,
         [activeMode]: {
@@ -7825,7 +8001,17 @@ const existingStats =
       }));
       return;
     }
-    if (scoredAttemptKey === attemptKey) return;
+    if (scoredAttemptKeys.has(attemptKey)) {
+      setLastScoreSummary((prev) => ({
+        ...prev,
+        [activeMode]: {
+          awarded: 0,
+          total: currentUser.stats[activeMode].points,
+          alreadyScored: true,
+        },
+      }));
+      return;
+    }
 
     const elapsedMs = Math.max(250, Date.now() - attemptStartedAt);
     const accuracyPoints = Math.round(accuracy * 100);
@@ -7848,7 +8034,11 @@ const existingStats =
         : currentModeStats.bestTimeMs,
     };
 
-    setScoredAttemptKey(attemptKey);
+    setScoredAttemptKeys((prev) => {
+      const next = new Set(prev);
+      next.add(attemptKey);
+      return next;
+    });
     setLastScoreSummary((prev) => ({
       ...prev,
       [activeMode]: {
@@ -8221,6 +8411,24 @@ const existingStats =
                   <div className="mt-1 text-center text-xs text-[#6d6857]">
                     {accountDirectoryEntries.length} created account{accountDirectoryEntries.length === 1 ? "" : "s"}
                   </div>
+                  <div className="mt-3 flex flex-wrap justify-center gap-2">
+                    {([
+                      ["points_desc", "Most Points"],
+                      ["points_asc", "Fewest Points"],
+                      ["time_desc", "Most Time"],
+                      ["time_asc", "Least Time"],
+                      ["name_asc", "Name A-Z"],
+                    ] as const).map(([value, label]) => (
+                      <Button
+                        key={value}
+                        variant={accountDirectorySort === value ? "default" : "outline"}
+                        className="h-8 rounded-lg px-3 text-[11px]"
+                        onClick={() => setAccountDirectorySort(value)}
+                      >
+                        {label}
+                      </Button>
+                    ))}
+                  </div>
                 </div>
                 <div className="grid grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_72px_90px] items-center border-b border-[#b7b09a] bg-[#ddd4bc] px-3 py-2 text-[10px] font-bold uppercase tracking-[0.14em] text-[#5a5646]">
                   <div className="px-2">User</div>
@@ -8229,8 +8437,8 @@ const existingStats =
                   <div className="px-2 text-center">Time</div>
                 </div>
                 <div className="max-h-96 overflow-y-auto">
-                  {accountDirectoryEntries.length ? (
-                    accountDirectoryEntries.map((entry, idx) => (
+                  {sortedAccountDirectoryEntries.length ? (
+                    sortedAccountDirectoryEntries.map((entry, idx) => (
                       <div
                         key={`account-directory-${entry.id}`}
                         className={`grid grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_72px_90px] items-center border-b border-[#d6cfb7] px-3 py-2 text-sm last:border-b-0 ${
@@ -8473,6 +8681,9 @@ const existingStats =
                               {lastScoreSummary.quiz.blockedByReveal ? (
                                 <div className="mt-2 font-semibold text-amber-800">No points awarded because answers were revealed first.</div>
                               ) : null}
+                              {lastScoreSummary.quiz.alreadyScored ? (
+                                <div className="mt-2 font-semibold text-amber-800">No points awarded because this rep was already scored.</div>
+                              ) : null}
                             </div>
                           ) : null}
                           <div className="space-y-2 text-sm">
@@ -8507,6 +8718,142 @@ const existingStats =
                         Build run-fit answer boards from the same formation shells we use in Blitz Mode.
                       </div>
                     </div>
+                    {showRunFitAdminTools ? (
+                      <div className="mb-3 rounded-xl border bg-slate-50 p-3">
+                        <div className="mb-2 grid gap-2 lg:grid-cols-[180px_1fr]">
+                          <div>
+                            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Tool</div>
+                            <Select value={runFitEditorTool} onValueChange={(value: RunFitEditorTool) => setRunFitEditorTool(value)}>
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="select">Select / Edit</SelectItem>
+                                <SelectItem value="line">Polyline</SelectItem>
+                                <SelectItem value="tag">Tag</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          {runFitEditorTool === "line" ? (
+                            <div className="grid gap-2 md:grid-cols-[1.2fr_110px_110px_110px_110px_auto]">
+                              <div>
+                                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Line Label</div>
+                                <Input value={runFitArrowLabel} onChange={(e) => setRunFitArrowLabel(e.target.value)} />
+                              </div>
+                              <div>
+                                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Color</div>
+                                <Select value={runFitArrowColor} onValueChange={(value: RunFitArrowColor) => setRunFitArrowColor(value)}>
+                                  <SelectTrigger>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="gold">Gold</SelectItem>
+                                    <SelectItem value="cyan">Cyan</SelectItem>
+                                    <SelectItem value="sky">Sky</SelectItem>
+                                    <SelectItem value="red">Red</SelectItem>
+                                    <SelectItem value="white">White</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div>
+                                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Weight</div>
+                                <Select value={runFitLineWeight} onValueChange={setRunFitLineWeight}>
+                                  <SelectTrigger>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="thin">Thin</SelectItem>
+                                    <SelectItem value="normal">Normal</SelectItem>
+                                    <SelectItem value="thick">Thick</SelectItem>
+                                    <SelectItem value="heavy">Heavy</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div>
+                                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Style</div>
+                                <Select value={runFitLineStyle} onValueChange={(value: RunFitLineStyle) => setRunFitLineStyle(value)}>
+                                  <SelectTrigger>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="solid">Solid</SelectItem>
+                                    <SelectItem value="dashed">Dashed</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div>
+                                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">End</div>
+                                <Select value={runFitLineEnd} onValueChange={(value: RunFitLineEnd) => setRunFitLineEnd(value)}>
+                                  <SelectTrigger>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="square">Square</SelectItem>
+                                    <SelectItem value="circle">Circle</SelectItem>
+                                    <SelectItem value="arrow">Arrow</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div className="flex items-end gap-2">
+                                <Button className="rounded-xl" onClick={finishRunFitArrow} disabled={runFitDraftPoints.length < 2}>Finish</Button>
+                                <Button variant="outline" className="rounded-xl" onClick={() => setRunFitDraftPoints([])}>Cancel</Button>
+                              </div>
+                            </div>
+                          ) : runFitEditorTool === "tag" ? (
+                            <div className="grid gap-2 md:grid-cols-[1fr_150px]">
+                              <div>
+                                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Tag Label</div>
+                                <Input value={runFitTagLabel} onChange={(e) => setRunFitTagLabel(e.target.value)} />
+                              </div>
+                              <div>
+                                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Tone</div>
+                                <Select value={runFitTagTone} onValueChange={(value: FieldTag["tone"]) => setRunFitTagTone(value)}>
+                                  <SelectTrigger>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="gold">Gold</SelectItem>
+                                    <SelectItem value="cyan">Cyan</SelectItem>
+                                    <SelectItem value="sky">Sky</SelectItem>
+                                    <SelectItem value="default">Default</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="grid gap-2 md:grid-cols-[1fr_auto]">
+                              <div>
+                                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Selected Object</div>
+                                <Input
+                                  value={selectedRunFitOverlay?.label ?? selectedRunFitTag?.label ?? ""}
+                                  placeholder={selectedRunFitOverlay || selectedRunFitTag ? "Label" : "Click a line or tag to edit it"}
+                                  disabled={!selectedRunFitOverlay && !selectedRunFitTag}
+                                  onChange={(e) => {
+                                    if (selectedRunFitOverlay) updateSelectedRunFitOverlay({
+                                      label: e.target.value,
+                                      labelX: e.target.value ? selectedRunFitOverlay.path[selectedRunFitOverlay.path.length - 1]?.x : undefined,
+                                      labelY: e.target.value ? (selectedRunFitOverlay.path[selectedRunFitOverlay.path.length - 1]?.y ?? LOS_Y) - 3 : undefined,
+                                    });
+                                    if (selectedRunFitTag) updateSelectedRunFitTag({ label: e.target.value });
+                                  }}
+                                />
+                              </div>
+                              <div className="flex items-end gap-2">
+                                <Button variant="outline" className="rounded-xl" onClick={duplicateSelectedRunFitObject} disabled={!selectedRunFitOverlay && !selectedRunFitTag}>Duplicate</Button>
+                                <Button variant="outline" className="rounded-xl border-red-300 text-red-700" onClick={deleteSelectedRunFitObject} disabled={!selectedRunFitOverlay && !selectedRunFitTag}>Delete</Button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                        <div className="text-xs text-slate-500">
+                          {runFitEditorTool === "select"
+                            ? "Select a finished line/tag, then edit it here. Empty grass clears selection."
+                            : runFitEditorTool === "line"
+                              ? `Draft points: ${runFitDraftPoints.length}. Click for angles, double-click or Finish to complete.`
+                              : "Click the board to place the tag."}
+                        </div>
+                      </div>
+                    ) : null}
                     <TrainingField
                       offensePlayers={runFitPreview.offensePlayers}
                       defensePlayers={runFitPreview.defensePlayers}
@@ -8517,6 +8864,10 @@ const existingStats =
                       enhancedLandmarks
                       onFieldClick={showRunFitAdminTools ? handleRunFitFieldClick : undefined}
                       onFieldDoubleClick={showRunFitAdminTools ? handleRunFitFieldDoubleClick : undefined}
+                      selectedRouteOverlayId={selectedRunFitOverlayId}
+                      selectedFieldTagId={selectedRunFitTagId}
+                      onRouteOverlayClick={showRunFitAdminTools ? selectRunFitOverlay : undefined}
+                      onFieldTagClick={showRunFitAdminTools ? selectRunFitTag : undefined}
                     />
                   </div>
                 </div>
@@ -8573,21 +8924,24 @@ const existingStats =
                         <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Board Title</div>
                         <Input value={runFitTitle} onChange={(e) => setRunFitTitle(e.target.value)} />
                       </div>
-                      <div className="rounded-xl border bg-slate-50 p-3">
+                      <div className="hidden rounded-xl border bg-slate-50 p-3">
                         <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Tool</div>
                         <Select value={runFitEditorTool} onValueChange={(value: RunFitEditorTool) => setRunFitEditorTool(value)}>
                           <SelectTrigger>
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="arrow">Line</SelectItem>
+                            <SelectItem value="select">Select / Edit</SelectItem>
+                            <SelectItem value="line">Polyline</SelectItem>
                             <SelectItem value="tag">Tag</SelectItem>
                           </SelectContent>
                         </Select>
                         <div className="mt-2 text-xs text-slate-500">
-                          {runFitEditorTool === "arrow"
-                            ? "Click once to start, click for each new angle, and double-click the endpoint to finish."
-                            : "Click anywhere on the field to drop the current fit pill."}
+                          {runFitEditorTool === "select"
+                            ? "Click a finished line or tag to select it. Click empty grass to clear the selection."
+                            : runFitEditorTool === "line"
+                              ? "Click once to start, click for each new angle, and double-click the endpoint to finish."
+                              : "Click anywhere on the field to drop the current fit pill."}
                         </div>
                       </div>
                       <div className="space-y-3 rounded-xl border border-emerald-200 bg-emerald-50/70 p-3">
@@ -8597,9 +8951,6 @@ const existingStats =
                             Stamp common fits for DL/LBs: gap fits plus Box and Spill at the EMOLOS.
                           </div>
                         </div>
-                        <Button variant="outline" className="w-full rounded-xl border-emerald-700 text-emerald-900" onClick={applyRunFitPowerWeakTemplate}>
-                          Apply 11p Power Weak Template
-                        </Button>
                         <div className="grid grid-cols-2 gap-2">
                           <div>
                             <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Defender</div>
@@ -8647,8 +8998,8 @@ const existingStats =
                           <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Pathway Name</div>
                           <Input value={runFitSavedPathwayName} onChange={(e) => setRunFitSavedPathwayName(e.target.value)} />
                         </div>
-                        <Button variant="outline" className="w-full rounded-xl border-red-700 text-red-900" onClick={saveRunFitDraftAsPathway} disabled={runFitDraftPoints.length < 2}>
-                          Save Current Draft as Pathway
+                        <Button variant="outline" className="w-full rounded-xl border-red-700 text-red-900" onClick={saveRunFitDraftAsPathway} disabled={runFitDraftPoints.length < 2 && !selectedRunFitOverlay}>
+                          Save Draft / Selected Line as Pathway
                         </Button>
                         <div>
                           <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Saved Pathway</div>
@@ -8696,7 +9047,7 @@ const existingStats =
                           </Button>
                         </div>
                       </div>
-                      {runFitEditorTool === "arrow" ? (
+                      {false && runFitEditorTool === "line" ? (
                         <div className="rounded-xl border bg-slate-50 p-3 space-y-3">
                           <div>
                             <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Line Label</div>
@@ -8716,6 +9067,34 @@ const existingStats =
                                 <SelectItem value="white">White</SelectItem>
                               </SelectContent>
                             </Select>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Weight</div>
+                              <Select value={runFitLineWeight} onValueChange={setRunFitLineWeight}>
+                                <SelectTrigger>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="thin">Thin</SelectItem>
+                                  <SelectItem value="normal">Normal</SelectItem>
+                                  <SelectItem value="thick">Thick</SelectItem>
+                                  <SelectItem value="heavy">Heavy</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div>
+                              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Style</div>
+                              <Select value={runFitLineStyle} onValueChange={(value: RunFitLineStyle) => setRunFitLineStyle(value)}>
+                                <SelectTrigger>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="solid">Solid</SelectItem>
+                                  <SelectItem value="dashed">Dashed</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
                           </div>
                           <div>
                             <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Line End</div>
@@ -8740,7 +9119,7 @@ const existingStats =
                           </div>
                           <div className="text-xs text-slate-500">Draft points: {runFitDraftPoints.length}</div>
                         </div>
-                      ) : (
+                      ) : runFitEditorTool === "tag" ? (
                         <div className="rounded-xl border bg-slate-50 p-3 space-y-3">
                           <div>
                             <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Tag Label</div>
@@ -8760,6 +9139,132 @@ const existingStats =
                               </SelectContent>
                             </Select>
                           </div>
+                        </div>
+                      ) : (
+                        <div className="space-y-3 rounded-xl border bg-slate-50 p-3">
+                          <div>
+                            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Selected Object</div>
+                            <div className="mt-1 text-sm font-semibold text-slate-800">
+                              {selectedRunFitOverlay ? `Line: ${selectedRunFitOverlay.label || "Unlabeled"}` : selectedRunFitTag ? `Tag: ${selectedRunFitTag.label}` : "Nothing selected"}
+                            </div>
+                          </div>
+                          {selectedRunFitOverlay ? (
+                            <>
+                              <div>
+                                <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Line Label</div>
+                                <Input value={selectedRunFitOverlay.label} onChange={(e) => updateSelectedRunFitOverlay({
+                                  label: e.target.value,
+                                  labelX: e.target.value ? selectedRunFitOverlay.path[selectedRunFitOverlay.path.length - 1]?.x : undefined,
+                                  labelY: e.target.value ? (selectedRunFitOverlay.path[selectedRunFitOverlay.path.length - 1]?.y ?? LOS_Y) - 3 : undefined,
+                                })} />
+                              </div>
+                              <div className="grid grid-cols-2 gap-2">
+                                <div>
+                                  <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Color</div>
+                                  <Select
+                                    value={(Object.entries({
+                                      gold: getRunFitArrowStroke("gold"),
+                                      cyan: getRunFitArrowStroke("cyan"),
+                                      sky: getRunFitArrowStroke("sky"),
+                                      red: getRunFitArrowStroke("red"),
+                                      white: getRunFitArrowStroke("white"),
+                                    }).find(([, stroke]) => stroke === selectedRunFitOverlay.color)?.[0] as RunFitArrowColor | undefined) ?? "gold"}
+                                    onValueChange={(value: RunFitArrowColor) => updateSelectedRunFitOverlay({ color: getRunFitArrowStroke(value) })}
+                                  >
+                                    <SelectTrigger>
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="gold">Gold</SelectItem>
+                                      <SelectItem value="cyan">Cyan</SelectItem>
+                                      <SelectItem value="sky">Sky</SelectItem>
+                                      <SelectItem value="red">Red</SelectItem>
+                                      <SelectItem value="white">White</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                                <div>
+                                  <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">End</div>
+                                  <Select value={selectedRunFitOverlay.endCap ?? "circle"} onValueChange={(value: RunFitLineEnd) => updateSelectedRunFitOverlay({ endCap: value })}>
+                                    <SelectTrigger>
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="square">Square</SelectItem>
+                                      <SelectItem value="circle">Circle</SelectItem>
+                                      <SelectItem value="arrow">Arrow</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                              </div>
+                              <div className="grid grid-cols-2 gap-2">
+                                <Select
+                                  value={
+                                    (selectedRunFitOverlay.strokeWidth ?? 0.7) <= 0.56 ? "thin"
+                                    : (selectedRunFitOverlay.strokeWidth ?? 0.7) >= 1.15 ? "heavy"
+                                    : (selectedRunFitOverlay.strokeWidth ?? 0.7) >= 0.9 ? "thick"
+                                    : "normal"
+                                  }
+                                  onValueChange={(value) => updateSelectedRunFitOverlay({ strokeWidth: getRunFitLineStrokeWidth(value) })}
+                                >
+                                  <SelectTrigger>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="thin">Thin</SelectItem>
+                                    <SelectItem value="normal">Normal</SelectItem>
+                                    <SelectItem value="thick">Thick</SelectItem>
+                                    <SelectItem value="heavy">Heavy</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                                <Select value={selectedRunFitOverlay.dashed ? "dashed" : "solid"} onValueChange={(value: RunFitLineStyle) => updateSelectedRunFitOverlay({ dashed: value === "dashed" })}>
+                                  <SelectTrigger>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="solid">Solid</SelectItem>
+                                    <SelectItem value="dashed">Dashed</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            </>
+                          ) : selectedRunFitTag ? (
+                            <>
+                              <div>
+                                <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Tag Label</div>
+                                <Input value={selectedRunFitTag.label} onChange={(e) => updateSelectedRunFitTag({ label: e.target.value })} />
+                              </div>
+                              <Select value={selectedRunFitTag.tone ?? "default"} onValueChange={(value: FieldTag["tone"]) => updateSelectedRunFitTag({ tone: value })}>
+                                <SelectTrigger>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="gold">Gold</SelectItem>
+                                  <SelectItem value="cyan">Cyan</SelectItem>
+                                  <SelectItem value="sky">Sky</SelectItem>
+                                  <SelectItem value="default">Default</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </>
+                          ) : null}
+                          {(selectedRunFitOverlay || selectedRunFitTag) ? (
+                            <>
+                              <div className="grid grid-cols-3 gap-2">
+                                <Button variant="outline" className="rounded-xl" onClick={() => nudgeSelectedRunFitObject(0, -1)}>Up</Button>
+                                <Button variant="outline" className="rounded-xl" onClick={() => nudgeSelectedRunFitObject(-1, 0)}>Left</Button>
+                                <Button variant="outline" className="rounded-xl" onClick={() => nudgeSelectedRunFitObject(1, 0)}>Right</Button>
+                                <Button variant="outline" className="rounded-xl" onClick={() => nudgeSelectedRunFitObject(0, 1)}>Down</Button>
+                                <Button variant="outline" className="rounded-xl" onClick={duplicateSelectedRunFitObject}>Duplicate</Button>
+                                <Button variant="outline" className="rounded-xl border-red-300 text-red-700" onClick={deleteSelectedRunFitObject}>Delete</Button>
+                              </div>
+                              {selectedRunFitOverlay ? (
+                                <div className="grid grid-cols-2 gap-2">
+                                  <Button variant="outline" className="rounded-xl" onClick={sendSelectedRunFitLineBackward}>Send Back</Button>
+                                  <Button variant="outline" className="rounded-xl" onClick={bringSelectedRunFitLineForward}>Bring Front</Button>
+                                </div>
+                              ) : null}
+                            </>
+                          ) : null}
                         </div>
                       )}
                       <div className="grid grid-cols-2 gap-2">
@@ -9356,6 +9861,9 @@ const existingStats =
                                     <div>
                                       <span className="font-semibold">Pass Concept total:</span> {lastScoreSummary.concept.total}
                                     </div>
+                                    {lastScoreSummary.concept.alreadyScored ? (
+                                      <div className="mt-2 font-semibold text-amber-800">No points awarded because this rep was already scored.</div>
+                                    ) : null}
                                   </div>
                                 ) : null}
                                 <div className="space-y-2 text-sm">
@@ -9380,6 +9888,9 @@ const existingStats =
                                     <div>
                                       <span className="font-semibold">Pass Concept total:</span> {lastScoreSummary.concept.total}
                                     </div>
+                                    {lastScoreSummary.concept.alreadyScored ? (
+                                      <div className="mt-2 font-semibold text-amber-800">No points awarded because this rep was already scored.</div>
+                                    ) : null}
                                   </div>
                                 ) : null}
                                 <div className="space-y-2 text-sm">
@@ -10636,6 +11147,9 @@ const existingStats =
                                 <div>
                                   <span className="font-semibold">Film total:</span> {lastScoreSummary.film.total}
                                 </div>
+                                {lastScoreSummary.film.alreadyScored ? (
+                                  <div className="mt-2 font-semibold text-amber-800">No points awarded because this rep was already scored.</div>
+                                ) : null}
                               </div>
                             ) : null}
                             <div className="space-y-2 text-sm">
@@ -10833,6 +11347,9 @@ const existingStats =
                           {lastScoreSummary.quiz.blockedByReveal ? (
                             <div className="mt-2 font-semibold text-amber-800">No points awarded because answers were revealed first.</div>
                           ) : null}
+                          {lastScoreSummary.quiz.alreadyScored ? (
+                            <div className="mt-2 font-semibold text-amber-800">No points awarded because this rep was already scored.</div>
+                          ) : null}
                         </div>
                       ) : null}
                       <div className="space-y-2 text-sm">
@@ -10874,7 +11391,6 @@ const existingStats =
                         onValueChange={(value: FrontMode) => {
                           setFrontMode(value);
                           setShowAlignmentCheck(false);
-                          setScoredAttemptKey(null);
                           setAttemptStartedAt(Date.now());
                           setLastScoreSummary((prev) => {
                             const { alignment, ...rest } = prev;
@@ -10932,6 +11448,9 @@ const existingStats =
                                 </div>
                                 {lastScoreSummary.alignment.blockedByReveal ? (
                                   <div className="mt-2 font-semibold text-amber-800">No points awarded because answers were revealed first.</div>
+                                ) : null}
+                                {lastScoreSummary.alignment.alreadyScored ? (
+                                  <div className="mt-2 font-semibold text-amber-800">No points awarded because this rep was already scored.</div>
                                 ) : null}
                               </div>
                             ) : null}
@@ -11152,6 +11671,9 @@ const existingStats =
                                 <div>
                                   <span className="font-semibold">Offensive total:</span> {lastScoreSummary.offense_build.total}
                                 </div>
+                                {lastScoreSummary.offense_build.alreadyScored ? (
+                                  <div className="mt-2 font-semibold text-amber-800">No points awarded because this rep was already scored.</div>
+                                ) : null}
                               </div>
                             ) : null}
                             {offenseCheck.isCorrect ? (
