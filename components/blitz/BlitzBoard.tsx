@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { CheckCircle2 } from "lucide-react";
 import {
   BLITZ_BASE_BOARD_OPTIONS,
   BLITZ_BOARD_SPOT_OPTIONS,
@@ -63,6 +64,7 @@ type BlitzQuizAnswerLabel =
   | "Wall Flat Str"
   | "Wall Flat Wk"
   | "Edge Blitz"
+  | "A Gap Blitz"
   | "B Gap Blitz"
   | "C-Read Blitz"
   | "Deep Third Str"
@@ -116,19 +118,38 @@ type BlitzSavedBoard = {
   boardSpot?: BlitzBoardSpot;
 };
 
+type ScoreSummary = {
+  awarded: number;
+  total: number;
+  blockedByReveal?: boolean;
+  alreadyScored?: boolean;
+};
+
 type BlitzBoardProps = {
   isAdmin?: boolean;
   TrainingFieldComponent: React.ComponentType<any>;
   blitzRendererDeps: BlitzRendererDeps;
+  scoreBlitzAttempt?: (accuracy: number, isCorrect: boolean, attemptKey: string) => void;
+  markBlitzAttemptRevealed?: (attemptKey: string) => void;
+  lastBlitzScoreSummary?: ScoreSummary;
+  onBlitzRepAdvanced?: () => void;
 };
 
 const BLITZ_BOARDS_STORAGE_KEY = "formation-recognition-blitz-boards-v1";
 const ADMIN_ONLY_BLITZ_FAMILIES = new Set<BlitzCallFamilyId>(["carr", "allen"]);
 const BLITZ_QUIZ_DL_OPTIONS: BlitzQuizAnswerLabel[] = ["Step", "Gap", "C-Read", "Stick", "COP", "Drop Hook", "Drop C/F"];
-const BLITZ_QUIZ_LB_OPTIONS: BlitzQuizAnswerLabel[] = ["Str Hook", "Wk Hook", "3 Up", "Str C/F", "Wk C/F", "Hole", "Wall Flat Str", "Wall Flat Wk", "Str Eyes", "Wk Eyes", "Edge Blitz", "B Gap Blitz", "C-Read Blitz"];
+const BLITZ_QUIZ_LB_OPTIONS: BlitzQuizAnswerLabel[] = ["Str Hook", "Wk Hook", "3 Up", "Str C/F", "Wk C/F", "Hole", "Wall Flat Str", "Wall Flat Wk", "Str Eyes", "Wk Eyes", "Edge Blitz", "A Gap Blitz", "B Gap Blitz", "C-Read Blitz"];
 const BLITZ_QUIZ_DB_OPTIONS: BlitzQuizAnswerLabel[] = ["Str C/F", "Wk C/F", "MCD", "Wall Flat Str", "Wall Flat Wk", "Deep Third Str", "Deep Third Wk", "Match 1/3", "Deep 1/3", "MOF", "Deep Half Str", "Deep Half Wk", "Tampa Pole", "3 Up", "Eyes", "Str Eyes", "Wk Eyes", "Eyes 1/3", "Eyes MOF", "Edge Blitz", "B Gap Blitz"];
 
-export function BlitzBoard({ isAdmin = false, TrainingFieldComponent, blitzRendererDeps }: BlitzBoardProps) {
+export function BlitzBoard({
+  isAdmin = false,
+  TrainingFieldComponent,
+  blitzRendererDeps,
+  scoreBlitzAttempt,
+  markBlitzAttemptRevealed,
+  lastBlitzScoreSummary,
+  onBlitzRepAdvanced,
+}: BlitzBoardProps) {
   const [blitzViewMode, setBlitzViewMode] = useState<BlitzViewMode>("study");
   const [blitzQuizSubmode] = useState<BlitzQuizSubmode>("create");
   const [showBlitzAdminTools, setShowBlitzAdminTools] = useState(false);
@@ -348,6 +369,10 @@ export function BlitzBoard({ isAdmin = false, TrainingFieldComponent, blitzRende
     return BLITZ_QUIZ_DB_OPTIONS;
   };
 
+  const isBlitzQuizAnswerValidForDefender = (defenderId: string, answer: BlitzQuizAnswerLabel | "") => (
+    Boolean(answer) && getBlitzQuizOptionsForDefender(defenderId).includes(answer as BlitzQuizAnswerLabel)
+  );
+
   const getSidePathway = (strongPathway: BlitzPathwayId, weakPathway: BlitzPathwayId, side: "strong" | "weak") => (
     side === "strong" ? strongPathway : weakPathway
   );
@@ -358,8 +383,8 @@ export function BlitzBoard({ isAdmin = false, TrainingFieldComponent, blitzRende
     const boundarySide = getBlitzBoundarySide(blitzPreview.offensePlayers);
     const fieldSide = boundarySide ? boundarySide === "left" ? "right" : "left" : null;
     const strongCoverageSide = fieldSide ?? blitzPreview.passStrength;
-    const awayFromCenter = defenderSide === "left" ? "one_gap_slant_right" : "one_gap_slant_left";
-    const towardSideline = defenderSide === "left" ? "one_gap_slant_left" : "one_gap_slant_right";
+    const towardCenter = defenderSide === "left" ? "one_gap_slant_right" : "one_gap_slant_left";
+    const awayFromCenter = defenderSide === "left" ? "one_gap_slant_left" : "one_gap_slant_right";
     const strongDeepThird = blitzPreview.passStrength === "left" ? "deep_third_left" : "deep_third_right";
     const weakDeepThird = blitzPreview.passStrength === "left" ? "deep_third_right" : "deep_third_left";
     const strongDeepHalf = blitzPreview.passStrength === "left" ? "deep_half_left" : "deep_half_right";
@@ -367,11 +392,30 @@ export function BlitzBoard({ isAdmin = false, TrainingFieldComponent, blitzRende
     const defenderDeepThird = defenderSide === "left" ? "deep_third_left" : "deep_third_right";
     const defenderMatchThird = defenderSide === "left" ? "match_third_left" : "match_third_right";
     const defenderDeepAreaThird = defenderSide === "left" ? "deep_area_third_left" : "deep_area_third_right";
+    const edgeBlitzPathway = defender.id === "W" || defender.id === "BS" ? "weak_edge_pressure" : "edge_pressure";
+    const dlMovementMapping = (): Partial<Record<BlitzQuizAnswerLabel, BlitzPathwayId>> => {
+      if (defender.id === "N") {
+        return {
+          Step: awayFromCenter,
+          "C-Read": towardCenter,
+        };
+      }
+      if (defender.id === "T") {
+        return {
+          Step: towardCenter,
+          Gap: awayFromCenter,
+        };
+      }
+      if (defender.id === "SDE" || defender.id === "WDE") {
+        return {
+          Stick: towardCenter,
+          COP: "cop_rush",
+        };
+      }
+      return {};
+    };
     const mapping: Partial<Record<BlitzQuizAnswerLabel, BlitzPathwayId>> = {
-      Step: awayFromCenter,
-      Gap: towardSideline,
-      "C-Read": "b_gap_blitz",
-      Stick: awayFromCenter,
+      ...dlMovementMapping(),
       COP: "cop_rush",
       "Drop Hook": "drop_hook",
       "Drop C/F": "drop_curl_flat",
@@ -384,7 +428,8 @@ export function BlitzBoard({ isAdmin = false, TrainingFieldComponent, blitzRende
       Hole: "hole",
       "Wall Flat Str": "wall_flat",
       "Wall Flat Wk": "weak_wall_flat",
-      "Edge Blitz": "edge_pressure",
+      "Edge Blitz": edgeBlitzPathway,
+      "A Gap Blitz": "a_gap_blitz",
       "B Gap Blitz": "b_gap_blitz",
       "C-Read Blitz": "c_read_blitz",
       "Deep Third Str": getSidePathway(strongDeepThird, weakDeepThird, "strong"),
@@ -430,6 +475,7 @@ export function BlitzBoard({ isAdmin = false, TrainingFieldComponent, blitzRende
     if (meta.pathwayId === "wall_flat") return "Wall Flat Str";
     if (meta.pathwayId === "weak_wall_flat") return "Wall Flat Wk";
     if (meta.pathwayId === "edge_pressure" || meta.pathwayId === "strong_edge_pressure" || meta.pathwayId === "weak_edge_pressure") return "Edge Blitz";
+    if (meta.pathwayId === "a_gap_blitz" || meta.pathwayId === "weak_a_gap_blitz") return "A Gap Blitz";
     if (meta.pathwayId === "b_gap_blitz" || meta.pathwayId === "boundary_b_gap_blitz" || meta.pathwayId === "field_b_gap_blitz") return "B Gap Blitz";
     if (meta.pathwayId === "c_read_blitz") return "C-Read Blitz";
     if (meta.pathwayId === "mof") return "MOF";
@@ -464,7 +510,8 @@ export function BlitzBoard({ isAdmin = false, TrainingFieldComponent, blitzRende
 
   const blitzQuizPreviewOverlays = useMemo(() => (
     Object.entries(blitzQuizAnswers).flatMap(([defenderId, answer]) => {
-      if (!answer) return [];
+      if (!isBlitzQuizAnswerValidForDefender(defenderId, answer)) return [];
+      const validAnswer = answer as BlitzQuizAnswerLabel;
       const defender = blitzPreview.defensePlayers.find((player) => player.id === defenderId);
       if (!defender) return [];
       return buildBlitzPathwayOverlay({
@@ -472,13 +519,13 @@ export function BlitzBoard({ isAdmin = false, TrainingFieldComponent, blitzRende
         defender,
         offensePlayers: blitzPreview.offensePlayers,
         defensePlayers: blitzPreview.defensePlayers,
-        pathwayId: getBlitzQuizPathwayForAnswer(defender, answer),
+        pathwayId: getBlitzQuizPathwayForAnswer(defender, validAnswer),
         runStrength: blitzPreview.runStrength,
         passStrength: blitzPreview.passStrength,
         losY: blitzPreview.losY,
         wingY: blitzPreview.wingY,
         frontMode: selectedBlitzFrontMode,
-        layer: ["SDE", "WDE", "N", "T"].includes(defenderId) && ["Step", "Gap", "C-Read", "Stick", "COP"].includes(answer) ? "dl" : ["Edge Blitz", "B Gap Blitz", "C-Read Blitz"].includes(answer) ? "pressure" : "coverage",
+        layer: ["SDE", "WDE", "N", "T"].includes(defenderId) && ["Step", "Gap", "C-Read", "Stick", "COP"].includes(validAnswer) ? "dl" : ["Edge Blitz", "A Gap Blitz", "B Gap Blitz", "C-Read Blitz"].includes(validAnswer) ? "pressure" : "coverage",
       }) as RouteOverlay;
     })
   ), [blitzPreview, blitzQuizAnswers, selectedBlitzFrontMode]);
@@ -503,13 +550,17 @@ export function BlitzBoard({ isAdmin = false, TrainingFieldComponent, blitzRende
   const blitzQuizCorrectCount = useMemo(() => (
     blitzQuizDefenderIds.filter((id) => blitzQuizAnswers[id] && blitzQuizAnswers[id] === blitzQuizAnswerKey[id]).length
   ), [blitzQuizAnswerKey, blitzQuizAnswers, blitzQuizDefenderIds]);
+  const blitzQuizIsCorrect = blitzQuizDefenderIds.length > 0 && blitzQuizCorrectCount === blitzQuizDefenderIds.length;
 
   const blitzQuizAssignedCount = useMemo(() => (
     blitzQuizDefenderIds.filter((id) => Boolean(blitzQuizAnswers[id])).length
   ), [blitzQuizAnswers, blitzQuizDefenderIds]);
   const allBlitzQuizAssigned = blitzQuizDefenderIds.length > 0 && blitzQuizAssignedCount === blitzQuizDefenderIds.length;
   const selectedBlitzQuizDefender = blitzPreview.defensePlayers.find((player) => player.id === selectedBlitzQuizDefenderId) ?? blitzPreview.defensePlayers[0];
-  const selectedBlitzQuizAnswer = selectedBlitzQuizDefender ? blitzQuizAnswers[selectedBlitzQuizDefender.id] || "unassigned" : "unassigned";
+  const selectedBlitzQuizAnswer =
+    selectedBlitzQuizDefender && isBlitzQuizAnswerValidForDefender(selectedBlitzQuizDefender.id, blitzQuizAnswers[selectedBlitzQuizDefender.id] || "")
+      ? blitzQuizAnswers[selectedBlitzQuizDefender.id]
+      : "unassigned";
   const incorrectBlitzQuizDefenderIds = useMemo(() => (
     blitzQuizChecked
       ? blitzQuizDefenderIds.filter((id) => blitzQuizAnswers[id] !== blitzQuizAnswerKey[id])
@@ -522,7 +573,28 @@ export function BlitzBoard({ isAdmin = false, TrainingFieldComponent, blitzRende
     setSelectedBlitzQuizDefenderId(nextSelectedId);
   };
 
+  const getBlitzQuizAttemptKey = () => (
+    `blitz::${selectedBlitzFrontMode}::${selectedBlitzBoardSpot}::${selectedBlitzCallId}::${selectedBlitzBaseBoardId}`
+  );
+
+  const checkBlitzQuizAnswers = () => {
+    if (!allBlitzQuizAssigned) return;
+    setBlitzQuizChecked(true);
+    scoreBlitzAttempt?.(
+      blitzQuizCorrectCount / Math.max(1, blitzQuizDefenderIds.length),
+      blitzQuizIsCorrect,
+      getBlitzQuizAttemptKey(),
+    );
+  };
+
+  const revealBlitzQuizAnswers = () => {
+    markBlitzAttemptRevealed?.(getBlitzQuizAttemptKey());
+    setBlitzQuizAnswers(blitzQuizAnswerKey);
+    setBlitzQuizChecked(true);
+  };
+
   const randomizeBlitzQuizRep = () => {
+    onBlitzRepAdvanced?.();
     const firstDefenderId = blitzPreview.defensePlayers[0]?.id ?? "M";
     resetBlitzQuiz(firstDefenderId);
     randomizePublicBlitzRep();
@@ -543,6 +615,7 @@ export function BlitzBoard({ isAdmin = false, TrainingFieldComponent, blitzRende
   };
 
   const assignBlitzQuizAnswer = (defenderId: string, answer: BlitzQuizAnswerLabel) => {
+    if (!isBlitzQuizAnswerValidForDefender(defenderId, answer)) return;
     setBlitzQuizAnswers((prev) => ({ ...prev, [defenderId]: answer }));
     setBlitzQuizChecked(false);
   };
@@ -945,19 +1018,16 @@ export function BlitzBoard({ isAdmin = false, TrainingFieldComponent, blitzRende
               <Button
                 className="rounded-xl"
                 disabled={!allBlitzQuizAssigned}
-                onClick={() => setBlitzQuizChecked(true)}
+                onClick={checkBlitzQuizAnswers}
               >
                 Check
               </Button>
               <Button
                 variant="outline"
                 className="rounded-xl"
-                onClick={() => {
-                  setBlitzQuizAnswers(blitzQuizAnswerKey);
-                  setBlitzQuizChecked(true);
-                }}
+                onClick={blitzQuizChecked ? () => setBlitzQuizChecked(false) : revealBlitzQuizAnswers}
               >
-                Show Answers
+                {blitzQuizChecked ? "Hide Answers" : "Show Answers"}
               </Button>
               <Button variant="outline" className="col-span-2 rounded-xl" onClick={randomizeBlitzQuizRep}>
                 Random Rep
@@ -965,12 +1035,31 @@ export function BlitzBoard({ isAdmin = false, TrainingFieldComponent, blitzRende
             </div>
             <div className="rounded-xl border border-dashed bg-slate-50 p-3 text-sm leading-6 text-slate-600">
               {blitzQuizChecked ? (
-                <>
+                <div className="space-y-3">
                   <div className="font-bold text-slate-900">
                     Score: {blitzQuizCorrectCount}/{blitzQuizDefenderIds.length}
                   </div>
-                  <div>Wrong answers now show the correct pathway on the board.</div>
-                </>
+                  <div>Wrong defenders are highlighted in red. Correct answer pathways are shown on the board.</div>
+                  {lastBlitzScoreSummary ? (
+                    <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
+                      <span className="font-semibold">Points earned:</span> {lastBlitzScoreSummary.awarded}
+                      <div>
+                        <span className="font-semibold">Blitz total:</span> {lastBlitzScoreSummary.total}
+                      </div>
+                      {lastBlitzScoreSummary.blockedByReveal ? (
+                        <div className="mt-2 font-semibold text-amber-800">No points awarded because answers were revealed first.</div>
+                      ) : null}
+                      {lastBlitzScoreSummary.alreadyScored ? (
+                        <div className="mt-2 font-semibold text-amber-800">No points awarded because this rep was already scored.</div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {blitzQuizIsCorrect ? (
+                    <div className="flex items-center gap-2 rounded-xl border border-emerald-300 bg-emerald-100 p-3 text-sm font-semibold text-emerald-700">
+                      <CheckCircle2 className="h-5 w-5" /> Correct Blitz
+                    </div>
+                  ) : null}
+                </div>
               ) : (
                 <div>
                   Assigned {blitzQuizAssignedCount}/{blitzQuizDefenderIds.length}. Click defender circles or use the defender menu.

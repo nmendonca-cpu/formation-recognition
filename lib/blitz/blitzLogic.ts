@@ -451,7 +451,7 @@ export function getBlitzCoverageLabel(pathwayId: BlitzPathwayId) {
     deep_area_third_left: "Deep 1/3",
     deep_area_third_right: "Deep 1/3",
     deep_third_left: "1/3",
-    deep_third_middle: "1/3",
+    deep_third_middle: "Eyes MOF",
     deep_third_right: "1/3",
   };
   return labels[pathwayId] ?? "";
@@ -752,7 +752,7 @@ export function buildBlitzPathwayOverlay({
   } else if (pathwayId === "d_gap_blitz") {
     path = makePressurePath(getBlitzEdgePressureTargetX(offensePlayers, side, losY, wingY));
   } else if (pathwayId === "edge_pressure" || pathwayId === "strong_edge_pressure" || pathwayId === "weak_edge_pressure") {
-    const edgeSide = pathwayId === "strong_edge_pressure" ? passStrength : pathwayId === "weak_edge_pressure" ? passAway : side;
+    const edgeSide = pathwayId === "strong_edge_pressure" ? strongCoverageSide : pathwayId === "weak_edge_pressure" ? weakCoverageSide : side;
     path = makeEdgePressurePath(getBlitzEdgePressureTargetX(offensePlayers, edgeSide, losY, wingY), edgeSide);
   } else if (pathwayId === "one_gap_slant_left" || pathwayId === "one_gap_slant_right") {
     path = [
@@ -961,7 +961,7 @@ export function getBlitzTemplateAssignments({
       }
     };
 
-    add("FS", frontMode === "4-4" ? "mof" : "eyes", "coverage");
+    add("FS", frontMode === "4-4" ? "deep_third_middle" : "eyes", "coverage");
     addFirstAvailable(["Ni", "M", "W", "BS"], "strong_eyes");
     addFirstAvailable(["BS", "W", "M", "Ni"], frontMode === "4-4" ? "weak_eyes" : "mof");
     addCornerThirds();
