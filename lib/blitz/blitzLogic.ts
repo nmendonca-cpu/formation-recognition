@@ -57,6 +57,8 @@ export type BlitzPathwayId =
   | "weak_curl_flat"
   | "wall_flat"
   | "weak_wall_flat"
+  | "mcd"
+  | "weak_mcd"
   | "strong_hook"
   | "weak_hook"
   | "hole"
@@ -74,6 +76,10 @@ export type BlitzPathwayId =
   | "mof"
   | "deep_half_left"
   | "deep_half_right"
+  | "match_third_left"
+  | "match_third_right"
+  | "deep_area_third_left"
+  | "deep_area_third_right"
   | "deep_third_left"
   | "deep_third_middle"
   | "deep_third_right";
@@ -350,6 +356,8 @@ export const BLITZ_PATHWAY_OPTIONS: { value: BlitzPathwayId; label: string }[] =
   { value: "weak_curl_flat", label: "Weak Curl/Flat" },
   { value: "wall_flat", label: "Wall Flat" },
   { value: "weak_wall_flat", label: "Weak Wall Flat" },
+  { value: "mcd", label: "MCD" },
+  { value: "weak_mcd", label: "Weak MCD" },
   { value: "strong_hook", label: "Strong Hook" },
   { value: "weak_hook", label: "Weak Hook" },
   { value: "hole", label: "Hole" },
@@ -367,6 +375,10 @@ export const BLITZ_PATHWAY_OPTIONS: { value: BlitzPathwayId; label: string }[] =
   { value: "mof", label: "MOF" },
   { value: "deep_half_left", label: "1/2 Left" },
   { value: "deep_half_right", label: "1/2 Right" },
+  { value: "match_third_left", label: "Match 1/3 Left" },
+  { value: "match_third_right", label: "Match 1/3 Right" },
+  { value: "deep_area_third_left", label: "Deep 1/3 Left" },
+  { value: "deep_area_third_right", label: "Deep 1/3 Right" },
   { value: "deep_third_left", label: "1/3 Left" },
   { value: "deep_third_middle", label: "1/3 Middle" },
   { value: "deep_third_right", label: "1/3 Right" },
@@ -395,11 +407,11 @@ export function getBlitzPathwayLabel(pathwayId: BlitzPathwayId) {
 }
 
 export function isCoverageBlitzPathway(pathwayId: BlitzPathwayId) {
-  return ["curl_flat", "weak_curl_flat", "wall_flat", "weak_wall_flat", "strong_hook", "weak_hook", "hole", "eyes", "strong_eyes", "weak_eyes", "vert_hook", "cb_flat", "field_flat", "weak_flat", "tampa_pole", "quarter", "drop_hook", "drop_curl_flat", "mof", "deep_half_left", "deep_half_right", "deep_third_left", "deep_third_middle", "deep_third_right"].includes(pathwayId);
+  return ["curl_flat", "weak_curl_flat", "wall_flat", "weak_wall_flat", "mcd", "weak_mcd", "strong_hook", "weak_hook", "hole", "eyes", "strong_eyes", "weak_eyes", "vert_hook", "cb_flat", "field_flat", "weak_flat", "tampa_pole", "quarter", "drop_hook", "drop_curl_flat", "mof", "deep_half_left", "deep_half_right", "match_third_left", "match_third_right", "deep_area_third_left", "deep_area_third_right", "deep_third_left", "deep_third_middle", "deep_third_right"].includes(pathwayId);
 }
 
 export function isDeepCoverageBlitzPathway(pathwayId: BlitzPathwayId) {
-  return ["mof", "tampa_pole", "deep_half_left", "deep_half_right", "deep_third_left", "deep_third_middle", "deep_third_right", "quarter"].includes(pathwayId);
+  return ["mof", "tampa_pole", "deep_half_left", "deep_half_right", "match_third_left", "match_third_right", "deep_area_third_left", "deep_area_third_right", "deep_third_left", "deep_third_middle", "deep_third_right", "quarter"].includes(pathwayId);
 }
 
 export function getBlitzPathwayStroke(pathwayId: BlitzPathwayId, layer?: BlitzPathwayLayer) {
@@ -415,6 +427,8 @@ export function getBlitzCoverageLabel(pathwayId: BlitzPathwayId) {
     weak_curl_flat: "C/F",
     wall_flat: "Wall Flat",
     weak_wall_flat: "Wall Flat",
+    mcd: "MCD",
+    weak_mcd: "MCD",
     strong_hook: "Str Hk",
     weak_hook: "Wk Hk",
     hole: "Hole",
@@ -432,6 +446,10 @@ export function getBlitzCoverageLabel(pathwayId: BlitzPathwayId) {
     mof: "MOF",
     deep_half_left: "1/2",
     deep_half_right: "1/2",
+    match_third_left: "Match 1/3",
+    match_third_right: "Match 1/3",
+    deep_area_third_left: "Deep 1/3",
+    deep_area_third_right: "Deep 1/3",
     deep_third_left: "1/3",
     deep_third_middle: "1/3",
     deep_third_right: "1/3",
@@ -660,6 +678,10 @@ export function buildBlitzPathwayOverlay({
   const originX = getBlitzOriginX(offensePlayers);
   const side: Side = defender.x < originX ? "left" : "right";
   const passAway: Side = passStrength === "left" ? "right" : "left";
+  const boundarySide = getBlitzBoundarySide(offensePlayers);
+  const fieldSide: Side | null = boundarySide ? boundarySide === "left" ? "right" : "left" : null;
+  const strongCoverageSide: Side = fieldSide ?? passStrength;
+  const weakCoverageSide: Side = boundarySide ?? passAway;
   const runWeak: Side = (runStrength ?? passStrength) === "left" ? "right" : "left";
   const stroke = getBlitzPathwayStroke(pathwayId, layer);
   const slantDirection = pathwayId.endsWith("left") ? -1 : pathwayId.endsWith("right") ? 1 : side === "left" ? -1 : 1;
@@ -749,18 +771,18 @@ export function buildBlitzPathwayOverlay({
       { x: clamp(defender.x + awayFromCenter * 3, 3, 97), y: losY - 5 },
       { x: clamp(defender.x + awayFromCenter * 6, 3, 97), y: losY - 12 },
     ];
-  } else if (pathwayId === "curl_flat" || pathwayId === "weak_curl_flat") {
-    const curlFlatSide = pathwayId === "weak_curl_flat" ? passAway : side;
+  } else if (pathwayId === "curl_flat" || pathwayId === "weak_curl_flat" || pathwayId === "mcd" || pathwayId === "weak_mcd") {
+    const curlFlatSide = pathwayId === "weak_curl_flat" || pathwayId === "weak_mcd" ? weakCoverageSide : strongCoverageSide;
     const targetX = getBlitzCurlFlatTargetX(offensePlayers, curlFlatSide, passStrength);
     path = makeCoveragePath(targetX, isFourThreeSafety ? safetyDownhillY : defender.y + 15);
   } else if (pathwayId === "wall_flat" || pathwayId === "weak_wall_flat") {
-    const wallFlatSide = pathwayId === "weak_wall_flat" ? passAway : passStrength;
+    const wallFlatSide = pathwayId === "weak_wall_flat" ? weakCoverageSide : strongCoverageSide;
     path = makeCoveragePath(
       getBlitzCoverageHashX(offensePlayers, wallFlatSide),
       isFourThreeSafety ? safetyDownhillY : getBlitzWallFlatDepthY(defender, offensePlayers, defensePlayers, wallFlatSide),
     );
   } else if (pathwayId === "strong_hook" || pathwayId === "weak_hook") {
-    const hookSide = pathwayId === "strong_hook" ? passStrength : passAway;
+    const hookSide = pathwayId === "strong_hook" ? strongCoverageSide : weakCoverageSide;
     const hasThreeReceiverPassStrength = getBlitzOrderedEligibles(offensePlayers, passStrength).length >= 3;
     const isCoverTwoDeHook = layer === "cover2" && ["SDE", "WDE"].includes(defender.id);
     const targetX = isCoverTwoDeHook
@@ -774,7 +796,7 @@ export function buildBlitzPathwayOverlay({
   } else if (pathwayId === "hole") {
     path = makeCoveragePath(originX, isFourThreeSafety ? safetyDownhillY : clamp(defender.y + 18, 3, 94));
   } else if (pathwayId === "eyes" || pathwayId === "strong_eyes" || pathwayId === "weak_eyes") {
-    const eyesSide = pathwayId === "strong_eyes" ? passStrength : pathwayId === "weak_eyes" ? passAway : side;
+    const eyesSide = pathwayId === "strong_eyes" ? strongCoverageSide : pathwayId === "weak_eyes" ? weakCoverageSide : side;
     const targetX = getBlitzEyesTargetX(offensePlayers, eyesSide, passStrength);
     path = makeCoveragePath(targetX, isFourThreeSafety ? safetyDownhillY : defender.y + 14);
   } else if (pathwayId === "vert_hook") {
@@ -821,10 +843,12 @@ export function buildBlitzPathwayOverlay({
     path = makeCoveragePath(getBlitzRelativeX(offensePlayers, 30), 88);
   } else if (pathwayId === "deep_half_right") {
     path = makeCoveragePath(getBlitzRelativeX(offensePlayers, 70), 88);
-  } else if (pathwayId === "deep_third_left") {
+  } else if (pathwayId === "match_third_left" || pathwayId === "deep_area_third_left" || pathwayId === "deep_third_left") {
     path = makeCoveragePath(getBlitzRelativeX(offensePlayers, 20), 88);
   } else if (pathwayId === "deep_third_middle") {
     path = makeCoveragePath(originX, 88);
+  } else if (pathwayId === "match_third_right" || pathwayId === "deep_area_third_right" || pathwayId === "deep_third_right") {
+    path = makeCoveragePath(getBlitzRelativeX(offensePlayers, 80), 88);
   } else {
     const fallbackX = getBlitzRelativeX(offensePlayers, 80);
     path = [
@@ -977,6 +1001,11 @@ export function getBlitzTemplateAssignments({
     : Math.abs(originX - getBlitzHash("left")) < 1.5
       ? "left"
       : null;
+  const fieldSide: Side | null = boundarySide ? boundarySide === "left" ? "right" : "left" : null;
+  const strongCoverageSide: Side = fieldSide ?? passStrength;
+  const weakCoverageSide: Side = boundarySide ?? passAway;
+  const strongCfPathwayForSide = (side: Side): BlitzPathwayId => side === strongCoverageSide ? "curl_flat" : "weak_curl_flat";
+  const strongHookPathwayForSide = (side: Side): BlitzPathwayId => side === strongCoverageSide ? "strong_hook" : "weak_hook";
   const getDropperPathway = (dropperId: string, pressureSide: Side): BlitzPathwayId => {
     const dropperSide = pressureSide === "left" ? "right" : "left";
     if (boundarySide && defenderSide(dropperId) === boundarySide) return "drop_curl_flat";
@@ -1338,8 +1367,8 @@ export function getBlitzTemplateAssignments({
     const deOwnedZone = (deDrop: typeof assignments[number]): BlitzPathwayId => {
       const dropSide = defenderSide(deDrop.defenderId);
       const normalizedDrop = getDeDropPathway(deDrop);
-      if (normalizedDrop === "drop_curl_flat") return dropSide === passStrength ? "curl_flat" : "weak_curl_flat";
-      return dropSide === passStrength ? "strong_hook" : "weak_hook";
+      if (normalizedDrop === "drop_curl_flat") return strongCfPathwayForSide(dropSide);
+      return strongHookPathwayForSide(dropSide);
     };
     const bumpInside = (pathwayId: BlitzPathwayId): BlitzPathwayId => {
       if (pathwayId === "curl_flat") return "strong_hook";
@@ -1451,7 +1480,7 @@ export function getBlitzTemplateAssignments({
       nextAssignments.push({ defenderId, pathwayId, layer: "coverage" });
     };
     const eyesForSide = (defenderId: string): BlitzPathwayId => (
-      pressureAlignmentSide(defenderId) === passStrength ? "strong_eyes" : "weak_eyes"
+      pressureAlignmentSide(defenderId) === strongCoverageSide ? "strong_eyes" : "weak_eyes"
     );
     const deepThirdForSide = (defenderId: string): BlitzPathwayId => (
       defenderSide(defenderId) === "left" ? "deep_third_left" : "deep_third_right"
@@ -1506,6 +1535,80 @@ export function getBlitzTemplateAssignments({
       return assignment;
     });
   };
+  const resolveMatchCoverage = (inputAssignments: typeof assignments) => {
+    if (inputAssignments.some((assignment) => assignment.layer === "cover2")) return inputAssignments;
+    if (getBlitzCallType(callId) === "location_name") return inputAssignments;
+
+    const matchEligibleCfDefenders = new Set(["Ni", "BS", "FS"]);
+    const sideThird = (side: Side, isMatch: boolean): BlitzPathwayId => (
+      side === "left"
+        ? isMatch ? "match_third_left" : "deep_area_third_left"
+        : isMatch ? "match_third_right" : "deep_area_third_right"
+    );
+    const sideCf = (side: Side): BlitzPathwayId => side === strongCoverageSide ? "mcd" : "weak_mcd";
+    const normalCf = (side: Side): BlitzPathwayId => strongCfPathwayForSide(side);
+    const getCfSide = (assignment: typeof assignments[number]): Side | null => {
+      if (assignment.pathwayId === "curl_flat" || assignment.pathwayId === "mcd" || assignment.pathwayId === "wall_flat") return strongCoverageSide;
+      if (assignment.pathwayId === "weak_curl_flat" || assignment.pathwayId === "weak_mcd" || assignment.pathwayId === "weak_wall_flat") return weakCoverageSide;
+      if (assignment.pathwayId === "drop_curl_flat") return defenderSide(assignment.defenderId);
+      return null;
+    };
+
+    let nextAssignments = inputAssignments;
+    (["left", "right"] as Side[]).forEach((side) => {
+      const cfAssignment = nextAssignments.find((assignment) => (
+        assignment.layer === "coverage"
+        && getCfSide(assignment) === side
+      ));
+      if (!cfAssignment) return;
+
+      const canMatch = matchEligibleCfDefenders.has(cfAssignment.defenderId);
+      nextAssignments = nextAssignments.map((assignment) => {
+        if (assignment === cfAssignment && ["curl_flat", "weak_curl_flat", "mcd", "weak_mcd", "wall_flat", "weak_wall_flat"].includes(assignment.pathwayId)) {
+          return { ...assignment, pathwayId: canMatch ? sideCf(side) : normalCf(side) };
+        }
+        if (
+          ["FC", "BC"].includes(assignment.defenderId)
+          && defenderSide(assignment.defenderId) === side
+          && ["deep_third_left", "deep_third_right", "match_third_left", "match_third_right", "deep_area_third_left", "deep_area_third_right"].includes(assignment.pathwayId)
+        ) {
+          return { ...assignment, pathwayId: sideThird(side, canMatch) };
+        }
+        return assignment;
+      });
+    });
+
+    return nextAssignments;
+  };
+  const resolveHashBoardCoverageSides = (inputAssignments: typeof assignments) => {
+    if (!boundarySide) return inputAssignments;
+
+    const boundaryCoverageDefenders = new Set(["BS", "W"]);
+    const fieldCoverageDefenders = new Set(["Ni", "M", "FS"]);
+    const toBoundaryPathway = (pathwayId: BlitzPathwayId): BlitzPathwayId => {
+      if (pathwayId === "curl_flat" || pathwayId === "weak_curl_flat") return "weak_curl_flat";
+      if (pathwayId === "mcd" || pathwayId === "weak_mcd") return "weak_mcd";
+      if (pathwayId === "wall_flat" || pathwayId === "weak_wall_flat") return "weak_wall_flat";
+      return pathwayId;
+    };
+    const toFieldPathway = (pathwayId: BlitzPathwayId): BlitzPathwayId => {
+      if (pathwayId === "curl_flat" || pathwayId === "weak_curl_flat") return "curl_flat";
+      if (pathwayId === "mcd" || pathwayId === "weak_mcd") return "mcd";
+      if (pathwayId === "wall_flat" || pathwayId === "weak_wall_flat") return "wall_flat";
+      return pathwayId;
+    };
+
+    return inputAssignments.map((assignment) => {
+      if (assignment.layer !== "coverage") return assignment;
+      if (boundaryCoverageDefenders.has(assignment.defenderId)) {
+        return { ...assignment, pathwayId: toBoundaryPathway(assignment.pathwayId) };
+      }
+      if (fieldCoverageDefenders.has(assignment.defenderId)) {
+        return { ...assignment, pathwayId: toFieldPathway(assignment.pathwayId) };
+      }
+      return assignment;
+    });
+  };
 
   if (callId === "newton" && hasDetachedNumberThreeThreeByOne) runFieldsAutoCheck();
   else if (callId === "newton") runQbNamePressure("Ni", "edge_pressure");
@@ -1535,7 +1638,7 @@ export function getBlitzTemplateAssignments({
   if (callId === "bucs") runTeamNamePressureWithCop("M", "field_b_gap_blitz", getFieldOrPassStrengthSide());
   if (callId === "tampa_bay") runCityNamePressureWithCop("M", "field_b_gap_blitz", "W", "weak_a_gap_blitz", getFieldOrPassStrengthSide());
 
-  return resolveFourThreeWallFlatCoverage(resolveFourThreeLocationEyesCoverage(resolveFourThreeDeDropZoneConflicts()));
+  return resolveMatchCoverage(resolveHashBoardCoverageSides(resolveFourThreeWallFlatCoverage(resolveFourThreeLocationEyesCoverage(resolveFourThreeDeDropZoneConflicts()))));
 }
 
 export function buildBlitzTemplateOverlays({

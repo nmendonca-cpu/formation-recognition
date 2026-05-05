@@ -405,6 +405,7 @@ function TrainingField({
   onMoveOffense,
   onMoveDefense,
   onMoveDefenseGhost,
+  onDefenseClick,
   selectedRouteOverlayId,
   selectedFieldTagId,
   onRouteOverlayClick,
@@ -443,6 +444,7 @@ function TrainingField({
   onMoveOffense?: (id: string, x: number, y: number) => void;
   onMoveDefense?: (id: string, x: number, y: number) => void;
   onMoveDefenseGhost?: (id: string, x: number, y: number) => void;
+  onDefenseClick?: (id: string) => void;
   onFieldClick?: (x: number, y: number) => void;
   onFieldDoubleClick?: (x: number, y: number) => void;
   selectedRouteOverlayId?: string | null;
@@ -854,8 +856,14 @@ function TrainingField({
         return (
           <div
             key={p.id}
-            onPointerDown={() => {
-              if (!editableDefense) return;
+            onPointerDown={(event) => {
+              if (!editableDefense) {
+                if (onDefenseClick) {
+                  event.stopPropagation();
+                  onDefenseClick(p.id);
+                }
+                return;
+              }
               setDrag({ id: p.id, type: "defense" });
             }}
           >

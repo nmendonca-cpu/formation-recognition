@@ -20,8 +20,11 @@ import {
   getBlitzCallId,
   getBlitzCallLabel,
   getBlitzCallType,
+  getBlitzBoundarySide,
+  getBlitzDlMovementLabel,
   getBlitzPathwayLabel,
   getBlitzPathwayMetaFromOverlay,
+  getBlitzOriginX,
   type BlitzBaseBoardId,
   type BlitzBoardSpot,
   type BlitzCallFamilyId,
@@ -41,6 +44,41 @@ import {
 type RunFitEditorTool = "select" | "line" | "arrow" | "tag";
 type RunFitArrowColor = "gold" | "cyan" | "sky" | "white" | "red";
 type RunFitLineEnd = "square" | "circle" | "arrow";
+type BlitzViewMode = "study" | "quiz";
+type BlitzQuizSubmode = "create";
+type BlitzQuizAnswerLabel =
+  | "Step"
+  | "Gap"
+  | "C-Read"
+  | "Stick"
+  | "COP"
+  | "Drop Hook"
+  | "Drop C/F"
+  | "Str Hook"
+  | "Wk Hook"
+  | "3 Up"
+  | "Str C/F"
+  | "Wk C/F"
+  | "Hole"
+  | "Wall Flat Str"
+  | "Wall Flat Wk"
+  | "Edge Blitz"
+  | "B Gap Blitz"
+  | "C-Read Blitz"
+  | "Deep Third Str"
+  | "Deep Third Wk"
+  | "MOF"
+  | "Deep Half Str"
+  | "Deep Half Wk"
+  | "Tampa Pole"
+  | "Eyes"
+  | "Str Eyes"
+  | "Wk Eyes"
+  | "Eyes 1/3"
+  | "Eyes MOF"
+  | "Match 1/3"
+  | "Deep 1/3"
+  | "MCD";
 
 type RouteOverlay = {
   id: string;
@@ -86,8 +124,13 @@ type BlitzBoardProps = {
 
 const BLITZ_BOARDS_STORAGE_KEY = "formation-recognition-blitz-boards-v1";
 const ADMIN_ONLY_BLITZ_FAMILIES = new Set<BlitzCallFamilyId>(["carr", "allen"]);
+const BLITZ_QUIZ_DL_OPTIONS: BlitzQuizAnswerLabel[] = ["Step", "Gap", "C-Read", "Stick", "COP", "Drop Hook", "Drop C/F"];
+const BLITZ_QUIZ_LB_OPTIONS: BlitzQuizAnswerLabel[] = ["Str Hook", "Wk Hook", "3 Up", "Str C/F", "Wk C/F", "Hole", "Wall Flat Str", "Wall Flat Wk", "Str Eyes", "Wk Eyes", "Edge Blitz", "B Gap Blitz", "C-Read Blitz"];
+const BLITZ_QUIZ_DB_OPTIONS: BlitzQuizAnswerLabel[] = ["Str C/F", "Wk C/F", "MCD", "Wall Flat Str", "Wall Flat Wk", "Deep Third Str", "Deep Third Wk", "Match 1/3", "Deep 1/3", "MOF", "Deep Half Str", "Deep Half Wk", "Tampa Pole", "3 Up", "Eyes", "Str Eyes", "Wk Eyes", "Eyes 1/3", "Eyes MOF", "Edge Blitz", "B Gap Blitz"];
 
 export function BlitzBoard({ isAdmin = false, TrainingFieldComponent, blitzRendererDeps }: BlitzBoardProps) {
+  const [blitzViewMode, setBlitzViewMode] = useState<BlitzViewMode>("study");
+  const [blitzQuizSubmode] = useState<BlitzQuizSubmode>("create");
   const [showBlitzAdminTools, setShowBlitzAdminTools] = useState(false);
   const [selectedBlitzBaseBoardId, setSelectedBlitzBaseBoardId] = useState<BlitzBaseBoardId>("double");
   const [selectedBlitzFrontMode, setSelectedBlitzFrontMode] = useState<FrontMode>("4-4");
@@ -111,6 +154,9 @@ export function BlitzBoard({ isAdmin = false, TrainingFieldComponent, blitzRende
   const [blitzBoardsHydrated, setBlitzBoardsHydrated] = useState(false);
   const [selectedBlitzPathwayDefenderId, setSelectedBlitzPathwayDefenderId] = useState("M");
   const [selectedBlitzPathwayId, setSelectedBlitzPathwayId] = useState<BlitzPathwayId>("a_gap_blitz");
+  const [selectedBlitzQuizDefenderId, setSelectedBlitzQuizDefenderId] = useState("M");
+  const [blitzQuizAnswers, setBlitzQuizAnswers] = useState<Record<string, BlitzQuizAnswerLabel | "">>({});
+  const [blitzQuizChecked, setBlitzQuizChecked] = useState(false);
   const publicRandomizedOnEntryRef = useRef(false);
 
   const blitzPreview = useMemo(
@@ -133,6 +179,18 @@ export function BlitzBoard({ isAdmin = false, TrainingFieldComponent, blitzRende
     }),
     [blitzDraftOverlay, blitzPreview, blitzRouteOverlays, selectedBlitzFrontMode],
   );
+  const answerKeyOverlays = useMemo(() => buildBlitzTemplateOverlays({
+    callId: selectedBlitzCallId,
+    baseBoardId: selectedBlitzBaseBoardId,
+    defensePlayers: blitzPreview.defensePlayers,
+    offensePlayers: blitzPreview.offensePlayers,
+    runStrength: blitzPreview.runStrength,
+    passStrength: blitzPreview.passStrength,
+    losY: blitzPreview.losY,
+    wingY: blitzPreview.wingY,
+    frontMode: selectedBlitzFrontMode,
+    boardSpot: selectedBlitzBoardSpot,
+  }), [blitzPreview, selectedBlitzBaseBoardId, selectedBlitzBoardSpot, selectedBlitzCallId, selectedBlitzFrontMode]);
   const selectedBlitzCallOption = useMemo(() => (
     BLITZ_CALL_OPTIONS.find((option) => option.value === selectedBlitzCallId) ?? BLITZ_CALL_OPTIONS[0]
   ), [selectedBlitzCallId]);
@@ -284,6 +342,192 @@ export function BlitzBoard({ isAdmin = false, TrainingFieldComponent, blitzRende
     loadBlitzStructuredSelection({ frontMode: nextFrontMode });
   };
 
+  const getBlitzQuizOptionsForDefender = (defenderId: string): BlitzQuizAnswerLabel[] => {
+    if (["SDE", "WDE", "N", "T"].includes(defenderId)) return BLITZ_QUIZ_DL_OPTIONS;
+    if (["M", "W"].includes(defenderId)) return BLITZ_QUIZ_LB_OPTIONS;
+    return BLITZ_QUIZ_DB_OPTIONS;
+  };
+
+  const getSidePathway = (strongPathway: BlitzPathwayId, weakPathway: BlitzPathwayId, side: "strong" | "weak") => (
+    side === "strong" ? strongPathway : weakPathway
+  );
+
+  const getBlitzQuizPathwayForAnswer = (defender: { id: string; x: number }, answer: BlitzQuizAnswerLabel): BlitzPathwayId => {
+    const originX = getBlitzOriginX(blitzPreview.offensePlayers);
+    const defenderSide = defender.x < originX ? "left" : "right";
+    const boundarySide = getBlitzBoundarySide(blitzPreview.offensePlayers);
+    const fieldSide = boundarySide ? boundarySide === "left" ? "right" : "left" : null;
+    const strongCoverageSide = fieldSide ?? blitzPreview.passStrength;
+    const awayFromCenter = defenderSide === "left" ? "one_gap_slant_right" : "one_gap_slant_left";
+    const towardSideline = defenderSide === "left" ? "one_gap_slant_left" : "one_gap_slant_right";
+    const strongDeepThird = blitzPreview.passStrength === "left" ? "deep_third_left" : "deep_third_right";
+    const weakDeepThird = blitzPreview.passStrength === "left" ? "deep_third_right" : "deep_third_left";
+    const strongDeepHalf = blitzPreview.passStrength === "left" ? "deep_half_left" : "deep_half_right";
+    const weakDeepHalf = blitzPreview.passStrength === "left" ? "deep_half_right" : "deep_half_left";
+    const defenderDeepThird = defenderSide === "left" ? "deep_third_left" : "deep_third_right";
+    const defenderMatchThird = defenderSide === "left" ? "match_third_left" : "match_third_right";
+    const defenderDeepAreaThird = defenderSide === "left" ? "deep_area_third_left" : "deep_area_third_right";
+    const mapping: Partial<Record<BlitzQuizAnswerLabel, BlitzPathwayId>> = {
+      Step: awayFromCenter,
+      Gap: towardSideline,
+      "C-Read": "b_gap_blitz",
+      Stick: awayFromCenter,
+      COP: "cop_rush",
+      "Drop Hook": "drop_hook",
+      "Drop C/F": "drop_curl_flat",
+      "Str Hook": "strong_hook",
+      "Wk Hook": "weak_hook",
+      "3 Up": "weak_hook",
+      "Str C/F": "curl_flat",
+      "Wk C/F": "weak_curl_flat",
+      MCD: strongCoverageSide === defenderSide ? "mcd" : "weak_mcd",
+      Hole: "hole",
+      "Wall Flat Str": "wall_flat",
+      "Wall Flat Wk": "weak_wall_flat",
+      "Edge Blitz": "edge_pressure",
+      "B Gap Blitz": "b_gap_blitz",
+      "C-Read Blitz": "c_read_blitz",
+      "Deep Third Str": getSidePathway(strongDeepThird, weakDeepThird, "strong"),
+      "Deep Third Wk": getSidePathway(strongDeepThird, weakDeepThird, "weak"),
+      MOF: "mof",
+      "Deep Half Str": getSidePathway(strongDeepHalf, weakDeepHalf, "strong"),
+      "Deep Half Wk": getSidePathway(strongDeepHalf, weakDeepHalf, "weak"),
+      "Tampa Pole": "tampa_pole",
+      Eyes: "eyes",
+      "Str Eyes": "strong_eyes",
+      "Wk Eyes": "weak_eyes",
+      "Eyes 1/3": defenderDeepThird,
+      "Eyes MOF": "deep_third_middle",
+      "Match 1/3": defenderMatchThird,
+      "Deep 1/3": defenderDeepAreaThird,
+    };
+    return mapping[answer] ?? "strong_hook";
+  };
+
+  const getBlitzQuizAnswerLabel = (overlay: RouteOverlay): BlitzQuizAnswerLabel | "" => {
+    const meta = getBlitzPathwayMetaFromOverlay(overlay as Parameters<typeof getBlitzPathwayMetaFromOverlay>[0]);
+    if (!meta) return "";
+    const defender = blitzPreview.defensePlayers.find((player) => player.id === meta.defenderId);
+    if (!defender) return "";
+
+    if (meta.layer === "dl") {
+      const dlLabel = getBlitzDlMovementLabel(defender, blitzPreview.offensePlayers, meta.pathwayId as BlitzPathwayId, meta.layer);
+      if (dlLabel === "Step") return "Step";
+      if (dlLabel === "Gap") return "Gap";
+      if (dlLabel === "C-Read") return "C-Read";
+      if (dlLabel === "Stick") return "Stick";
+      if (dlLabel === "COP") return "COP";
+    }
+
+    if (meta.pathwayId === "drop_hook") return "Drop Hook";
+    if (meta.pathwayId === "drop_curl_flat") return "Drop C/F";
+    if (meta.pathwayId === "strong_hook") return "Str Hook";
+    if (meta.pathwayId === "weak_hook") return overlay.label === "3 Up" ? "3 Up" : "Wk Hook";
+    if (meta.pathwayId === "curl_flat") return "Str C/F";
+    if (meta.pathwayId === "weak_curl_flat") return "Wk C/F";
+    if (meta.pathwayId === "mcd" || meta.pathwayId === "weak_mcd") return "MCD";
+    if (meta.pathwayId === "hole") return "Hole";
+    if (meta.pathwayId === "wall_flat") return "Wall Flat Str";
+    if (meta.pathwayId === "weak_wall_flat") return "Wall Flat Wk";
+    if (meta.pathwayId === "edge_pressure" || meta.pathwayId === "strong_edge_pressure" || meta.pathwayId === "weak_edge_pressure") return "Edge Blitz";
+    if (meta.pathwayId === "b_gap_blitz" || meta.pathwayId === "boundary_b_gap_blitz" || meta.pathwayId === "field_b_gap_blitz") return "B Gap Blitz";
+    if (meta.pathwayId === "c_read_blitz") return "C-Read Blitz";
+    if (meta.pathwayId === "mof") return "MOF";
+    if (meta.pathwayId === "deep_third_middle") return ["FS", "BS"].includes(meta.defenderId) ? "Eyes MOF" : "MOF";
+    if (meta.pathwayId === "tampa_pole") return "Tampa Pole";
+    if (meta.pathwayId === "eyes") return "Eyes";
+    if (meta.pathwayId === "strong_eyes") return "Str Eyes";
+    if (meta.pathwayId === "weak_eyes") return "Wk Eyes";
+    if (meta.pathwayId === "match_third_left" || meta.pathwayId === "match_third_right") return "Match 1/3";
+    if (meta.pathwayId === "deep_area_third_left" || meta.pathwayId === "deep_area_third_right") return "Deep 1/3";
+    if (meta.pathwayId === "deep_third_left" || meta.pathwayId === "deep_third_right") {
+      if (["FC", "BC"].includes(meta.defenderId)) return "Eyes 1/3";
+      const isStrong = meta.pathwayId === (blitzPreview.passStrength === "left" ? "deep_third_left" : "deep_third_right");
+      return isStrong ? "Deep Third Str" : "Deep Third Wk";
+    }
+    if (meta.pathwayId === "deep_half_left" || meta.pathwayId === "deep_half_right") {
+      const isStrong = meta.pathwayId === (blitzPreview.passStrength === "left" ? "deep_half_left" : "deep_half_right");
+      return isStrong ? "Deep Half Str" : "Deep Half Wk";
+    }
+    if (meta.pathwayId === "cop_rush") return "COP";
+    return "";
+  };
+
+  const blitzQuizAnswerKey = useMemo(() => {
+    const entries = answerKeyOverlays.flatMap((overlay) => {
+      const meta = getBlitzPathwayMetaFromOverlay(overlay as Parameters<typeof getBlitzPathwayMetaFromOverlay>[0]);
+      const label = getBlitzQuizAnswerLabel(overlay as RouteOverlay);
+      return meta && label ? [[meta.defenderId, label] as const] : [];
+    });
+    return Object.fromEntries(entries) as Record<string, BlitzQuizAnswerLabel>;
+  }, [answerKeyOverlays, blitzPreview.defensePlayers, blitzPreview.offensePlayers, blitzPreview.passStrength]);
+
+  const blitzQuizPreviewOverlays = useMemo(() => (
+    Object.entries(blitzQuizAnswers).flatMap(([defenderId, answer]) => {
+      if (!answer) return [];
+      const defender = blitzPreview.defensePlayers.find((player) => player.id === defenderId);
+      if (!defender) return [];
+      return buildBlitzPathwayOverlay({
+        id: `blitz-quiz-preview-${defenderId}`,
+        defender,
+        offensePlayers: blitzPreview.offensePlayers,
+        defensePlayers: blitzPreview.defensePlayers,
+        pathwayId: getBlitzQuizPathwayForAnswer(defender, answer),
+        runStrength: blitzPreview.runStrength,
+        passStrength: blitzPreview.passStrength,
+        losY: blitzPreview.losY,
+        wingY: blitzPreview.wingY,
+        frontMode: selectedBlitzFrontMode,
+        layer: ["SDE", "WDE", "N", "T"].includes(defenderId) && ["Step", "Gap", "C-Read", "Stick", "COP"].includes(answer) ? "dl" : ["Edge Blitz", "B Gap Blitz", "C-Read Blitz"].includes(answer) ? "pressure" : "coverage",
+      }) as RouteOverlay;
+    })
+  ), [blitzPreview, blitzQuizAnswers, selectedBlitzFrontMode]);
+
+  const blitzQuizWrongOverlays = useMemo(() => {
+    if (!blitzQuizChecked) return [];
+    return answerKeyOverlays.filter((overlay) => {
+      const meta = getBlitzPathwayMetaFromOverlay(overlay as Parameters<typeof getBlitzPathwayMetaFromOverlay>[0]);
+      if (!meta) return false;
+      return blitzQuizAnswers[meta.defenderId] !== blitzQuizAnswerKey[meta.defenderId];
+    }) as RouteOverlay[];
+  }, [answerKeyOverlays, blitzQuizAnswerKey, blitzQuizAnswers, blitzQuizChecked]);
+
+  const blitzQuizDisplayOverlays = useMemo(() => (
+    blitzViewMode === "quiz" ? [...blitzQuizPreviewOverlays, ...blitzQuizWrongOverlays] : blitzDisplayOverlays
+  ), [blitzDisplayOverlays, blitzQuizPreviewOverlays, blitzQuizWrongOverlays, blitzViewMode]);
+
+  const blitzQuizDefenderIds = useMemo(() => (
+    blitzPreview.defensePlayers.map((player) => player.id)
+  ), [blitzPreview.defensePlayers]);
+
+  const blitzQuizCorrectCount = useMemo(() => (
+    blitzQuizDefenderIds.filter((id) => blitzQuizAnswers[id] && blitzQuizAnswers[id] === blitzQuizAnswerKey[id]).length
+  ), [blitzQuizAnswerKey, blitzQuizAnswers, blitzQuizDefenderIds]);
+
+  const blitzQuizAssignedCount = useMemo(() => (
+    blitzQuizDefenderIds.filter((id) => Boolean(blitzQuizAnswers[id])).length
+  ), [blitzQuizAnswers, blitzQuizDefenderIds]);
+  const allBlitzQuizAssigned = blitzQuizDefenderIds.length > 0 && blitzQuizAssignedCount === blitzQuizDefenderIds.length;
+  const selectedBlitzQuizDefender = blitzPreview.defensePlayers.find((player) => player.id === selectedBlitzQuizDefenderId) ?? blitzPreview.defensePlayers[0];
+  const selectedBlitzQuizAnswer = selectedBlitzQuizDefender ? blitzQuizAnswers[selectedBlitzQuizDefender.id] || "unassigned" : "unassigned";
+  const incorrectBlitzQuizDefenderIds = useMemo(() => (
+    blitzQuizChecked
+      ? blitzQuizDefenderIds.filter((id) => blitzQuizAnswers[id] !== blitzQuizAnswerKey[id])
+      : []
+  ), [blitzQuizAnswerKey, blitzQuizAnswers, blitzQuizChecked, blitzQuizDefenderIds]);
+
+  const resetBlitzQuiz = (nextSelectedId = selectedBlitzQuizDefenderId) => {
+    setBlitzQuizAnswers({});
+    setBlitzQuizChecked(false);
+    setSelectedBlitzQuizDefenderId(nextSelectedId);
+  };
+
+  const randomizeBlitzQuizRep = () => {
+    const firstDefenderId = blitzPreview.defensePlayers[0]?.id ?? "M";
+    resetBlitzQuiz(firstDefenderId);
+    randomizePublicBlitzRep();
+  };
+
   const randomizePublicBlitzRep = () => {
     const pickRandom = <T,>(items: T[]) => items[Math.floor(Math.random() * items.length)];
     const familyOption = pickRandom(visibleBlitzCallFamilyOptions);
@@ -297,6 +541,28 @@ export function BlitzBoard({ isAdmin = false, TrainingFieldComponent, blitzRende
       boardSpot: pickRandom(BLITZ_BOARD_SPOT_OPTIONS)?.value ?? "mof",
     });
   };
+
+  const assignBlitzQuizAnswer = (defenderId: string, answer: BlitzQuizAnswerLabel) => {
+    setBlitzQuizAnswers((prev) => ({ ...prev, [defenderId]: answer }));
+    setBlitzQuizChecked(false);
+  };
+
+  useEffect(() => {
+    if (!blitzQuizDefenderIds.length) return;
+    if (!blitzQuizDefenderIds.includes(selectedBlitzQuizDefenderId)) {
+      setSelectedBlitzQuizDefenderId(blitzQuizDefenderIds[0]);
+    }
+  }, [blitzQuizDefenderIds, selectedBlitzQuizDefenderId]);
+
+  useEffect(() => {
+    setBlitzQuizAnswers({});
+    setBlitzQuizChecked(false);
+  }, [selectedBlitzBaseBoardId, selectedBlitzBoardSpot, selectedBlitzCallId, selectedBlitzFrontMode]);
+
+  useEffect(() => {
+    if (!blitzBoardsHydrated || blitzViewMode !== "quiz") return;
+    randomizeBlitzQuizRep();
+  }, [blitzBoardsHydrated, blitzViewMode]);
 
   useEffect(() => {
     if (!blitzBoardsHydrated || isAdmin || !ADMIN_ONLY_BLITZ_FAMILIES.has(selectedBlitzCallFamilyId)) return;
@@ -558,244 +824,383 @@ export function BlitzBoard({ isAdmin = false, TrainingFieldComponent, blitzRende
         <div className="rounded-2xl border bg-white p-4">
           <div className="mb-3">
             <div className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">Blitz Mode</div>
-            <div className="mt-1 text-2xl font-extrabold tracking-tight text-slate-900">{blitzTitle}</div>
+            <div className="mt-1 text-2xl font-extrabold tracking-tight text-slate-900">
+              {blitzViewMode === "quiz" ? `${getBlitzBoardCallLabel(selectedBlitzCallId, selectedBlitzFrontMode)} vs ${BLITZ_BASE_BOARD_OPTIONS.find((option) => option.value === selectedBlitzBaseBoardId)?.label ?? "Formation"}` : blitzTitle}
+            </div>
             <div className="mt-1 text-sm text-slate-600">
-              Pick a formation, defensive shell, and blitz call, then stamp premade pathways to build the answer key.
+              {blitzViewMode === "quiz"
+                ? "Click each defender, choose his assignment, then check the blitz."
+                : "Pick a formation, defensive shell, and blitz call, then study the answer key."}
             </div>
           </div>
           <TrainingFieldComponent
             offensePlayers={blitzPreview.offensePlayers}
             defensePlayers={blitzPreview.defensePlayers}
-            routeOverlays={blitzDisplayOverlays}
+            routeOverlays={blitzQuizDisplayOverlays}
             routeOverlaysOnTop
             fieldTags={blitzFieldTags}
             enhancedLandmarks
             wideFieldMarks
             fieldHashXs={blitzPreview.hashXs}
             losReferenceY={blitzPreview.losY}
+            incorrectDefenseIds={incorrectBlitzQuizDefenderIds}
+            onDefenseClick={blitzViewMode === "quiz" ? setSelectedBlitzQuizDefenderId : undefined}
           />
         </div>
       </div>
       <div className="space-y-3 rounded-2xl border bg-white p-4 text-sm text-slate-600">
-        <div className="rounded-xl border bg-slate-50 p-3">
-          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Defense</div>
-          <Select value={selectedBlitzFrontMode} onValueChange={(value: FrontMode) => loadBlitzFrontMode(value)}>
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="4-4">4-4</SelectItem>
-              <SelectItem value="4-3">4-3</SelectItem>
-            </SelectContent>
-          </Select>
+        <div className="grid grid-cols-2 gap-2">
+          <Button
+            variant={blitzViewMode === "study" ? "default" : "outline"}
+            className="rounded-xl"
+            onClick={() => setBlitzViewMode("study")}
+          >
+            Study
+          </Button>
+          <Button
+            variant={blitzViewMode === "quiz" ? "default" : "outline"}
+            className="rounded-xl"
+            onClick={() => setBlitzViewMode("quiz")}
+          >
+            Quiz
+          </Button>
         </div>
-        <div className="rounded-xl border bg-slate-50 p-3">
-          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Board Spot</div>
-          <Select value={selectedBlitzBoardSpot} onValueChange={(value: BlitzBoardSpot) => loadBlitzStructuredSelection({ boardSpot: value })}>
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {BLITZ_BOARD_SPOT_OPTIONS.map((option) => (
-                <SelectItem key={option.value} value={option.value}>
-                  {option.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="rounded-xl border bg-slate-50 p-3">
-          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Saved Blitz Boards</div>
-          <div className="grid gap-2">
-            <Select value={selectedBlitzCallFamilyId} onValueChange={(value: BlitzCallFamilyId) => loadBlitzStructuredSelection({ familyId: value })}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent className="max-h-80 overflow-y-auto">
-                {visibleBlitzCallFamilyOptions.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select value={selectedBlitzCallType} onValueChange={(value: BlitzCallType) => loadBlitzStructuredSelection({ callType: value })}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {(Object.entries(BLITZ_CALL_MATRIX[selectedBlitzCallFamilyId]) as [BlitzCallType, BlitzCallId][]).map(([callType, callId]) => (
-                  <SelectItem key={callType} value={callType}>
-                    {getBlitzCallLabel(callId)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select value={selectedBlitzBaseBoardId} onValueChange={(value: BlitzBaseBoardId) => loadBlitzStructuredSelection({ baseBoardId: value })}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent className="max-h-80 overflow-y-auto">
-                {(["2x2", "3x1"] as const).map((structure) => (
-                  <SelectGroup key={structure}>
-                    <SelectLabel>{structure}</SelectLabel>
-                    {BLITZ_BASE_BOARD_OPTIONS
-                      .filter((option) => BLITZ_BOARD_STRUCTURE[option.value] === structure)
-                      .sort((a, b) => a.label.localeCompare(b.label))
-                      .map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                  </SelectGroup>
-                ))}
-              </SelectContent>
-            </Select>
-            <div className="rounded-lg border bg-white p-2 text-xs leading-5 text-slate-600">
-              {selectedStructuredBlitzBoard ? `Loaded: ${selectedStructuredBlitzBoard.title}` : "No saved board yet for this family / type / formation."}
-            </div>
-          </div>
-        </div>
-        {isAdmin ? (
+        {blitzViewMode === "quiz" ? (
           <>
-            <Button
-              variant={showBlitzAdminTools ? "default" : "outline"}
-              className="w-full rounded-xl"
-              onClick={() => setShowBlitzAdminTools((prev) => !prev)}
-            >
-              {showBlitzAdminTools ? "Hide Admin Tools" : "Show Admin Tools"}
-            </Button>
-            {showBlitzAdminTools ? (
-              <>
-                <div className="rounded-xl border bg-slate-50 p-3">
-                  <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Board Title</div>
-                  <Input value={blitzTitle} onChange={(e) => setBlitzTitle(e.target.value)} />
+            <div className="rounded-xl border bg-slate-50 p-3">
+              <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                {blitzQuizSubmode === "create" ? "Create the Blitz" : "Quiz"}
+              </div>
+              <div className="text-lg font-bold text-slate-900">{getBlitzBoardCallLabel(selectedBlitzCallId, selectedBlitzFrontMode)}</div>
+              <div className="mt-1 text-xs text-slate-500">
+                {selectedBlitzFrontMode} {selectedBlitzBoardSpot.toUpperCase()} vs {BLITZ_BASE_BOARD_OPTIONS.find((option) => option.value === selectedBlitzBaseBoardId)?.label ?? "Formation"}
+              </div>
+            </div>
+            <div className="rounded-xl border bg-white p-3">
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Defender</div>
+              <Select value={selectedBlitzQuizDefender?.id ?? "M"} onValueChange={setSelectedBlitzQuizDefenderId}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="max-h-80 overflow-y-auto">
+                  {blitzPreview.defensePlayers.map((defender) => (
+                    <SelectItem key={defender.id} value={defender.id}>
+                      {defender.id}{blitzQuizAnswers[defender.id] ? ` - ${blitzQuizAnswers[defender.id]}` : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            {selectedBlitzQuizDefender ? (
+              <div className="rounded-xl border bg-white p-3">
+                <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Assignment</div>
+                <Select
+                  value={selectedBlitzQuizAnswer}
+                  onValueChange={(value) => {
+                    if (value === "unassigned") return;
+                    assignBlitzQuizAnswer(selectedBlitzQuizDefender.id, value as BlitzQuizAnswerLabel);
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-80 overflow-y-auto">
+                    <SelectItem value="unassigned">Choose pathway</SelectItem>
+                    {getBlitzQuizOptionsForDefender(selectedBlitzQuizDefender.id).map((option) => (
+                      <SelectItem key={option} value={option}>
+                        {option}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : null}
+            <div className="grid grid-cols-3 gap-2">
+              {blitzPreview.defensePlayers.map((defender) => {
+                const isWrong = blitzQuizChecked && blitzQuizAnswers[defender.id] !== blitzQuizAnswerKey[defender.id];
+                const isCorrect = blitzQuizChecked && blitzQuizAnswers[defender.id] === blitzQuizAnswerKey[defender.id];
+                return (
+                  <button
+                    key={defender.id}
+                    type="button"
+                    onClick={() => setSelectedBlitzQuizDefenderId(defender.id)}
+                    className={`rounded-xl border px-2 py-2 text-sm font-bold transition ${
+                      selectedBlitzQuizDefenderId === defender.id
+                        ? "border-slate-950 bg-slate-950 text-white"
+                        : isCorrect
+                          ? "border-emerald-300 bg-emerald-50 text-emerald-800"
+                          : isWrong
+                            ? "border-red-300 bg-red-50 text-red-800"
+                            : blitzQuizAnswers[defender.id]
+                              ? "border-sky-200 bg-sky-50 text-sky-800"
+                              : "border-slate-200 bg-white text-slate-700"
+                    }`}
+                  >
+                    {defender.id}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Button
+                className="rounded-xl"
+                disabled={!allBlitzQuizAssigned}
+                onClick={() => setBlitzQuizChecked(true)}
+              >
+                Check
+              </Button>
+              <Button
+                variant="outline"
+                className="rounded-xl"
+                onClick={() => {
+                  setBlitzQuizAnswers(blitzQuizAnswerKey);
+                  setBlitzQuizChecked(true);
+                }}
+              >
+                Show Answers
+              </Button>
+              <Button variant="outline" className="col-span-2 rounded-xl" onClick={randomizeBlitzQuizRep}>
+                Random Rep
+              </Button>
+            </div>
+            <div className="rounded-xl border border-dashed bg-slate-50 p-3 text-sm leading-6 text-slate-600">
+              {blitzQuizChecked ? (
+                <>
+                  <div className="font-bold text-slate-900">
+                    Score: {blitzQuizCorrectCount}/{blitzQuizDefenderIds.length}
+                  </div>
+                  <div>Wrong answers now show the correct pathway on the board.</div>
+                </>
+              ) : (
+                <div>
+                  Assigned {blitzQuizAssignedCount}/{blitzQuizDefenderIds.length}. Click defender circles or use the defender menu.
                 </div>
-                <div className="space-y-3 rounded-xl border border-amber-200 bg-amber-50/70 p-3">
-                  <div>
-                    <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-amber-800">Blitz Call Template</div>
-                    <div className="text-xs leading-5 text-amber-950/80">
-                      Apply the full call, then tweak individual defenders below if needed.
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <Select value={selectedBlitzCallFamilyId} onValueChange={(value: BlitzCallFamilyId) => loadBlitzStructuredSelection({ familyId: value })}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent className="max-h-80 overflow-y-auto">
-                        {visibleBlitzCallFamilyOptions.map((option) => (
-                          <SelectItem key={option.value} value={option.value}>
-                            {option.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <Select value={selectedBlitzCallType} onValueChange={(value: BlitzCallType) => loadBlitzStructuredSelection({ callType: value })}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {(Object.entries(BLITZ_CALL_MATRIX[selectedBlitzCallFamilyId]) as [BlitzCallType, BlitzCallId][]).map(([callType, callId]) => (
-                          <SelectItem key={callType} value={callType}>
-                            {getBlitzCallLabel(callId)}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="rounded-lg border border-amber-200 bg-white/70 p-2 text-xs leading-5 text-amber-950">
-                    <div className="font-semibold">{selectedBlitzCallOption.family} • {BLITZ_CALL_TYPE_LABELS[selectedBlitzCallType]}</div>
-                    <div>{selectedBlitzCallOption.detail}</div>
-                  </div>
-                  <div className="grid grid-cols-3 gap-2">
-                    <Button className="rounded-xl bg-amber-500 text-slate-950 hover:bg-amber-400" onClick={applyBlitzCallTemplate}>
-                      Apply Current
-                    </Button>
-                    <Button variant="outline" className="rounded-xl border-amber-300 bg-white/70 text-amber-950 hover:bg-amber-100" onClick={applyBlitzCallTemplateToAllBoards}>
-                      Apply Call
-                    </Button>
-                    <Button variant="outline" className="rounded-xl border-amber-300 bg-white/70 text-amber-950 hover:bg-amber-100" onClick={applyEveryBlitzTemplateToAllBoards}>
-                      Apply All
-                    </Button>
-                  </div>
-                </div>
-                <div className="space-y-3 rounded-xl border border-red-100 bg-red-50/60 p-3">
-                  <div>
-                    <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-red-700">Premade Pathway</div>
-                    <div className="text-xs leading-5 text-red-900/80">
-                      Stamp a structured assignment onto the board. These are the first gradeable pathway building blocks.
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Defender</div>
-                      <Select value={selectedBlitzPathwayDefenderId} onValueChange={setSelectedBlitzPathwayDefenderId}>
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent className="max-h-80 overflow-y-auto">
-                          {blitzPreview.defensePlayers.map((defender) => (
-                            <SelectItem key={defender.id} value={defender.id}>
-                              {defender.id}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div>
-                      <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Pathway</div>
-                      <Select value={selectedBlitzPathwayId} onValueChange={(value: BlitzPathwayId) => setSelectedBlitzPathwayId(value)}>
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent className="max-h-80 overflow-y-auto">
-                          {BLITZ_PATHWAY_OPTIONS.map((option) => (
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="rounded-xl border bg-slate-50 p-3">
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Defense</div>
+              <Select value={selectedBlitzFrontMode} onValueChange={(value: FrontMode) => loadBlitzFrontMode(value)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="4-4">4-4</SelectItem>
+                  <SelectItem value="4-3">4-3</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="rounded-xl border bg-slate-50 p-3">
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Board Spot</div>
+              <Select value={selectedBlitzBoardSpot} onValueChange={(value: BlitzBoardSpot) => loadBlitzStructuredSelection({ boardSpot: value })}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {BLITZ_BOARD_SPOT_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="rounded-xl border bg-slate-50 p-3">
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Saved Blitz Boards</div>
+              <div className="grid gap-2">
+                <Select value={selectedBlitzCallFamilyId} onValueChange={(value: BlitzCallFamilyId) => loadBlitzStructuredSelection({ familyId: value })}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-80 overflow-y-auto">
+                    {visibleBlitzCallFamilyOptions.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select value={selectedBlitzCallType} onValueChange={(value: BlitzCallType) => loadBlitzStructuredSelection({ callType: value })}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(Object.entries(BLITZ_CALL_MATRIX[selectedBlitzCallFamilyId]) as [BlitzCallType, BlitzCallId][]).map(([callType, callId]) => (
+                      <SelectItem key={callType} value={callType}>
+                        {getBlitzCallLabel(callId)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select value={selectedBlitzBaseBoardId} onValueChange={(value: BlitzBaseBoardId) => loadBlitzStructuredSelection({ baseBoardId: value })}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-80 overflow-y-auto">
+                    {(["2x2", "3x1"] as const).map((structure) => (
+                      <SelectGroup key={structure}>
+                        <SelectLabel>{structure}</SelectLabel>
+                        {BLITZ_BASE_BOARD_OPTIONS
+                          .filter((option) => BLITZ_BOARD_STRUCTURE[option.value] === structure)
+                          .sort((a, b) => a.label.localeCompare(b.label))
+                          .map((option) => (
                             <SelectItem key={option.value} value={option.value}>
                               {option.label}
                             </SelectItem>
                           ))}
-                        </SelectContent>
-                      </Select>
+                      </SelectGroup>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <div className="rounded-lg border bg-white p-2 text-xs leading-5 text-slate-600">
+                  {selectedStructuredBlitzBoard ? `Loaded: ${selectedStructuredBlitzBoard.title}` : "No saved board yet for this family / type / formation."}
+                </div>
+              </div>
+            </div>
+            {isAdmin ? (
+              <>
+                <Button
+                  variant={showBlitzAdminTools ? "default" : "outline"}
+                  className="w-full rounded-xl"
+                  onClick={() => setShowBlitzAdminTools((prev) => !prev)}
+                >
+                  {showBlitzAdminTools ? "Hide Admin Tools" : "Show Admin Tools"}
+                </Button>
+                {showBlitzAdminTools ? (
+                  <>
+                    <div className="rounded-xl border bg-slate-50 p-3">
+                      <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Board Title</div>
+                      <Input value={blitzTitle} onChange={(e) => setBlitzTitle(e.target.value)} />
                     </div>
-                  </div>
-                  <Button className="w-full rounded-xl bg-red-600 text-white hover:bg-red-700" onClick={addBlitzPathway}>
-                    Add Pathway
-                  </Button>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <Button className="rounded-xl" onClick={saveBlitzBoard}>
-                    Save Board
-                  </Button>
-                  <Button variant="outline" className="rounded-xl" onClick={resetBlitzSample}>
-                    Reset Board
-                  </Button>
-                  <Button
-                    variant="outline"
-                    className="rounded-xl"
-                    onClick={() => setBlitzRouteOverlays((prev) => prev.slice(0, -1))}
-                    disabled={!blitzRouteOverlays.length}
-                  >
-                    Undo Line
-                  </Button>
-                  <Button
-                    variant="outline"
-                    className="rounded-xl border-red-200 text-red-700 hover:bg-red-50"
-                    onClick={deleteBlitzBoard}
-                    disabled={selectedBlitzBoardId === "working"}
-                  >
-                    Delete Board
-                  </Button>
-                </div>
+                    <div className="space-y-3 rounded-xl border border-amber-200 bg-amber-50/70 p-3">
+                      <div>
+                        <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-amber-800">Blitz Call Template</div>
+                        <div className="text-xs leading-5 text-amber-950/80">
+                          Apply the full call, then tweak individual defenders below if needed.
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <Select value={selectedBlitzCallFamilyId} onValueChange={(value: BlitzCallFamilyId) => loadBlitzStructuredSelection({ familyId: value })}>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent className="max-h-80 overflow-y-auto">
+                            {visibleBlitzCallFamilyOptions.map((option) => (
+                              <SelectItem key={option.value} value={option.value}>
+                                {option.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Select value={selectedBlitzCallType} onValueChange={(value: BlitzCallType) => loadBlitzStructuredSelection({ callType: value })}>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {(Object.entries(BLITZ_CALL_MATRIX[selectedBlitzCallFamilyId]) as [BlitzCallType, BlitzCallId][]).map(([callType, callId]) => (
+                              <SelectItem key={callType} value={callType}>
+                                {getBlitzCallLabel(callId)}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="rounded-lg border border-amber-200 bg-white/70 p-2 text-xs leading-5 text-amber-950">
+                        <div className="font-semibold">{selectedBlitzCallOption.family} • {BLITZ_CALL_TYPE_LABELS[selectedBlitzCallType]}</div>
+                        <div>{selectedBlitzCallOption.detail}</div>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2">
+                        <Button className="rounded-xl bg-amber-500 text-slate-950 hover:bg-amber-400" onClick={applyBlitzCallTemplate}>
+                          Apply Current
+                        </Button>
+                        <Button variant="outline" className="rounded-xl border-amber-300 bg-white/70 text-amber-950 hover:bg-amber-100" onClick={applyBlitzCallTemplateToAllBoards}>
+                          Apply Call
+                        </Button>
+                        <Button variant="outline" className="rounded-xl border-amber-300 bg-white/70 text-amber-950 hover:bg-amber-100" onClick={applyEveryBlitzTemplateToAllBoards}>
+                          Apply All
+                        </Button>
+                      </div>
+                    </div>
+                    <div className="space-y-3 rounded-xl border border-red-100 bg-red-50/60 p-3">
+                      <div>
+                        <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-red-700">Premade Pathway</div>
+                        <div className="text-xs leading-5 text-red-900/80">
+                          Stamp a structured assignment onto the board. These are the first gradeable pathway building blocks.
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Defender</div>
+                          <Select value={selectedBlitzPathwayDefenderId} onValueChange={setSelectedBlitzPathwayDefenderId}>
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent className="max-h-80 overflow-y-auto">
+                              {blitzPreview.defensePlayers.map((defender) => (
+                                <SelectItem key={defender.id} value={defender.id}>
+                                  {defender.id}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div>
+                          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Pathway</div>
+                          <Select value={selectedBlitzPathwayId} onValueChange={(value: BlitzPathwayId) => setSelectedBlitzPathwayId(value)}>
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent className="max-h-80 overflow-y-auto">
+                              {BLITZ_PATHWAY_OPTIONS.map((option) => (
+                                <SelectItem key={option.value} value={option.value}>
+                                  {option.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+                      <Button className="w-full rounded-xl bg-red-600 text-white hover:bg-red-700" onClick={addBlitzPathway}>
+                        Add Pathway
+                      </Button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Button className="rounded-xl" onClick={saveBlitzBoard}>
+                        Save Board
+                      </Button>
+                      <Button variant="outline" className="rounded-xl" onClick={resetBlitzSample}>
+                        Reset Board
+                      </Button>
+                      <Button
+                        variant="outline"
+                        className="rounded-xl"
+                        onClick={() => setBlitzRouteOverlays((prev) => prev.slice(0, -1))}
+                        disabled={!blitzRouteOverlays.length}
+                      >
+                        Undo Line
+                      </Button>
+                      <Button
+                        variant="outline"
+                        className="rounded-xl border-red-200 text-red-700 hover:bg-red-50"
+                        onClick={deleteBlitzBoard}
+                        disabled={selectedBlitzBoardId === "working"}
+                      >
+                        Delete Board
+                      </Button>
+                    </div>
+                  </>
+                ) : null}
               </>
             ) : null}
+            {isAdmin && blitzSaveNotice ? (
+              <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-900">
+                {blitzSaveNotice}
+              </div>
+            ) : null}
           </>
-        ) : null}
-        {isAdmin && blitzSaveNotice ? (
-          <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-900">
-            {blitzSaveNotice}
-          </div>
-        ) : null}
+        )}
       </div>
     </div>
   );
