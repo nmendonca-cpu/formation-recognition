@@ -408,6 +408,8 @@ function TrainingField({
   selectedRouteOverlayId,
   selectedFieldTagId,
   onRouteOverlayClick,
+  onMoveRouteOverlay,
+  onMoveRouteOverlayPoint,
   onFieldTagClick,
 }: {
   enhancedLandmarks?: boolean;
@@ -446,9 +448,11 @@ function TrainingField({
   selectedRouteOverlayId?: string | null;
   selectedFieldTagId?: string | null;
   onRouteOverlayClick?: (id: string) => void;
+  onMoveRouteOverlay?: (id: string, dx: number, dy: number) => void;
+  onMoveRouteOverlayPoint?: (id: string, pointIndex: number, x: number, y: number) => void;
   onFieldTagClick?: (id: string) => void;
 }) {
-  const [drag, setDrag] = useState<{ id: string; type: "offense" | "defense" | "defense_ghost" } | null>(null);
+  const [drag, setDrag] = useState<{ id: string; type: "offense" | "defense" | "defense_ghost" | "route_overlay" | "route_point"; pointIndex?: number; lastX?: number; lastY?: number } | null>(null);
   const maybeFlipX = (x: number, enabled: boolean) => (enabled ? 100 - x : x);
   const maybeFlipY = (y: number, enabled: boolean) => (enabled ? 100 - y : y);
   const fieldWide = editableDefense || wideFieldMarks;
@@ -468,14 +472,26 @@ function TrainingField({
   const getPointer = (e: React.PointerEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
     const { x: rawX, rawY } = getRawPoint(e.clientX, e.clientY, rect);
-    const x = drag?.type === "offense" && flipHorizontalPerspective ? 100 - rawX : rawX;
-    const y = drag?.type === "offense" && flipOffense ? 100 - rawY : rawY;
+    const shouldFlip = drag?.type === "offense" || drag?.type === "route_overlay" || drag?.type === "route_point";
+    const x = shouldFlip && flipHorizontalPerspective ? 100 - rawX : rawX;
+    const y = shouldFlip && flipOffense ? 100 - rawY : rawY;
     return { x, y };
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!drag) return;
     const { x, y } = getPointer(e);
+    if (drag.type === "route_overlay" && onMoveRouteOverlay) {
+      const dx = x - (drag.lastX ?? x);
+      const dy = y - (drag.lastY ?? y);
+      if (Math.abs(dx) > 0 || Math.abs(dy) > 0) onMoveRouteOverlay(drag.id, dx, dy);
+      setDrag((prev) => prev?.type === "route_overlay" ? { ...prev, lastX: x, lastY: y } : prev);
+      return;
+    }
+    if (drag.type === "route_point" && onMoveRouteOverlayPoint && drag.pointIndex !== undefined) {
+      onMoveRouteOverlayPoint(drag.id, drag.pointIndex, x, y);
+      return;
+    }
     if (drag.type === "offense" && onMoveOffense) onMoveOffense(drag.id, x, y);
     if (drag.type === "defense" && onMoveDefense) onMoveDefense(drag.id, x, y);
     if (drag.type === "defense_ghost" && onMoveDefenseGhost) onMoveDefenseGhost(drag.id, x, y);
@@ -554,6 +570,18 @@ function TrainingField({
             strokeLinecap="round"
             strokeLinejoin="round"
             className={onRouteOverlayClick ? "cursor-pointer" : undefined}
+            onPointerDown={(event) => {
+              if (!onRouteOverlayClick || !onMoveRouteOverlay) return;
+              event.stopPropagation();
+              const svg = event.currentTarget.ownerSVGElement;
+              if (!svg) return;
+              const rect = svg.getBoundingClientRect();
+              const { x: rawX, rawY } = getRawPoint(event.clientX, event.clientY, rect);
+              const x = flipHorizontalPerspective ? 100 - rawX : rawX;
+              const y = flipOffense ? 100 - rawY : rawY;
+              onRouteOverlayClick(route.id);
+              setDrag({ id: route.id, type: "route_overlay", lastX: x, lastY: y });
+            }}
             onClick={(event) => {
               if (!onRouteOverlayClick) return;
               event.stopPropagation();
@@ -569,6 +597,13 @@ function TrainingField({
               fill="white"
               stroke={route.color}
               strokeWidth={0.25 * annotationScale}
+              className={onMoveRouteOverlayPoint ? "cursor-grab active:cursor-grabbing" : undefined}
+              onPointerDown={(event) => {
+                if (!onRouteOverlayClick || !onMoveRouteOverlayPoint) return;
+                event.stopPropagation();
+                onRouteOverlayClick(route.id);
+                setDrag({ id: route.id, type: "route_point", pointIndex });
+              }}
             />
           )) : null}
           {route.labelX !== undefined && route.labelY !== undefined ? (
@@ -581,6 +616,18 @@ function TrainingField({
                 rx={1.15 * annotationScale}
                 fill="rgba(15,23,42,0.68)"
                 className={onRouteOverlayClick ? "cursor-pointer" : undefined}
+                onPointerDown={(event) => {
+                  if (!onRouteOverlayClick || !onMoveRouteOverlay) return;
+                  event.stopPropagation();
+                  const svg = event.currentTarget.ownerSVGElement;
+                  if (!svg) return;
+                  const rect = svg.getBoundingClientRect();
+                  const { x: rawX, rawY } = getRawPoint(event.clientX, event.clientY, rect);
+                  const x = flipHorizontalPerspective ? 100 - rawX : rawX;
+                  const y = flipOffense ? 100 - rawY : rawY;
+                  onRouteOverlayClick(route.id);
+                  setDrag({ id: route.id, type: "route_overlay", lastX: x, lastY: y });
+                }}
                 onClick={(event) => {
                   if (!onRouteOverlayClick) return;
                   event.stopPropagation();
@@ -597,6 +644,18 @@ function TrainingField({
                 fontWeight="700"
                 fill="white"
                 className={onRouteOverlayClick ? "cursor-pointer select-none" : undefined}
+                onPointerDown={(event) => {
+                  if (!onRouteOverlayClick || !onMoveRouteOverlay) return;
+                  event.stopPropagation();
+                  const svg = event.currentTarget.ownerSVGElement;
+                  if (!svg) return;
+                  const rect = svg.getBoundingClientRect();
+                  const { x: rawX, rawY } = getRawPoint(event.clientX, event.clientY, rect);
+                  const x = flipHorizontalPerspective ? 100 - rawX : rawX;
+                  const y = flipOffense ? 100 - rawY : rawY;
+                  onRouteOverlayClick(route.id);
+                  setDrag({ id: route.id, type: "route_overlay", lastX: x, lastY: y });
+                }}
                 onClick={(event) => {
                   if (!onRouteOverlayClick) return;
                   event.stopPropagation();
@@ -3000,6 +3059,8 @@ const existingStats =
     updateSelectedRunFitOverlay,
     updateSelectedRunFitTag,
     nudgeSelectedRunFitObject,
+    moveRunFitRouteOverlay,
+    moveRunFitRouteOverlayPoint,
     duplicateSelectedRunFitObject,
     deleteSelectedRunFitObject,
     bringSelectedRunFitLineForward,
@@ -3525,6 +3586,8 @@ const existingStats =
     selectedRunFitTagId,
     selectRunFitOverlay,
     selectRunFitTag,
+    moveRunFitRouteOverlay,
+    moveRunFitRouteOverlayPoint,
     selectedRunFitBaseBoardId,
     loadRunFitBaseBoard,
     selectedRunFitBoardId,

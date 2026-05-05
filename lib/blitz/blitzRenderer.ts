@@ -6,6 +6,7 @@ import {
   getBlitzPathwayMetaFromOverlay,
   type BlitzBaseBoardId,
   type BlitzBoardSpot,
+  type BlitzPathwayLayer,
   type BlitzPathwayId,
   type FrontMode,
   type PlayerDot,
@@ -50,7 +51,7 @@ type RouteOverlay = {
   pathway?: {
     defenderId: string;
     pathwayId: any;
-    layer?: "pressure" | "coverage" | "dl";
+    layer?: BlitzPathwayLayer;
   };
 };
 
@@ -193,6 +194,26 @@ export function buildBlitzDisplayOverlays({
   blitzPreview: Pick<BlitzBoardShell, "defensePlayers" | "offensePlayers" | "runStrength" | "passStrength" | "losY" | "wingY">;
   selectedBlitzFrontMode: FrontMode;
 }): RouteOverlay[] {
+  const originX = getBlitzOriginX(blitzPreview.offensePlayers);
+  const getDefenderSide = (defenderId: string): Side => (
+    (blitzPreview.defensePlayers.find((player) => player.id === defenderId)?.x ?? originX) < originX ? "left" : "right"
+  );
+  const deDropSides = blitzRouteOverlays
+    .map((overlay) => getBlitzPathwayMetaFromOverlay(overlay as Parameters<typeof getBlitzPathwayMetaFromOverlay>[0]))
+    .filter((pathway): pathway is NonNullable<typeof pathway> => Boolean(pathway))
+    .filter((pathway) => (
+      ["SDE", "WDE"].includes(pathway.defenderId)
+      && ["drop_hook", "drop_curl_flat"].includes(pathway.pathwayId)
+    ))
+    .map((pathway) => getDefenderSide(pathway.defenderId));
+  const interiorCopDefenderIds = Array.from(new Set(deDropSides.map((dropSide) => {
+    const interiors = blitzPreview.defensePlayers.filter((player) => ["N", "T"].includes(player.id));
+    const closestInterior = interiors.sort((a, b) => (
+      dropSide === "left" ? a.x - b.x : b.x - a.x
+    ))[0];
+    return closestInterior?.id;
+  }).filter(Boolean) as string[]));
+
   return [
     ...blitzRouteOverlays.map((overlay) => {
       const pathway = getBlitzPathwayMetaFromOverlay(overlay as Parameters<typeof getBlitzPathwayMetaFromOverlay>[0]);
@@ -203,6 +224,7 @@ export function buildBlitzDisplayOverlays({
         id: overlay.id,
         defender,
         offensePlayers: blitzPreview.offensePlayers,
+        defensePlayers: blitzPreview.defensePlayers,
         pathwayId: pathway.pathwayId as BlitzPathwayId,
         runStrength: blitzPreview.runStrength,
         passStrength: blitzPreview.passStrength,
@@ -210,6 +232,7 @@ export function buildBlitzDisplayOverlays({
         wingY: blitzPreview.wingY,
         frontMode: selectedBlitzFrontMode,
         layer: pathway.layer,
+        interiorCopDefenderIds,
       });
     }),
     ...blitzDraftOverlay,

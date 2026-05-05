@@ -33,7 +33,7 @@ export type RouteOverlay = {
   pathway?: {
     defenderId: string;
     pathwayId: BlitzPathwayId | RunFitPathwayId;
-    layer?: "pressure" | "coverage" | "dl";
+    layer?: "pressure" | "coverage" | "dl" | "cover2";
   };
 };
 
@@ -307,6 +307,34 @@ export function createRunFitActions(args: any) {
         tag.id === selectedRunFitTagId ? { ...tag, x: clamp(tag.x + dx, 2, 98), y: clamp(tag.y + dy, 2, 98) } : tag
       )));
     }
+  };
+  const moveRunFitRouteOverlay = (id: string, dx: number, dy: number) => {
+    setRunFitRouteOverlays((prev: RouteOverlay[]) => prev.map((overlay) => (
+      overlay.id === id
+        ? {
+            ...overlay,
+            path: overlay.path.map((point) => ({ x: clamp(point.x + dx, 2, 98), y: clamp(point.y + dy, 2, 98) })),
+            labelX: overlay.labelX === undefined ? undefined : clamp(overlay.labelX + dx, 2, 98),
+            labelY: overlay.labelY === undefined ? undefined : clamp(overlay.labelY + dy, 2, 98),
+          }
+        : overlay
+    )));
+  };
+  const moveRunFitRouteOverlayPoint = (id: string, pointIndex: number, x: number, y: number) => {
+    setRunFitRouteOverlays((prev: RouteOverlay[]) => prev.map((overlay) => {
+      if (overlay.id !== id) return overlay;
+      const nextPath = overlay.path.map((point, idx) => (
+        idx === pointIndex ? { x: clamp(x, 2, 98), y: clamp(y, 2, 98) } : point
+      ));
+      const movedLastPoint = pointIndex === overlay.path.length - 1;
+
+      return {
+        ...overlay,
+        path: nextPath,
+        labelX: movedLastPoint && overlay.labelX !== undefined ? nextPath[pointIndex]?.x : overlay.labelX,
+        labelY: movedLastPoint && overlay.labelY !== undefined ? clamp((nextPath[pointIndex]?.y ?? y) - 3, 2, 98) : overlay.labelY,
+      };
+    }));
   };
   const duplicateSelectedRunFitObject = () => {
     if (selectedRunFitOverlay) {
@@ -803,6 +831,8 @@ export function createRunFitActions(args: any) {
     updateSelectedRunFitOverlay,
     updateSelectedRunFitTag,
     nudgeSelectedRunFitObject,
+    moveRunFitRouteOverlay,
+    moveRunFitRouteOverlayPoint,
     duplicateSelectedRunFitObject,
     deleteSelectedRunFitObject,
     bringSelectedRunFitLineForward,

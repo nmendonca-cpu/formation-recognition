@@ -27,6 +27,7 @@ import {
   type BlitzCallFamilyId,
   type BlitzCallId,
   type BlitzCallType,
+  type BlitzPathwayLayer,
   type BlitzPathwayId,
   type FrontMode,
 } from "@/lib/blitz/blitzLogic";
@@ -54,7 +55,7 @@ type RouteOverlay = {
   pathway?: {
     defenderId: string;
     pathwayId: BlitzPathwayId | string;
-    layer?: "pressure" | "coverage" | "dl";
+    layer?: BlitzPathwayLayer;
   };
 };
 
@@ -84,6 +85,7 @@ type BlitzBoardProps = {
 };
 
 const BLITZ_BOARDS_STORAGE_KEY = "formation-recognition-blitz-boards-v1";
+const ADMIN_ONLY_BLITZ_FAMILIES = new Set<BlitzCallFamilyId>(["carr", "allen"]);
 
 export function BlitzBoard({ isAdmin = false, TrainingFieldComponent, blitzRendererDeps }: BlitzBoardProps) {
   const [showBlitzAdminTools, setShowBlitzAdminTools] = useState(false);
@@ -133,6 +135,9 @@ export function BlitzBoard({ isAdmin = false, TrainingFieldComponent, blitzRende
   const selectedBlitzCallOption = useMemo(() => (
     BLITZ_CALL_OPTIONS.find((option) => option.value === selectedBlitzCallId) ?? BLITZ_CALL_OPTIONS[0]
   ), [selectedBlitzCallId]);
+  const visibleBlitzCallFamilyOptions = useMemo(() => (
+    BLITZ_CALL_FAMILY_OPTIONS.filter((option) => isAdmin || !ADMIN_ONLY_BLITZ_FAMILIES.has(option.value))
+  ), [isAdmin]);
   const selectedStructuredBlitzBoard = useMemo(() => (
     blitzSavedBoards.find((board) => (
       board.frontMode === selectedBlitzFrontMode
@@ -224,6 +229,7 @@ export function BlitzBoard({ isAdmin = false, TrainingFieldComponent, blitzRende
     frontMode?: FrontMode;
     boardSpot?: BlitzBoardSpot;
   }) => {
+    if (!isAdmin && ADMIN_ONLY_BLITZ_FAMILIES.has(familyId)) familyId = "newton";
     const nextCallId = getBlitzCallId(familyId, callType);
     const selectedBoard = blitzSavedBoards.find((board) => (
       board.frontMode === frontMode
@@ -252,6 +258,7 @@ export function BlitzBoard({ isAdmin = false, TrainingFieldComponent, blitzRende
     const nextPreview = buildBlitzBoardShell(baseBoardId, frontMode, boardSpot, blitzRendererDeps);
     const routeOverlays = buildBlitzTemplateOverlays({
       callId: nextCallId,
+      baseBoardId,
       defensePlayers: nextPreview.defensePlayers,
       offensePlayers: nextPreview.offensePlayers,
       runStrength: nextPreview.runStrength,
@@ -275,6 +282,11 @@ export function BlitzBoard({ isAdmin = false, TrainingFieldComponent, blitzRende
   const loadBlitzFrontMode = (nextFrontMode: FrontMode) => {
     loadBlitzStructuredSelection({ frontMode: nextFrontMode });
   };
+
+  useEffect(() => {
+    if (!blitzBoardsHydrated || isAdmin || !ADMIN_ONLY_BLITZ_FAMILIES.has(selectedBlitzCallFamilyId)) return;
+    loadBlitzStructuredSelection({ familyId: "newton" });
+  }, [blitzBoardsHydrated, isAdmin, selectedBlitzCallFamilyId]);
 
   const handleBlitzFieldClick = (x: number, y: number) => {
     if (!isAdmin) return;
@@ -339,6 +351,7 @@ export function BlitzBoard({ isAdmin = false, TrainingFieldComponent, blitzRende
     const overlay = buildBlitzPathwayOverlay({
       defender,
       offensePlayers: blitzPreview.offensePlayers,
+      defensePlayers: blitzPreview.defensePlayers,
       pathwayId: selectedBlitzPathwayId,
       runStrength: blitzPreview.runStrength,
       passStrength: blitzPreview.passStrength,
@@ -357,6 +370,7 @@ export function BlitzBoard({ isAdmin = false, TrainingFieldComponent, blitzRende
     if (!isAdmin) return;
     const overlays = buildBlitzTemplateOverlays({
       callId: selectedBlitzCallId,
+      baseBoardId: selectedBlitzBaseBoardId,
       defensePlayers: blitzPreview.defensePlayers,
       offensePlayers: blitzPreview.offensePlayers,
       runStrength: blitzPreview.runStrength,
@@ -388,6 +402,7 @@ export function BlitzBoard({ isAdmin = false, TrainingFieldComponent, blitzRende
     const preview = buildBlitzBoardShell(boardOption.value, selectedBlitzFrontMode, selectedBlitzBoardSpot, blitzRendererDeps);
     const routeOverlays = buildBlitzTemplateOverlays({
       callId,
+      baseBoardId: boardOption.value,
       defensePlayers: preview.defensePlayers,
       offensePlayers: preview.offensePlayers,
       runStrength: preview.runStrength,
@@ -576,7 +591,7 @@ export function BlitzBoard({ isAdmin = false, TrainingFieldComponent, blitzRende
                 <SelectValue />
               </SelectTrigger>
               <SelectContent className="max-h-80 overflow-y-auto">
-                {BLITZ_CALL_FAMILY_OPTIONS.map((option) => (
+                {visibleBlitzCallFamilyOptions.map((option) => (
                   <SelectItem key={option.value} value={option.value}>
                     {option.label}
                   </SelectItem>
@@ -648,7 +663,7 @@ export function BlitzBoard({ isAdmin = false, TrainingFieldComponent, blitzRende
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent className="max-h-80 overflow-y-auto">
-                        {BLITZ_CALL_FAMILY_OPTIONS.map((option) => (
+                        {visibleBlitzCallFamilyOptions.map((option) => (
                           <SelectItem key={option.value} value={option.value}>
                             {option.label}
                           </SelectItem>

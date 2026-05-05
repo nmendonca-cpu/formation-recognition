@@ -23,14 +23,30 @@ Main modes:
 - `Film Mode`: uploaded read-key clips. Study mode shows full clips; quiz mode shows trimmed clips and asks run/pass/scheme/direction/details.
 - `Pass Concept Mode`: visually teaches route concepts and quizzes route assignments or concept names.
 - `Blitz Mode`: chalkboard mode for premade blitz pathways and coverage responsibilities.
-- `Run Fit Mode`: currently being reworked around manual drawing tools and saved custom pathways.
+- `Run Fit Mode`: currently being reworked around manual drawing tools and premade fit pathways.
 
 ## File Map
 
-- `app/page.tsx`: Main app. Most formation data, quiz logic, alignment rules, film mode, pass concepts, blitz mode, run fit tools, scoring, and Supabase calls currently live here.
+- `app/page.tsx`: Top-level app shell for section/mode switching, account/admin gates, shared scoring, and wiring extracted boards together.
 - `app/login/page.tsx`: Login page.
+- `app/signup/page.tsx`: Signup page.
+- `components/alignment/AlignmentBoard.tsx`: Alignment Mode UI for study/quiz defensive landmarks and defender placement.
+- `components/blitz/BlitzBoard.tsx`: Blitz Mode UI for board selection, admin tools, saved boards, and pathway controls.
+- `components/film/FilmPlayer.tsx`: Film Mode UI for study/quiz clips, metadata editing/upload tools, and filtered clip work.
+- `components/formation/FormationBoard.tsx`: Formation Trainer UI for study/quiz/offensive formation recognition and editing.
+- `components/passConcept/PassConceptBoard.tsx`: Pass Concept Mode UI for study/quiz route boards and concept answers.
+- `components/runFit/RunFitBoard.tsx`: Run Fit Mode UI for manual drawing tools, premade fit pathways, and admin fit-board controls.
 - `components/ui/*`: Shared UI primitives like `Button`, `Card`, `Input`, `Select`.
+- `lib/alignment/alignmentLogic.ts`: Defensive landmark generation, `4-3`/`4-4` alignment rules, and alignment validation helpers.
+- `lib/blitz/blitzLogic.ts`: Blitz call families, auto-checks, coverage assignments, DL slants, and pathway calculations.
+- `lib/blitz/blitzRenderer.ts`: Blitz board rendering helpers for field, players, labels, and drawn pathways.
+- `lib/film/filmLogic.ts`: Film clip metadata types, bucket/scheme helpers, quiz scoring helpers, and clip organization logic.
+- `lib/formation/formationLogic.ts`: Formation rules, personnel groupings, alignment buckets, bunch/stack/empty logic, and layout generation.
+- `lib/passConcept/passConceptLogic.ts`: Route definitions, concept data, route drawing helpers, and pass-concept quiz logic.
+- `lib/runFit/runFitLogic.ts`: Run Fit drawing/pathway types, premade pathway helpers, and manual board utility logic.
 - `lib/supabase/client.ts`: Browser Supabase client.
+- `lib/supabase/server.ts`: Server Supabase client helper for auth-aware server routes/pages.
+- `lib/utils.ts`: Shared utility helpers such as class name merging.
 - `supabase/*`: SQL/schema-related project files if present.
 - `README.md`: General project notes.
 - `ROADMAP.md`: Future roadmap notes. This may be untracked locally; do not assume it is committed.
@@ -99,6 +115,7 @@ Known admin emails include:
   - Carr / Raiders / Oakland
   - Allen / Bills / Buffalo
   - Brady / Patriots / Boston
+  - Fitz / Bucs / Tampa Bay
 - Call types:
   - Last Name = 4-man pressure with DE drop.
   - Team Name = 5-man pressure, no DE drop.
@@ -112,9 +129,14 @@ Known admin emails include:
 
 ### Current Blitz Special Rules
 
-- Newton auto-checks to Fields behavior vs detached #2 3x1 formations such as `B Trey`, `Troop`, and `B Trips`.
+- Newton auto-checks to Fields behavior only when the #3 is detached in a 3x1 surface.
 - FS `MOF` pathway should point toward the bottom of the board every time.
 - Hash boundary `C/F` should landmark horizontally near the numbers at the discussed vertical depth.
+- Cover 2 flat landmarks are wider than Cover 3 `C/F` landmarks and should stay distinct.
+- Brady and Fitz:
+  - Brady is boundary B-gap pressure.
+  - Fitz/Bucs/Tampa Bay mirrors Brady as field B-gap pressure.
+  - Blitz-side DE uses a COP rush instead of slanting.
 - Bradshaw:
   - BS blitzes.
   - SDE drops.
@@ -134,8 +156,23 @@ Known admin emails include:
   - BS plays weak flat.
   - DE still drops into strong hook.
 - Allen:
-  - Mike blitz is a `C-Read`.
-  - Mike pathway should go directly at the center.
+  - The ILB aligned to the `3T` side is the `C-Read` blitzer.
+  - C-Read pathway should go directly at the center.
+  - Nose stunts into the near-side B gap.
+  - Non-dropping DE uses a COP rush.
+- NOLA:
+  - Will blitzes the boundary edge.
+  - Mike fits weak A gap across formations.
+- Oakland:
+  - Uses Carr coverage rules.
+  - Will inserts into weak A gap.
+- Buffalo:
+  - Uses Allen C-Read/Nose movement.
+  - Both ILBs blitz their own A gaps.
+- Run Fit Mode is currently a manual/admin build space:
+  - Premade run-fit pathway controls sit directly under the board.
+  - Saved custom pathway stamping has been removed from the UI.
+  - Manual drawing tools are the preferred way to create exact fit boards.
 
 ## Film Mode Rules
 
@@ -174,13 +211,12 @@ Known admin emails include:
 
 ## Recent Changes Log
 
-- Added/updated Run Fit manual drawing tools and moved line/tag editing into a horizontal toolbar near the board.
-- Updated Newton auto-check vs detached #2 3x1 formations.
-- Updated hash-board blitz logic so board spot is passed into template generation.
-- Added C-Read Blitz for Allen/Mike aiming directly at the center.
-- Added Carr Bounce for `4-4` Carr as a weak-side Cover 2 rotation.
-- Added deep half, field flat, weak flat, and Tampa pole blitz pathways.
-- Updated Bradshaw logic so BS blitz/SDE drop causes Mike/Will zone responsibility bump.
+- Moved Run Fit premade pathway controls directly under the board and removed saved custom pathway UI.
+- Updated Run Fit manual drawing tools and moved line/tag editing into a horizontal toolbar near the board.
+- Updated Newton auto-check so only a detached #3 triggers Fields behavior.
+- Added Brady/Fitz B-gap pressure rules with COP rush behavior for the blitz-side DE.
+- Added/updated Allen, NOLA, Oakland, and Buffalo blitz family rules.
+- Added distinct Cover 2 flat landmarks separate from Cover 3 `C/F` landmarks.
 
 ## Prompting Guidance For Future AI Sessions
 
