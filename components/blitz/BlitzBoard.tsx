@@ -137,6 +137,7 @@ type BlitzBoardProps = {
 
 const BLITZ_BOARDS_STORAGE_KEY = "formation-recognition-blitz-boards-v1";
 const ADMIN_ONLY_BLITZ_FAMILIES = new Set<BlitzCallFamilyId>(["carr", "allen"]);
+const isPublicBlitzFamily = (familyId: BlitzCallFamilyId) => !ADMIN_ONLY_BLITZ_FAMILIES.has(familyId);
 const BLITZ_QUIZ_DL_OPTIONS: BlitzQuizAnswerLabel[] = ["Step", "Gap", "C-Read", "Stick", "COP", "Drop Hook", "Drop C/F"];
 const BLITZ_QUIZ_LB_OPTIONS: BlitzQuizAnswerLabel[] = ["Str Hook", "Wk Hook", "3 Up", "Str C/F", "Wk C/F", "Hole", "Wall Flat Str", "Wall Flat Wk", "Str Eyes", "Wk Eyes", "Edge Blitz", "A Gap Blitz", "B Gap Blitz", "C-Read Blitz"];
 const BLITZ_QUIZ_DB_OPTIONS: BlitzQuizAnswerLabel[] = ["Str C/F", "Wk C/F", "MCD", "Wall Flat Str", "Wall Flat Wk", "Deep Third Str", "Deep Third Wk", "Match 1/3", "Deep 1/3", "MOF", "Deep Half Str", "Deep Half Wk", "Tampa Pole", "3 Up", "Eyes", "Str Eyes", "Wk Eyes", "Eyes 1/3", "Eyes MOF", "Edge Blitz", "B Gap Blitz"];
@@ -216,7 +217,7 @@ export function BlitzBoard({
     BLITZ_CALL_OPTIONS.find((option) => option.value === selectedBlitzCallId) ?? BLITZ_CALL_OPTIONS[0]
   ), [selectedBlitzCallId]);
   const visibleBlitzCallFamilyOptions = useMemo(() => (
-    BLITZ_CALL_FAMILY_OPTIONS.filter((option) => isAdmin || !ADMIN_ONLY_BLITZ_FAMILIES.has(option.value))
+    BLITZ_CALL_FAMILY_OPTIONS.filter((option) => isAdmin || isPublicBlitzFamily(option.value))
   ), [isAdmin]);
   const selectedStructuredBlitzBoard = useMemo(() => (
     blitzSavedBoards.find((board) => (
@@ -602,7 +603,7 @@ export function BlitzBoard({
 
   const randomizePublicBlitzRep = () => {
     const pickRandom = <T,>(items: T[]) => items[Math.floor(Math.random() * items.length)];
-    const familyOption = pickRandom(visibleBlitzCallFamilyOptions);
+    const familyOption = pickRandom(visibleBlitzCallFamilyOptions.filter((option) => isAdmin || isPublicBlitzFamily(option.value)));
     const familyId = familyOption?.value ?? "newton";
     const callTypes = Object.keys(BLITZ_CALL_MATRIX[familyId]) as BlitzCallType[];
     loadBlitzStructuredSelection({
@@ -638,7 +639,7 @@ export function BlitzBoard({
   }, [blitzBoardsHydrated, blitzViewMode]);
 
   useEffect(() => {
-    if (!blitzBoardsHydrated || isAdmin || !ADMIN_ONLY_BLITZ_FAMILIES.has(selectedBlitzCallFamilyId)) return;
+    if (!blitzBoardsHydrated || isAdmin || isPublicBlitzFamily(selectedBlitzCallFamilyId)) return;
     loadBlitzStructuredSelection({ familyId: "newton" });
   }, [blitzBoardsHydrated, isAdmin, selectedBlitzCallFamilyId]);
 
