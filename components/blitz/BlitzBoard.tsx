@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -111,6 +111,7 @@ export function BlitzBoard({ isAdmin = false, TrainingFieldComponent, blitzRende
   const [blitzBoardsHydrated, setBlitzBoardsHydrated] = useState(false);
   const [selectedBlitzPathwayDefenderId, setSelectedBlitzPathwayDefenderId] = useState("M");
   const [selectedBlitzPathwayId, setSelectedBlitzPathwayId] = useState<BlitzPathwayId>("a_gap_blitz");
+  const publicRandomizedOnEntryRef = useRef(false);
 
   const blitzPreview = useMemo(
     () => buildBlitzBoardShell(selectedBlitzBaseBoardId, selectedBlitzFrontMode, selectedBlitzBoardSpot, blitzRendererDeps),
@@ -283,10 +284,30 @@ export function BlitzBoard({ isAdmin = false, TrainingFieldComponent, blitzRende
     loadBlitzStructuredSelection({ frontMode: nextFrontMode });
   };
 
+  const randomizePublicBlitzRep = () => {
+    const pickRandom = <T,>(items: T[]) => items[Math.floor(Math.random() * items.length)];
+    const familyOption = pickRandom(visibleBlitzCallFamilyOptions);
+    const familyId = familyOption?.value ?? "newton";
+    const callTypes = Object.keys(BLITZ_CALL_MATRIX[familyId]) as BlitzCallType[];
+    loadBlitzStructuredSelection({
+      familyId,
+      callType: pickRandom(callTypes) ?? "last_name",
+      baseBoardId: pickRandom(BLITZ_BASE_BOARD_OPTIONS)?.value ?? "double",
+      frontMode: pickRandom(["4-4", "4-3"] as FrontMode[]) ?? "4-4",
+      boardSpot: pickRandom(BLITZ_BOARD_SPOT_OPTIONS)?.value ?? "mof",
+    });
+  };
+
   useEffect(() => {
     if (!blitzBoardsHydrated || isAdmin || !ADMIN_ONLY_BLITZ_FAMILIES.has(selectedBlitzCallFamilyId)) return;
     loadBlitzStructuredSelection({ familyId: "newton" });
   }, [blitzBoardsHydrated, isAdmin, selectedBlitzCallFamilyId]);
+
+  useEffect(() => {
+    if (!blitzBoardsHydrated || isAdmin || publicRandomizedOnEntryRef.current) return;
+    publicRandomizedOnEntryRef.current = true;
+    randomizePublicBlitzRep();
+  }, [blitzBoardsHydrated, isAdmin]);
 
   const handleBlitzFieldClick = (x: number, y: number) => {
     if (!isAdmin) return;
@@ -769,12 +790,8 @@ export function BlitzBoard({ isAdmin = false, TrainingFieldComponent, blitzRende
               </>
             ) : null}
           </>
-        ) : (
-          <div className="rounded-xl border bg-slate-50 p-3 text-sm leading-6 text-slate-700">
-            Blitz Mode will let players study each defender&apos;s assignment once the answer keys are built.
-          </div>
-        )}
-        {blitzSaveNotice ? (
+        ) : null}
+        {isAdmin && blitzSaveNotice ? (
           <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-900">
             {blitzSaveNotice}
           </div>
