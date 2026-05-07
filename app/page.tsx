@@ -329,15 +329,16 @@ const blitzRendererDeps: BlitzRendererDeps = {
   getRunFitArrowStroke,
 };
 
-function Circle({ player, color = "bg-orange-600", text = "text-white", border = "border-white/30" }: {
+function Circle({ player, color = "bg-orange-600", text = "text-white", border = "border-white/30", className = "" }: {
   player: PlayerDot;
   color?: string;
   text?: string;
   border?: string;
+  className?: string;
 }) {
   return (
     <div
-      className={`absolute flex h-10 w-10 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border text-[10px] font-bold shadow ${color} ${text} ${border}`}
+      className={`absolute flex h-10 w-10 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border text-[10px] font-bold shadow ${color} ${text} ${border} ${className}`}
       style={{ left: `${player.x}%`, top: `${player.y}%` }}
     >
       {player.id}
@@ -473,6 +474,7 @@ function TrainingField({
   const sidelineInset = 1.5;
   const numberInset = 12;
   const annotationScale = compactAnnotations ? 0.72 : 1;
+  const hasDraggableItems = editableOffense || editableDefense || editableDefenseGhosts || Boolean(onMoveRouteOverlay || onMoveRouteOverlayPoint);
 
   const getRawPoint = (clientX: number, clientY: number, rect: DOMRect) => {
     const x = clamp(((clientX - rect.left) / rect.width) * 100, 2, 98);
@@ -491,6 +493,7 @@ function TrainingField({
 
   const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!drag) return;
+    e.preventDefault();
     const { x, y } = getPointer(e);
     if (drag.type === "route_overlay" && onMoveRouteOverlay) {
       const dx = x - (drag.lastX ?? x);
@@ -510,6 +513,7 @@ function TrainingField({
 
   const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!drag) return;
+    e.preventDefault();
     const { x, y } = getPointer(e);
     if (drag.type === "offense" && onMoveOffense) {
       const snap = nearestLandmark(x, y, offenseLandmarks);
@@ -583,7 +587,9 @@ function TrainingField({
             className={onRouteOverlayClick ? "cursor-pointer" : undefined}
             onPointerDown={(event) => {
               if (!onRouteOverlayClick || !onMoveRouteOverlay) return;
+              event.preventDefault();
               event.stopPropagation();
+              event.currentTarget.setPointerCapture?.(event.pointerId);
               const svg = event.currentTarget.ownerSVGElement;
               if (!svg) return;
               const rect = svg.getBoundingClientRect();
@@ -611,7 +617,9 @@ function TrainingField({
               className={onMoveRouteOverlayPoint ? "cursor-grab active:cursor-grabbing" : undefined}
               onPointerDown={(event) => {
                 if (!onRouteOverlayClick || !onMoveRouteOverlayPoint) return;
+                event.preventDefault();
                 event.stopPropagation();
+                event.currentTarget.setPointerCapture?.(event.pointerId);
                 onRouteOverlayClick(route.id);
                 setDrag({ id: route.id, type: "route_point", pointIndex });
               }}
@@ -635,7 +643,9 @@ function TrainingField({
                   className={onRouteOverlayClick ? "cursor-pointer" : undefined}
                   onPointerDown={(event) => {
                     if (!onRouteOverlayClick || !onMoveRouteOverlay) return;
+                    event.preventDefault();
                     event.stopPropagation();
+                    event.currentTarget.setPointerCapture?.(event.pointerId);
                     const svg = event.currentTarget.ownerSVGElement;
                     if (!svg) return;
                     const rect = svg.getBoundingClientRect();
@@ -663,7 +673,9 @@ function TrainingField({
                   className={onRouteOverlayClick ? "cursor-pointer select-none" : undefined}
                   onPointerDown={(event) => {
                     if (!onRouteOverlayClick || !onMoveRouteOverlay) return;
+                    event.preventDefault();
                     event.stopPropagation();
+                    event.currentTarget.setPointerCapture?.(event.pointerId);
                     const svg = event.currentTarget.ownerSVGElement;
                     if (!svg) return;
                     const rect = svg.getBoundingClientRect();
@@ -691,10 +703,11 @@ function TrainingField({
 
   return (
     <div
-      className="relative aspect-[19/9] w-full overflow-hidden rounded-2xl border bg-emerald-700"
+      className={`relative aspect-[19/9] w-full overflow-hidden rounded-2xl border bg-emerald-700 select-none ${hasDraggableItems ? "touch-none" : ""} ${drag ? "cursor-grabbing" : ""}`}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onPointerLeave={() => setDrag(null)}
+      onDragStart={(event) => event.preventDefault()}
       onClick={(e) => {
         if (!onFieldClick || drag) return;
         if (e.detail > 1) return;
@@ -840,10 +853,13 @@ function TrainingField({
       {defenseGhosts.map((p) => (
         <div
           key={`dg-${p.id}`}
-          className="absolute -translate-x-1/2 -translate-y-1/2"
+          className={`absolute -translate-x-1/2 -translate-y-1/2 select-none ${editableDefenseGhosts ? "cursor-grab touch-none active:cursor-grabbing" : ""}`}
           style={{ left: `${p.x}%`, top: `${p.y}%` }}
-          onPointerDown={() => {
+          onPointerDown={(event) => {
             if (!editableDefenseGhosts) return;
+            event.preventDefault();
+            event.stopPropagation();
+            event.currentTarget.setPointerCapture?.(event.pointerId);
             setDrag({ id: p.id, type: "defense_ghost" });
           }}
         >
@@ -854,9 +870,13 @@ function TrainingField({
         <div
           style={{ opacity: dimOffenseOnAnswers ? 0.35 : 1 }}
           key={p.id}
-          onPointerDown={() => {
+          className={editableOffense && !lockedOffenseIds.includes(p.id) ? "cursor-grab select-none touch-none active:cursor-grabbing" : "select-none"}
+          onPointerDown={(event) => {
             if (!editableOffense) return;
             if (lockedOffenseIds.includes(p.id)) return;
+            event.preventDefault();
+            event.stopPropagation();
+            event.currentTarget.setPointerCapture?.(event.pointerId);
             setDrag({ id: p.id, type: "offense" });
           }}
         >
@@ -864,6 +884,7 @@ function TrainingField({
             player={{ ...p, x: maybeFlipX(p.x, flipHorizontalPerspective), y: maybeFlipY(p.y, flipOffense) }}
             color={incorrectOffenseIds.includes(p.id) ? "bg-red-500" : undefined}
             border={incorrectOffenseIds.includes(p.id) ? "border-red-300" : undefined}
+            className={editableOffense && !lockedOffenseIds.includes(p.id) ? "cursor-grab active:cursor-grabbing" : ""}
           />
         </div>
       ))}
@@ -872,6 +893,7 @@ function TrainingField({
         return (
           <div
             key={p.id}
+            className={editableDefense ? "cursor-grab select-none touch-none active:cursor-grabbing" : onDefenseClick ? "cursor-pointer select-none" : "select-none"}
             onPointerDown={(event) => {
               if (!editableDefense) {
                 if (onDefenseClick) {
@@ -880,6 +902,9 @@ function TrainingField({
                 }
                 return;
               }
+              event.preventDefault();
+              event.stopPropagation();
+              event.currentTarget.setPointerCapture?.(event.pointerId);
               setDrag({ id: p.id, type: "defense" });
             }}
           >
@@ -888,6 +913,7 @@ function TrainingField({
               color={incorrectDefenseIds.includes(p.id) ? "bg-red-500" : "bg-sky-600"}
               text={showingAnswers ? "text-black" : "text-white"}
               border={incorrectDefenseIds.includes(p.id) ? "border-red-300" : "border-sky-200/40"}
+              className={editableDefense ? "cursor-grab active:cursor-grabbing" : onDefenseClick ? "cursor-pointer" : ""}
             />
           </div>
         );

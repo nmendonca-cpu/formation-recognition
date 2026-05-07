@@ -199,6 +199,7 @@ function inferStuntQuizFromBoard(board: StuntSavedBoard): StuntSavedBoard["quiz"
   ));
   const isPirateOnly = /\bpirate\b/i.test(board.title) && !/\bbandit\b/i.test(board.title);
   const isBanditOnly = /\bbandit\b/i.test(board.title) && !/\bpirate\b/i.test(board.title);
+  const isWrapBoard = /\bwrap\b/i.test(board.title);
 
   if (directionPlayerIds.length && (isPirateOnly || isBanditOnly)) {
     return {
@@ -208,7 +209,7 @@ function inferStuntQuizFromBoard(board: StuntSavedBoard): StuntSavedBoard["quiz"
     };
   }
 
-  if (hasCompleteStuntQuiz(board.quiz)) return board.quiz;
+  if (!isWrapBoard && hasCompleteStuntQuiz(board.quiz)) return board.quiz;
   if (/\bgames?\b/i.test(board.title)) {
     return {
       type: "games",
@@ -242,6 +243,8 @@ function inferStuntQuizFromBoard(board: StuntSavedBoard): StuntSavedBoard["quiz"
       directionPlayerIds: [],
     };
   }
+
+  if (isWrapBoard && hasCompleteStuntQuiz(board.quiz)) return board.quiz;
 
   const direction = inferDirectionFromArrows(arrowOverlays, board.surface);
 

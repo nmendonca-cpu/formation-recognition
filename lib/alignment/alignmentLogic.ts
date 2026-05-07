@@ -760,11 +760,9 @@ export function getAlignmentAnswerKey(formation: FormationMeta, landmarks: Landm
   };
   const getSafetyShadeForTwoEligibleSide = (side: Side, numberTwo: PlayerDot | null) => {
     if (!numberTwo) return null;
-    const hash = findLandmarkByLabel(landmarks, "db", "Hash", side);
-    if (!hash) return getShade(numberTwo, "db", "I");
-
-    const onHashOrWider = side === "left" ? numberTwo.x <= hash.x + 0.2 : numberTwo.x >= hash.x - 0.2;
-    return getShade(numberTwo, "db", onHashOrWider ? "I" : "O");
+    const inline = getInlineSurface(formation, side);
+    const isTeOrWingNumberTwo = isWingLikePlayer(numberTwo) || inline?.id === numberTwo.id;
+    return getShade(numberTwo, "db", isTeOrWingNumberTwo ? "O" : "I");
   };
 
   const hasTrueInlineTe = Boolean(getInlineSurface(formation, "left") || getInlineSurface(formation, "right"));
@@ -1087,8 +1085,9 @@ export function getAlignmentAnswerKey(formation: FormationMeta, landmarks: Landm
       const edge = findLandmarkByLabel(landmarks, "db", "Edge", passStrength);
       if (edge) answer.FS = { x: edge.x, y: edge.y };
     } else if (cometSide && cometSide === passStrength) {
-      const cometFirstEligible = getNumberTwoReceiver(formation, cometSide) || getOutsideReceiver(formation, cometSide) || getInlineSurface(formation, cometSide) || getWingSurface(formation, cometSide);
-      const fs = getShade(cometFirstEligible, "db", "I");
+      const cometNumberTwo = getNumberTwoReceiver(formation, cometSide);
+      const cometFirstEligible = cometNumberTwo || getOutsideReceiver(formation, cometSide) || getInlineSurface(formation, cometSide) || getWingSurface(formation, cometSide);
+      const fs = getSafetyShadeForTwoEligibleSide(cometSide, cometNumberTwo) || getShade(cometFirstEligible, "db", "I");
       if (fs) answer.FS = { x: fs.x, y: fs.y };
     } else if (fsStrengthEligibleCount === 3 && fsNumberTwo && fsNumberThree) {
       const fs = getDbApexBetween(passStrength, fsNumberTwo, fsNumberThree) || (fsApex && (is31 || is32) ? fsApex : null);
@@ -1114,8 +1113,9 @@ export function getAlignmentAnswerKey(formation: FormationMeta, landmarks: Landm
       const edge = findLandmarkByLabel(landmarks, "db", "Edge", passAway);
       if (edge) answer.BS = { x: edge.x, y: edge.y };
     } else if (cometSide && cometSide === passAway) {
-      const cometFirstEligible = getNumberTwoReceiver(formation, cometSide) || getOutsideReceiver(formation, cometSide) || getInlineSurface(formation, cometSide) || getWingSurface(formation, cometSide);
-      const bs = getShade(cometFirstEligible, "db", "I");
+      const cometNumberTwo = getNumberTwoReceiver(formation, cometSide);
+      const cometFirstEligible = cometNumberTwo || getOutsideReceiver(formation, cometSide) || getInlineSurface(formation, cometSide) || getWingSurface(formation, cometSide);
+      const bs = getSafetyShadeForTwoEligibleSide(cometSide, cometNumberTwo) || getShade(cometFirstEligible, "db", "I");
       if (bs) answer.BS = { x: bs.x, y: bs.y };
     } else if (fsStrengthEligibleCount === 3 && bsWeakEligibleCount === 2 && bsSlot) {
       const bs = bsApex || findLandmarkByLabel(landmarks, "db", "Apex", passAway);
