@@ -74,6 +74,7 @@ const STUNT_QUIZ_MODE_LABELS = {
   build: "Build the Stunt",
   name: "Name the Stunt",
 } as const;
+const DEFAULT_STUNT_QUIZ_TE_SIDE: "left" | "right" = "right";
 
 type ScoreSummary = {
   awarded: number;
@@ -634,6 +635,9 @@ export function StuntBoard({
     ? (showQuizAnswerBoard ? routeOverlays : [])
     : displayOverlays;
   const boardFieldTags = stuntViewMode === "quiz" ? (showQuizAnswerBoard ? fieldTags : []) : fieldTags;
+  const boardTeSide = stuntViewMode === "quiz" && !showStuntCorrectAnswer
+    ? teSide === "none" ? DEFAULT_STUNT_QUIZ_TE_SIDE : teSide
+    : teSide;
   const canEditStuntBoard = stuntViewMode === "study" && showStuntAdminTools;
   const expectedFirstPlayerIds = [quizFirstPlayerId, quizExtraFirstPlayerId].filter(Boolean) as StuntPlayerId[];
   const expectedSecondPlayerIds = [quizSecondPlayerId].filter(Boolean) as StuntPlayerId[];
@@ -1140,7 +1144,7 @@ export function StuntBoard({
             }}
             onMoveOverlay={canEditStuntBoard ? moveOverlay : () => {}}
             onMoveOverlayPoint={canEditStuntBoard ? moveOverlayPoint : () => {}}
-            teSide={teSide}
+            teSide={boardTeSide}
             loadFront={loadFront}
           />
         </div>
