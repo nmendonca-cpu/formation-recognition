@@ -3299,7 +3299,8 @@ const existingStats =
     }
 
     const elapsedMs = Math.max(250, Date.now() - attemptStartedAt);
-    const accuracyPoints = Math.round(accuracy * 100);
+    const modePointMultiplier = activeMode === "alignment" ? 1.5 : 1;
+    const accuracyPoints = Math.round(accuracy * 100 * modePointMultiplier);
     const speedBonus = activeMode === "alignment" || activeMode === "blitz" || activeMode === "stunt"
       ? 0
       : isCorrect
