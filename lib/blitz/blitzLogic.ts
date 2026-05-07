@@ -85,7 +85,7 @@ export type BlitzPathwayId =
   | "deep_third_right";
 
 export type RunFitLineEnd = "square" | "circle" | "arrow";
-export type BlitzPathwayLayer = "pressure" | "coverage" | "dl" | "cover2";
+export type BlitzPathwayLayer = "pressure" | "coverage" | "dl" | "cover2" | "eyes";
 
 export type RouteOverlay = {
   id: string;
@@ -859,7 +859,10 @@ export function buildBlitzPathwayOverlay({
   }
   path = trimPathStartToCircleEdge(path);
   const hasThreeReceiverPassStrength = getBlitzOrderedEligibles(offensePlayers, passStrength).length >= 3;
-  const coverageLabel = pathwayId === "weak_hook" && hasThreeReceiverPassStrength && layer !== "cover2" ? "3 Up" : getBlitzCoverageLabel(pathwayId);
+  const coverageLabel =
+    layer === "eyes" && (pathwayId === "deep_third_left" || pathwayId === "deep_third_right")
+      ? "Eyes 1/3"
+      : pathwayId === "weak_hook" && hasThreeReceiverPassStrength && layer !== "cover2" ? "3 Up" : getBlitzCoverageLabel(pathwayId);
   const label = coverageLabel || getBlitzDlMovementLabel(defender, offensePlayers, pathwayId, layer, interiorCopDefenderIds);
   const labelPoint = getCoverageLabelPoint();
 
@@ -1535,6 +1538,14 @@ export function getBlitzTemplateAssignments({
       return assignment;
     });
   };
+  const markLocationThirdsAsEyes = (inputAssignments: typeof assignments) => {
+    if (getBlitzCallType(callId) !== "location_name") return inputAssignments;
+    return inputAssignments.map((assignment) => (
+      assignment.layer === "coverage" && (assignment.pathwayId === "deep_third_left" || assignment.pathwayId === "deep_third_right")
+        ? { ...assignment, layer: "eyes" as BlitzPathwayLayer }
+        : assignment
+    ));
+  };
   const resolveMatchCoverage = (inputAssignments: typeof assignments) => {
     if (inputAssignments.some((assignment) => assignment.layer === "cover2")) return inputAssignments;
     if (getBlitzCallType(callId) === "location_name") return inputAssignments;
@@ -1546,7 +1557,11 @@ export function getBlitzTemplateAssignments({
         : isMatch ? "match_third_right" : "deep_area_third_right"
     );
     const sideCf = (side: Side): BlitzPathwayId => side === strongCoverageSide ? "mcd" : "weak_mcd";
-    const normalCf = (side: Side): BlitzPathwayId => strongCfPathwayForSide(side);
+    const normalCf = (side: Side): BlitzPathwayId => (
+      getBlitzCallType(callId) === "team_name"
+        ? side === strongCoverageSide ? "wall_flat" : "weak_wall_flat"
+        : strongCfPathwayForSide(side)
+    );
     const getCfSide = (assignment: typeof assignments[number]): Side | null => {
       if (assignment.pathwayId === "curl_flat" || assignment.pathwayId === "mcd" || assignment.pathwayId === "wall_flat") return strongCoverageSide;
       if (assignment.pathwayId === "weak_curl_flat" || assignment.pathwayId === "weak_mcd" || assignment.pathwayId === "weak_wall_flat") return weakCoverageSide;
@@ -1638,7 +1653,7 @@ export function getBlitzTemplateAssignments({
   if (callId === "bucs") runTeamNamePressureWithCop("M", "field_b_gap_blitz", getFieldOrPassStrengthSide());
   if (callId === "tampa_bay") runCityNamePressureWithCop("M", "field_b_gap_blitz", "W", "weak_a_gap_blitz", getFieldOrPassStrengthSide());
 
-  return resolveMatchCoverage(resolveHashBoardCoverageSides(resolveFourThreeWallFlatCoverage(resolveFourThreeLocationEyesCoverage(resolveFourThreeDeDropZoneConflicts()))));
+  return markLocationThirdsAsEyes(resolveMatchCoverage(resolveHashBoardCoverageSides(resolveFourThreeWallFlatCoverage(resolveFourThreeLocationEyesCoverage(resolveFourThreeDeDropZoneConflicts())))));
 }
 
 export function buildBlitzTemplateOverlays({

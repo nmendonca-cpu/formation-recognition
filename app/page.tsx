@@ -12,6 +12,7 @@ import { FilmPlayer } from "@/components/film/FilmPlayer";
 import { FormationBoard } from "@/components/formation/FormationBoard";
 import { PassConceptBoard } from "@/components/passConcept/PassConceptBoard";
 import { RunFitBoard } from "@/components/runFit/RunFitBoard";
+import { StuntBoard } from "@/components/stunt/StuntBoard";
 import { createClient } from "@/lib/supabase/client";
 import { type BlitzBaseBoardId } from "@/lib/blitz/blitzLogic";
 import { type BlitzRendererDeps } from "@/lib/blitz/blitzRenderer";
@@ -120,7 +121,7 @@ import {
   getOffenseBuildLandmarks,
 } from "@/lib/formation/formationLogic";
 
-type AppMode = "study" | "alignment" | "offense_build" | "film" | "quiz" | "editor" | "account" | "leaderboard" | "concept" | "run_fit" | "blitz";
+type AppMode = "study" | "alignment" | "offense_build" | "film" | "quiz" | "editor" | "account" | "leaderboard" | "concept" | "run_fit" | "blitz" | "stunt";
 type AppSection = "offense" | "defense" | "admin";
 type ScoreMode = "quiz" | "offense_build" | "alignment" | "film" | "concept" | "blitz";
 type LeaderboardMode = ScoreMode;
@@ -233,6 +234,7 @@ const MODE_OPTIONS: { value: AppMode; label: string; title: string; section: App
   { value: "film", label: "Film Mode", title: "FILM MODE", section: "defense" },
   { value: "run_fit", label: "Run Fit", title: "RUN FIT MODE", section: "defense" },
   { value: "blitz", label: "Blitz Mode", title: "BLITZ MODE", section: "defense" },
+  { value: "stunt", label: "Stunt Mode", title: "STUNT MODE", section: "defense" },
   { value: "editor", label: "Formation Editor", title: "FORMATION EDITOR", section: "admin" },
   { value: "account", label: "Account", title: "ACCOUNT", section: "admin", hiddenFromNav: true },
   { value: "leaderboard", label: "Leaderboard", title: "LEADERBOARD", section: "admin", hiddenFromNav: true },
@@ -612,66 +614,73 @@ function TrainingField({
               }}
             />
           )) : null}
-          {route.labelX !== undefined && route.labelY !== undefined ? (
-            <>
-              <rect
-                x={maybeFlipX(route.labelX, flipHorizontalPerspective) - 2.8 * annotationScale}
-                y={maybeFlipY(route.labelY, flipOffense) - 2.45 * annotationScale}
-                width={7.2 * annotationScale}
-                height={4.2 * annotationScale}
-                rx={1.15 * annotationScale}
-                fill="rgba(15,23,42,0.68)"
-                className={onRouteOverlayClick ? "cursor-pointer" : undefined}
-                onPointerDown={(event) => {
-                  if (!onRouteOverlayClick || !onMoveRouteOverlay) return;
-                  event.stopPropagation();
-                  const svg = event.currentTarget.ownerSVGElement;
-                  if (!svg) return;
-                  const rect = svg.getBoundingClientRect();
-                  const { x: rawX, rawY } = getRawPoint(event.clientX, event.clientY, rect);
-                  const x = flipHorizontalPerspective ? 100 - rawX : rawX;
-                  const y = flipOffense ? 100 - rawY : rawY;
-                  onRouteOverlayClick(route.id);
-                  setDrag({ id: route.id, type: "route_overlay", lastX: x, lastY: y });
-                }}
-                onClick={(event) => {
-                  if (!onRouteOverlayClick) return;
-                  event.stopPropagation();
-                  onRouteOverlayClick(route.id);
-                }}
-              />
-              <text
-                x={maybeFlipX(route.labelX, flipHorizontalPerspective) + 0.8 * annotationScale}
-                y={maybeFlipY(route.labelY, flipOffense)}
-                textAnchor="middle"
-                dominantBaseline="middle"
-                fontSize={1.25 * annotationScale}
-                letterSpacing="0.04em"
-                fontWeight="700"
-                fill="white"
-                className={onRouteOverlayClick ? "cursor-pointer select-none" : undefined}
-                onPointerDown={(event) => {
-                  if (!onRouteOverlayClick || !onMoveRouteOverlay) return;
-                  event.stopPropagation();
-                  const svg = event.currentTarget.ownerSVGElement;
-                  if (!svg) return;
-                  const rect = svg.getBoundingClientRect();
-                  const { x: rawX, rawY } = getRawPoint(event.clientX, event.clientY, rect);
-                  const x = flipHorizontalPerspective ? 100 - rawX : rawX;
-                  const y = flipOffense ? 100 - rawY : rawY;
-                  onRouteOverlayClick(route.id);
-                  setDrag({ id: route.id, type: "route_overlay", lastX: x, lastY: y });
-                }}
-                onClick={(event) => {
-                  if (!onRouteOverlayClick) return;
-                  event.stopPropagation();
-                  onRouteOverlayClick(route.id);
-                }}
-              >
-                {route.label}
-              </text>
-            </>
-          ) : null}
+          {(() => {
+            const routeLabelWidth = Math.max(7.2, route.label.length * 1.16 + 2.2) * annotationScale;
+            const routeLabelHeight = 4.2 * annotationScale;
+            const routeLabelX = maybeFlipX(route.labelX ?? 50, flipHorizontalPerspective);
+            const routeLabelY = maybeFlipY(route.labelY ?? 50, flipOffense);
+
+            return route.labelX !== undefined && route.labelY !== undefined ? (
+              <>
+                <rect
+                  x={routeLabelX - routeLabelWidth / 2}
+                  y={routeLabelY - routeLabelHeight / 2}
+                  width={routeLabelWidth}
+                  height={routeLabelHeight}
+                  rx={1.15 * annotationScale}
+                  fill="rgba(15,23,42,0.68)"
+                  className={onRouteOverlayClick ? "cursor-pointer" : undefined}
+                  onPointerDown={(event) => {
+                    if (!onRouteOverlayClick || !onMoveRouteOverlay) return;
+                    event.stopPropagation();
+                    const svg = event.currentTarget.ownerSVGElement;
+                    if (!svg) return;
+                    const rect = svg.getBoundingClientRect();
+                    const { x: rawX, rawY } = getRawPoint(event.clientX, event.clientY, rect);
+                    const x = flipHorizontalPerspective ? 100 - rawX : rawX;
+                    const y = flipOffense ? 100 - rawY : rawY;
+                    onRouteOverlayClick(route.id);
+                    setDrag({ id: route.id, type: "route_overlay", lastX: x, lastY: y });
+                  }}
+                  onClick={(event) => {
+                    if (!onRouteOverlayClick) return;
+                    event.stopPropagation();
+                    onRouteOverlayClick(route.id);
+                  }}
+                />
+                <text
+                  x={routeLabelX}
+                  y={routeLabelY}
+                  textAnchor="middle"
+                  dominantBaseline="middle"
+                  fontSize={1.25 * annotationScale}
+                  letterSpacing="0.04em"
+                  fontWeight="700"
+                  fill="white"
+                  className={onRouteOverlayClick ? "cursor-pointer select-none" : undefined}
+                  onPointerDown={(event) => {
+                    if (!onRouteOverlayClick || !onMoveRouteOverlay) return;
+                    event.stopPropagation();
+                    const svg = event.currentTarget.ownerSVGElement;
+                    if (!svg) return;
+                    const rect = svg.getBoundingClientRect();
+                    const { x: rawX, rawY } = getRawPoint(event.clientX, event.clientY, rect);
+                    const x = flipHorizontalPerspective ? 100 - rawX : rawX;
+                    const y = flipOffense ? 100 - rawY : rawY;
+                    onRouteOverlayClick(route.id);
+                    setDrag({ id: route.id, type: "route_overlay", lastX: x, lastY: y });
+                  }}
+                  onClick={(event) => {
+                    if (!onRouteOverlayClick) return;
+                    event.stopPropagation();
+                    onRouteOverlayClick(route.id);
+                  }}
+                >
+                  {route.label}
+                </text>
+              </>
+            ) : null;
+          })()}
         </g>
       ))}
     </svg>
@@ -807,7 +816,7 @@ function TrainingField({
         return (
           <div
             key={tag.id}
-            className={`absolute -translate-x-1/2 -translate-y-1/2 rounded border px-1.5 py-0.5 ${compactAnnotations ? "text-[7px]" : "text-[10px]"} font-black uppercase tracking-[0.10em] shadow-sm ${toneClass} ${selectedFieldTagId === tag.id ? "ring-2 ring-white/80" : ""} ${onFieldTagClick ? "cursor-pointer" : ""}`}
+            className={`absolute inline-flex -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded border px-1.5 py-0.5 text-center leading-none ${compactAnnotations ? "min-h-[14px] text-[7px]" : "min-h-[18px] text-[10px]"} font-black uppercase tracking-[0.10em] shadow-sm ${toneClass} ${selectedFieldTagId === tag.id ? "ring-2 ring-white/80" : ""} ${onFieldTagClick ? "cursor-pointer" : ""}`}
             style={{ left: `${maybeFlipX(tag.x, flipHorizontalPerspective)}%`, top: `${maybeFlipY(tag.y, flipOffense)}%` }}
             onClick={(event) => {
               if (!onFieldTagClick) return;
@@ -3212,12 +3221,16 @@ const existingStats =
     );
 
     if (error) {
-      console.error("Failed to save mode score", {
+      const errorPayload = {
         mode: activeMode,
         message: error.message,
         details: error.details,
         hint: error.hint,
         code: error.code,
+      };
+      console.error("Failed to save mode score", {
+        ...errorPayload,
+        serialized: JSON.stringify(errorPayload),
       });
     }
   };
@@ -3744,9 +3757,9 @@ const existingStats =
                 <div className="min-w-[220px]">
                   {mode === "leaderboard" ? null : mode === "offense_build" ? (
                     <div className="rounded-md border bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700">Foothill</div>
-                  ) : mode === "film" || mode === "concept" || mode === "run_fit" || mode === "blitz" ? (
+                  ) : mode === "film" || mode === "concept" || mode === "run_fit" || mode === "blitz" || mode === "stunt" ? (
                     <div className="rounded-md border bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700">
-                      {mode === "film" ? "Film Library" : mode === "concept" ? "Concept Board" : mode === "run_fit" ? "Fit Board" : "Blitz Board"}
+                      {mode === "film" ? "Film Library" : mode === "concept" ? "Concept Board" : mode === "run_fit" ? "Fit Board" : mode === "blitz" ? "Blitz Board" : "Stunt Board"}
                     </div>
                   ) : (
                     <details className="relative">
@@ -3785,7 +3798,7 @@ const existingStats =
                     </details>
                   )}
                 </div>
-                {mode === "offense_build" || mode === "film" || mode === "concept" || mode === "leaderboard" || mode === "run_fit" || mode === "blitz" ? null : (
+                {mode === "offense_build" || mode === "film" || mode === "concept" || mode === "leaderboard" || mode === "run_fit" || mode === "blitz" || mode === "stunt" ? null : (
                   <div className="min-w-[120px]">
                     <Select value={personnelFilter} onValueChange={(value: string) => { setPersonnelFilter(value); setIndex(0); }}>
                       <SelectTrigger>
@@ -4015,6 +4028,8 @@ const existingStats =
                 lastBlitzScoreSummary={lastScoreSummary.blitz}
                 onBlitzRepAdvanced={advanceRepAttempt}
               />
+            ) : mode === "stunt" ? (
+              <StuntBoard />
             ) : mode === "concept" ? (
               <PassConceptBoard {...passConceptBoardProps} />
             ) : mode === "film" ? (

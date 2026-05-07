@@ -33,7 +33,7 @@ export type RouteOverlay = {
   pathway?: {
     defenderId: string;
     pathwayId: BlitzPathwayId | RunFitPathwayId;
-    layer?: "pressure" | "coverage" | "dl" | "cover2";
+    layer?: "pressure" | "coverage" | "dl" | "cover2" | "eyes";
   };
 };
 
