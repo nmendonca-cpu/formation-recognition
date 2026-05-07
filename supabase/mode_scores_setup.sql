@@ -38,7 +38,7 @@ end $$;
 
 alter table public.mode_scores
 add constraint mode_scores_mode_check
-check (mode in ('quiz', 'offense_build', 'alignment', 'film', 'concept', 'blitz'));
+check (mode in ('quiz', 'offense_build', 'alignment', 'film', 'concept', 'blitz', 'stunt'));
 
 alter table public.mode_scores enable row level security;
 

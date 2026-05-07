@@ -123,7 +123,7 @@ import {
 
 type AppMode = "study" | "alignment" | "offense_build" | "film" | "quiz" | "editor" | "account" | "leaderboard" | "concept" | "run_fit" | "blitz" | "stunt";
 type AppSection = "offense" | "defense" | "admin";
-type ScoreMode = "quiz" | "offense_build" | "alignment" | "film" | "concept" | "blitz";
+type ScoreMode = "quiz" | "offense_build" | "alignment" | "film" | "concept" | "blitz" | "stunt";
 type LeaderboardMode = ScoreMode;
 type LeaderboardSection = "offense" | "defense";
 type AccountDirectorySort = "points_desc" | "points_asc" | "time_desc" | "time_asc" | "name_asc";
@@ -183,6 +183,7 @@ type UserStats = {
   film: ModeScoreStats;
   concept: ModeScoreStats;
   blitz: ModeScoreStats;
+  stunt: ModeScoreStats;
 };
 
 type UserRecord = {
@@ -259,6 +260,7 @@ const DEFAULT_STATS: UserStats = {
   film: { ...DEFAULT_MODE_STATS },
   concept: { ...DEFAULT_MODE_STATS },
   blitz: { ...DEFAULT_MODE_STATS },
+  stunt: { ...DEFAULT_MODE_STATS },
 };
 
 const ADMIN_EMAILS = [
@@ -280,6 +282,7 @@ const DEMO_USER: UserRecord = {
     film: { ...DEFAULT_MODE_STATS },
     concept: { ...DEFAULT_MODE_STATS },
     blitz: { ...DEFAULT_MODE_STATS },
+    stunt: { ...DEFAULT_MODE_STATS },
   },
 };
 
@@ -1061,6 +1064,7 @@ export default function FormationRecognitionWorkingApp() {
     film: { ...DEFAULT_MODE_STATS },
     concept: { ...DEFAULT_MODE_STATS },
     blitz: { ...DEFAULT_MODE_STATS },
+    stunt: { ...DEFAULT_MODE_STATS },
   });
 
   useEffect(() => {
@@ -1204,7 +1208,7 @@ export default function FormationRecognitionWorkingApp() {
 
       if (
         typeof savedViewState.selectedLeaderboardMode === "string" &&
-        ["quiz", "offense_build", "alignment", "film", "concept", "blitz"].includes(savedViewState.selectedLeaderboardMode)
+        ["quiz", "offense_build", "alignment", "film", "concept", "blitz", "stunt"].includes(savedViewState.selectedLeaderboardMode)
       ) {
         setSelectedLeaderboardMode(savedViewState.selectedLeaderboardMode as LeaderboardMode);
       }
@@ -1345,6 +1349,7 @@ export default function FormationRecognitionWorkingApp() {
           film: { ...DEMO_USER.stats.film },
           concept: { ...DEMO_USER.stats.concept },
           blitz: { ...DEMO_USER.stats.blitz },
+          stunt: { ...DEMO_USER.stats.stunt },
         },
       }));
       setAuthChecked(true);
@@ -1403,11 +1408,12 @@ const { data: scoreRows } = await supabase
   film: { ...DEFAULT_MODE_STATS },
   concept: { ...DEFAULT_MODE_STATS },
   blitz: { ...DEFAULT_MODE_STATS },
+  stunt: { ...DEFAULT_MODE_STATS },
 };
 
 if (Array.isArray(scoreRows)) {
   for (const row of scoreRows) {
-    if (row.mode === "quiz" || row.mode === "offense_build" || row.mode === "alignment" || row.mode === "film" || row.mode === "concept" || row.mode === "blitz") {
+    if (row.mode === "quiz" || row.mode === "offense_build" || row.mode === "alignment" || row.mode === "film" || row.mode === "concept" || row.mode === "blitz" || row.mode === "stunt") {
       baseStats[row.mode] = {
         points: row.points ?? 0,
         attempts: row.attempts ?? 0,
@@ -1426,7 +1432,8 @@ baseStats.totalPoints =
   baseStats.alignment.points +
   baseStats.film.points +
   baseStats.concept.points +
-  baseStats.blitz.points;
+  baseStats.blitz.points +
+  baseStats.stunt.points;
 
 const existingStats =
   prev?.id === user.id
@@ -1517,7 +1524,7 @@ const existingStats =
       }
 
       for (const row of scoreRows ?? []) {
-        if (row.mode !== "quiz" && row.mode !== "offense_build" && row.mode !== "alignment" && row.mode !== "film" && row.mode !== "concept" && row.mode !== "blitz") {
+        if (row.mode !== "quiz" && row.mode !== "offense_build" && row.mode !== "alignment" && row.mode !== "film" && row.mode !== "concept" && row.mode !== "blitz" && row.mode !== "stunt") {
           continue;
         }
 
@@ -1540,7 +1547,8 @@ const existingStats =
           stats.alignment.points +
           stats.film.points +
           stats.concept.points +
-          stats.blitz.points;
+          stats.blitz.points +
+          stats.stunt.points;
 
         return {
           id: profile.id,
@@ -1614,7 +1622,7 @@ const existingStats =
       }
 
       for (const row of scoreRows ?? []) {
-        if (row.mode !== "quiz" && row.mode !== "offense_build" && row.mode !== "alignment" && row.mode !== "film" && row.mode !== "concept" && row.mode !== "blitz") {
+        if (row.mode !== "quiz" && row.mode !== "offense_build" && row.mode !== "alignment" && row.mode !== "film" && row.mode !== "concept" && row.mode !== "blitz" && row.mode !== "stunt") {
           continue;
         }
 
@@ -1637,7 +1645,8 @@ const existingStats =
           stats.alignment.points +
           stats.film.points +
           stats.concept.points +
-          stats.blitz.points;
+          stats.blitz.points +
+          stats.stunt.points;
 
         return {
           id: profile.id,
@@ -1854,6 +1863,16 @@ const existingStats =
       columnClass: "border-[#826f72] bg-[#e6d2d4] text-[#5d4c4e]",
       stripeOddClass: "border-[#dac9ca] bg-[#fcf6f6]",
       stripeEvenClass: "border-[#dac9ca] bg-[#f3e7e8]",
+    },
+    {
+      key: "stunt",
+      title: "Stunt",
+      section: "defense",
+      shellClass: "border-[#7c7767] bg-[#f5f1e6]",
+      headerClass: "from-[#eee6d4] to-[#d8ccb2]",
+      columnClass: "border-[#7c7767] bg-[#e5dcc5] text-[#5a5342]",
+      stripeOddClass: "border-[#d8cfbc] bg-[#fbf8ef]",
+      stripeEvenClass: "border-[#d8cfbc] bg-[#f2ecdc]",
     },
     {
       key: "concept",
@@ -3281,7 +3300,7 @@ const existingStats =
 
     const elapsedMs = Math.max(250, Date.now() - attemptStartedAt);
     const accuracyPoints = Math.round(accuracy * 100);
-    const speedBonus = activeMode === "alignment" || activeMode === "blitz"
+    const speedBonus = activeMode === "alignment" || activeMode === "blitz" || activeMode === "stunt"
       ? 0
       : isCorrect
         ? getSpeedBonus(activeMode, elapsedMs)
@@ -3874,7 +3893,7 @@ const existingStats =
               </div>
               <div className="text-lg font-semibold text-slate-900">{currentUser.stats.totalPoints}</div>
               <div className="text-sm text-slate-500">
-                Quiz {currentUser.stats.quiz.points} • Offense {currentUser.stats.offense_build.points} • Concept {currentUser.stats.concept.points} • Align {currentUser.stats.alignment.points} • Film {currentUser.stats.film.points} • Blitz {currentUser.stats.blitz.points}
+                Quiz {currentUser.stats.quiz.points} • Offense {currentUser.stats.offense_build.points} • Concept {currentUser.stats.concept.points} • Align {currentUser.stats.alignment.points} • Film {currentUser.stats.film.points} • Blitz {currentUser.stats.blitz.points} • Stunt {currentUser.stats.stunt.points}
               </div>
             </div>
 
@@ -4029,7 +4048,10 @@ const existingStats =
                 onBlitzRepAdvanced={advanceRepAttempt}
               />
             ) : mode === "stunt" ? (
-              <StuntBoard />
+              <StuntBoard
+                scoreStuntAttempt={(accuracy, isCorrect, attemptKey) => scoreAttempt("stunt", accuracy, isCorrect, getRepAttemptKey(attemptKey))}
+                lastStuntScoreSummary={lastScoreSummary.stunt}
+              />
             ) : mode === "concept" ? (
               <PassConceptBoard {...passConceptBoardProps} />
             ) : mode === "film" ? (

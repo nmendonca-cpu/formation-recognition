@@ -57,6 +57,27 @@ export type StuntLineColor = "red" | "gold" | "white" | "cyan";
 export type StuntLineEnd = "arrow" | "square" | "circle";
 export type StuntLineStyle = "solid" | "dashed";
 export type StuntLoadFront = "none" | "strong" | "weak";
+export type StuntQuizType = "first_second" | "direction" | "games";
+export type StuntDirectionAnswer = "to_te" | "away_te" | "to_field" | "to_boundary" | "strong_side" | "weak_side";
+export type StuntGameSideAnswer =
+  | "Bandit"
+  | "Blood"
+  | "End"
+  | "Heavy"
+  | "Ice"
+  | "Lava"
+  | "Load"
+  | "Not"
+  | "Pirate"
+  | "Plug"
+  | "Ram"
+  | "Rip"
+  | "Tex"
+  | "Ton"
+  | "Torch"
+  | "Water"
+  | "Wedge"
+  | "Wrap";
 
 export type StuntRouteOverlay = {
   id: string;
@@ -87,6 +108,17 @@ export type StuntSavedBoard = {
     teSide?: "none" | "left" | "right";
     loadFront?: boolean | StuntLoadFront;
   };
+  quiz?: {
+    type?: StuntQuizType;
+    firstPlayerId?: StuntPlayerId;
+    firstPlayerIds?: StuntPlayerId[];
+    secondPlayerId?: StuntPlayerId;
+    secondPlayerIds?: StuntPlayerId[];
+    directionPlayerIds?: StuntPlayerId[];
+    direction?: StuntDirectionAnswer;
+    weakSideStunt?: StuntGameSideAnswer;
+    strongSideStunt?: StuntGameSideAnswer;
+  };
 };
 
 export const STUNT_BOARDS_STORAGE_KEY = "formation-recognition-stunt-boards-v1";
@@ -96,6 +128,31 @@ function normalizeStuntSurface(surface?: StuntSavedBoard["surface"]): NonNullabl
   return {
     teSide: surface?.teSide ?? "none",
     loadFront,
+  };
+}
+
+function normalizeStuntQuiz(quiz?: StuntSavedBoard["quiz"]): NonNullable<StuntSavedBoard["quiz"]> {
+  const firstPlayerIds = Array.isArray(quiz?.firstPlayerIds)
+    ? quiz.firstPlayerIds
+    : quiz?.firstPlayerId
+      ? [quiz.firstPlayerId]
+      : [];
+  const secondPlayerIds = Array.isArray(quiz?.secondPlayerIds)
+    ? quiz.secondPlayerIds
+    : quiz?.secondPlayerId
+      ? [quiz.secondPlayerId]
+      : [];
+
+  return {
+    type: quiz?.type ?? "first_second",
+    firstPlayerId: firstPlayerIds[0],
+    firstPlayerIds,
+    secondPlayerId: secondPlayerIds[0],
+    secondPlayerIds,
+    directionPlayerIds: Array.isArray(quiz?.directionPlayerIds) ? quiz.directionPlayerIds : [],
+    direction: quiz?.direction,
+    weakSideStunt: quiz?.weakSideStunt,
+    strongSideStunt: quiz?.strongSideStunt,
   };
 }
 
@@ -151,6 +208,7 @@ export function parseStuntStorage(raw: string | null) {
         routeOverlays: [] as StuntRouteOverlay[],
         fieldTags: [] as StuntFieldTag[],
         surface: normalizeStuntSurface(),
+        quiz: normalizeStuntQuiz(),
       },
       boards: [] as StuntSavedBoard[],
     };
@@ -167,9 +225,10 @@ export function parseStuntStorage(raw: string | null) {
       routeOverlays: Array.isArray(parsed.working?.routeOverlays) ? parsed.working.routeOverlays : [],
       fieldTags: Array.isArray(parsed.working?.fieldTags) ? parsed.working.fieldTags : [],
       surface: normalizeStuntSurface(parsed.working?.surface),
+      quiz: normalizeStuntQuiz(parsed.working?.quiz),
     },
     boards: Array.isArray(parsed.boards)
-      ? parsed.boards.map((board) => ({ ...board, surface: normalizeStuntSurface(board.surface) }))
+      ? parsed.boards.map((board) => ({ ...board, surface: normalizeStuntSurface(board.surface), quiz: normalizeStuntQuiz(board.quiz) }))
       : [],
   };
 }
@@ -180,15 +239,17 @@ export function stringifyStuntStorage({
   fieldTags,
   boards,
   surface,
+  quiz,
 }: {
   title: string;
   routeOverlays: StuntRouteOverlay[];
   fieldTags: StuntFieldTag[];
   boards: StuntSavedBoard[];
   surface: StuntSavedBoard["surface"];
+  quiz?: StuntSavedBoard["quiz"];
 }) {
   return JSON.stringify({
-    working: { title, routeOverlays, fieldTags, surface },
+    working: { title, routeOverlays, fieldTags, surface, quiz },
     boards,
   });
 }
