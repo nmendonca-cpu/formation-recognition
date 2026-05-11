@@ -92,6 +92,7 @@ export type BlitzSavedBoard = RunFitSavedBoard & {
 };
 
 export const RUN_FIT_BOARDS_STORAGE_KEY = "formation-recognition-run-fit-boards-v3";
+const RUN_FIT_DOG_POWER_WEAK_PRUNE_KEY = "dogPowerWeakOnlyPrunedV1";
 export const RUN_FIT_PATHWAY_OPTIONS: { value: RunFitPathwayId; label: string }[] = [
   { value: "a_gap_fit", label: "A-Gap Fit" },
   { value: "b_gap_fit", label: "B-Gap Fit" },
@@ -182,13 +183,22 @@ export function parseRunFitStorage(raw: string | null, runFitPreview: any) {
     working?: { title?: string; routeOverlays?: RouteOverlay[]; fieldTags?: FieldTag[] };
     boards?: RunFitSavedBoard[];
     savedPathways?: RunFitSavedPathway[];
+    migrations?: Record<string, boolean>;
   };
+  const savedBoards = Array.isArray(parsed.boards) ? parsed.boards : [];
+  const shouldPruneToDogPowerWeak = !parsed.migrations?.[RUN_FIT_DOG_POWER_WEAK_PRUNE_KEY];
+  const boards = shouldPruneToDogPowerWeak
+    ? savedBoards.filter((board) => {
+      const normalizedTitle = board.title.toLowerCase();
+      return board.baseBoardId === "dog" && normalizedTitle.includes("power") && normalizedTitle.includes("weak");
+    })
+    : savedBoards;
 
   return {
     title: parsed.working?.title || runFitPreview.title,
     routeOverlays: parsed.working?.routeOverlays || runFitPreview.routeOverlays,
     fieldTags: parsed.working?.fieldTags || runFitPreview.fieldTags,
-    boards: Array.isArray(parsed.boards) ? parsed.boards : [],
+    boards,
     savedPathways: Array.isArray(parsed.savedPathways) ? parsed.savedPathways : [],
   };
 }
@@ -214,6 +224,9 @@ export function stringifyRunFitStorage({
     },
     boards: runFitSavedBoards,
     savedPathways: runFitSavedPathways,
+    migrations: {
+      [RUN_FIT_DOG_POWER_WEAK_PRUNE_KEY]: true,
+    },
   });
 }
 
@@ -781,8 +794,11 @@ export function createRunFitActions(args: any) {
     }
     const selectedBoard = runFitSavedBoards.find((board: RunFitSavedBoard) => board.id === boardId);
     if (!selectedBoard) return;
+    if ((selectedBoard.baseBoardId ?? "double") !== selectedRunFitBaseBoardId) {
+      setRunFitSaveNotice("Choose a saved board that matches the current formation.");
+      return;
+    }
     setSelectedRunFitBoardId(boardId);
-    setSelectedRunFitBaseBoardId(selectedBoard.baseBoardId ?? "double");
     setRunFitTitle(selectedBoard.title);
     setRunFitRouteOverlays(selectedBoard.routeOverlays);
     setRunFitFieldTags(selectedBoard.fieldTags);

@@ -11,6 +11,7 @@ import { BlitzBoard } from "@/components/blitz/BlitzBoard";
 import { FilmPlayer } from "@/components/film/FilmPlayer";
 import { FormationBoard } from "@/components/formation/FormationBoard";
 import { PassConceptBoard } from "@/components/passConcept/PassConceptBoard";
+import { RunGameBoard } from "@/components/runGame/RunGameBoard";
 import { RunFitBoard } from "@/components/runFit/RunFitBoard";
 import { StuntBoard } from "@/components/stunt/StuntBoard";
 import { createClient } from "@/lib/supabase/client";
@@ -121,7 +122,7 @@ import {
   getOffenseBuildLandmarks,
 } from "@/lib/formation/formationLogic";
 
-type AppMode = "study" | "alignment" | "offense_build" | "film" | "quiz" | "editor" | "account" | "leaderboard" | "concept" | "run_fit" | "blitz" | "stunt";
+type AppMode = "study" | "alignment" | "offense_build" | "film" | "quiz" | "editor" | "account" | "leaderboard" | "concept" | "run_game" | "run_fit" | "blitz" | "stunt";
 type AppSection = "offense" | "defense" | "admin";
 type ScoreMode = "quiz" | "offense_build" | "alignment" | "film" | "concept" | "blitz" | "stunt";
 type LeaderboardMode = ScoreMode;
@@ -231,6 +232,7 @@ const MODE_OPTIONS: { value: AppMode; label: string; title: string; section: App
   { value: "study", label: "Formation Trainer", title: "FORMATION TRAINER", section: "defense" },
   { value: "offense_build", label: "Formation Trainer", title: "OFFENSIVE FORMATION", section: "offense" },
   { value: "concept", label: "Pass Concept", title: "PASS CONCEPT MODE", section: "offense" },
+  { value: "run_game", label: "Run Game", title: "RUN GAME MODE", section: "offense" },
   { value: "alignment", label: "Alignment Mode", title: "DEFENSIVE ALIGNMENT", section: "defense" },
   { value: "film", label: "Film Mode", title: "FILM MODE", section: "defense" },
   { value: "run_fit", label: "Run Fit", title: "RUN FIT MODE", section: "defense" },
@@ -1833,7 +1835,7 @@ const existingStats =
   const alignmentLandmarks = useMemo(() => {
     return getAlignmentLandmarks(displayFormation);
   }, [displayFormation]);
-  const offenseLandmarks = useMemo(() => getOffenseBuildLandmarks(), []);
+  const offenseLandmarks = useMemo(() => getOffenseBuildLandmarks(displayFormation), [displayFormation]);
 
   const alignmentPlayers = alignmentPlacements[formationKey] ?? [];
   const offenseBuildPlayers = offensePlacements[formationKey] ?? [];
@@ -4081,6 +4083,8 @@ const existingStats =
               />
             ) : mode === "concept" ? (
               <PassConceptBoard {...passConceptBoardProps} />
+            ) : mode === "run_game" ? (
+              <RunGameBoard isAdmin={Boolean(currentUser?.isAdmin)} />
             ) : mode === "film" ? (
               <FilmPlayer {...filmPlayerProps} />
             ) : mode === "quiz" || mode === "alignment" || mode === "editor" || mode === "offense_build" ? (

@@ -98,6 +98,8 @@ export function RunFitBoard(props: any) {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [currentUser?.isAdmin, deleteSelectedRunFitObject, selectedRunFitOverlay, selectedRunFitTag, showRunFitAdminTools]);
+  const matchingRunFitSavedBoards = runFitSavedBoards.filter((board: any) => (board.baseBoardId ?? "double") === selectedRunFitBaseBoardId);
+  const selectedSavedBoardStillMatches = selectedRunFitBoardId === "working" || matchingRunFitSavedBoards.some((board: any) => board.id === selectedRunFitBoardId);
 
   return currentUser?.isAdmin ? (
     <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
@@ -368,13 +370,13 @@ export function RunFitBoard(props: any) {
         </div>
         <div className="rounded-xl border bg-slate-50 p-3">
           <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Saved Boards</div>
-          <Select value={selectedRunFitBoardId} onValueChange={loadRunFitBoard}>
+          <Select value={selectedSavedBoardStillMatches ? selectedRunFitBoardId : "working"} onValueChange={loadRunFitBoard}>
             <SelectTrigger>
               <SelectValue />
             </SelectTrigger>
             <SelectContent className="max-h-80 overflow-y-auto">
               <SelectItem value="working">Working Board</SelectItem>
-              {runFitSavedBoards.map((board: any) => (
+              {matchingRunFitSavedBoards.map((board: any) => (
                 <SelectItem key={board.id} value={board.id}>
                   {board.title}
                 </SelectItem>

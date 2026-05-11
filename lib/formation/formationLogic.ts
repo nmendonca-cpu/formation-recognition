@@ -125,7 +125,7 @@ export function getWing(side: Side, wide = false) {
 }
 
 export function getBunchWing(side: Side, wide = false) {
-  return getAttached(side, wide);
+  return getWing(side, wide);
 }
 
 export function getBunchMiddle(side: Side, wide = false) {
@@ -523,12 +523,12 @@ export function getDefaultCustomLandmarkPosition(layer: "dl" | "lb" | "cb" | "db
   return { x: side === "left" ? 25 : 75, y: yMap[layer] };
 }
 
-export function getOffenseBuildLandmarks(): Landmark[] {
+export function getOffenseBuildLandmarks(formation?: FormationMeta): Landmark[] {
   const leftAttached = getAttached("left", false);
   const rightAttached = getAttached("right", false);
   const leftSlot = getSlot("left", false);
   const rightSlot = getSlot("right", false);
-  return dedupeLandmarks([
+  const landmarks: Landmark[] = [
     { id: "o-qb-under", x: 50, y: QB_UNDER_Y, layer: "offense" },
     { id: "o-qb-gun", x: 50, y: QB_GUN_Y, layer: "offense" },
     { id: "o-rb-dot", x: 50, y: RB_DOT_Y, layer: "offense" },
@@ -548,7 +548,31 @@ export function getOffenseBuildLandmarks(): Landmark[] {
     { id: "o-wide-right-on", x: 92, y: LOS_Y, layer: "offense" },
     { id: "o-wide-left-off", x: 8, y: OFF_Y, layer: "offense" },
     { id: "o-wide-right-off", x: 92, y: OFF_Y, layer: "offense" },
-  ]);
+  ];
+
+  if (formation?.name.toLowerCase().includes("bunch")) {
+    (["left", "right"] as const).forEach((side) => {
+      landmarks.push(
+        { id: `o-bunch-${side}-h`, x: getBunchWing(side, false), y: OFF_Y, layer: "offense" },
+        { id: `o-bunch-${side}-y`, x: getBunchMiddle(side, false), y: LOS_Y, layer: "offense" },
+        { id: `o-bunch-${side}-z`, x: getBunchOutside(side, false), y: OFF_Y, layer: "offense" },
+        { id: `o-bunch-${side}-x-point`, x: getBunchMiddle(side, false), y: LOS_Y, layer: "offense" },
+      );
+    });
+
+    formation.players
+      .filter((player) => ["H", "Y", "Z", "X"].includes(player.id))
+      .forEach((player) => {
+        landmarks.push({
+          id: `o-bunch-${formation.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${player.id}`,
+          x: player.x,
+          y: player.y,
+          layer: "offense",
+        });
+      });
+  }
+
+  return dedupeLandmarks(landmarks);
 }
 
 export function getOffenseAnswerKeyFromFormation(formation: FormationMeta): Record<string, { x: number; y: number }> {
@@ -560,5 +584,3 @@ export function getOffenseAnswerKeyFromFormation(formation: FormationMeta): Reco
     });
   return answer;
 }
-
-

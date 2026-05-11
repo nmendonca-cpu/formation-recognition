@@ -110,9 +110,20 @@ export function buildBlitzBoardShell(
   const lineXs = deps.getFormationLineXs(fieldFormation);
   const yTackleX = ySurface ? (ySurface.x < 50 ? lineXs[0] : lineXs[4]) : null;
   const yAttachedToSurface = Boolean(ySurface && yTackleX !== null && Math.abs(ySurface.y - deps.LOS_Y) < 1.25 && Math.abs(ySurface.x - yTackleX) <= 8);
+  const ySide: Side | null = ySurface ? (ySurface.x < 50 ? "left" : "right") : null;
+  const ySideWing = ySide
+    ? fieldFormation.players.find((player) => (
+      Math.abs(player.y - deps.WING_Y) < 1.75
+      && (ySide === "left" ? player.x < ySurface!.x : player.x > ySurface!.x)
+      && Math.abs(player.x - ySurface!.x) <= 8
+    ))
+    : null;
+  const ySevenTechX = ySurface && ySide
+    ? ySurface.x + (ySide === "left" ? -2.2 : 2.2)
+    : ySurface?.x;
   const defensePlayers = deps.getDefensePlayersFromAnswerKey(answerKey).map((defender) => (
     defender.id === "SDE" && ySurface && yAttachedToSurface
-      ? { ...defender, x: ySurface.x, y: deps.DL_Y }
+      ? { ...defender, x: ySideWing ? ySevenTechX : ySurface.x, y: deps.DL_Y }
       : defender
   )).map(shiftBoard);
 
