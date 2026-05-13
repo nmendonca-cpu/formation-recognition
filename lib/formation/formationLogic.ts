@@ -294,13 +294,13 @@ export function buildFoothillFormation(call: string, wide = false): FormationMet
     }
     case "Bunch":
       if (isEmpty) {
-        add("H", getBunchWing(side, wide), OFF_Y);
+        add("H", getBunchWing(side, wide), WING_Y);
         add("Y", getBunchMiddle(side, wide), LOS_Y);
         add("Z", getBunchOutside(side, wide), OFF_Y);
         add("X", getWide(other), LOS_Y);
         add("RB", getSlot(other, wide), OFF_Y);
       } else {
-        add("H", getBunchWing(side, wide), OFF_Y);
+        add("H", getBunchWing(side, wide), WING_Y);
         add("Y", getBunchMiddle(side, wide), LOS_Y);
         add("Z", getBunchOutside(side, wide), OFF_Y);
         add("X", getWide(other), LOS_Y);
@@ -308,7 +308,7 @@ export function buildFoothillFormation(call: string, wide = false): FormationMet
       break;
     case "Bunch Closed":
       add("Y", getAttached(side, wide), LOS_Y);
-      add("H", getBunchWing(other, wide), OFF_Y);
+      add("H", getBunchWing(other, wide), WING_Y);
       add("X", getBunchMiddle(other, wide), LOS_Y);
       add("Z", getBunchOutside(other, wide), OFF_Y);
       break;
@@ -321,7 +321,7 @@ export function buildFoothillFormation(call: string, wide = false): FormationMet
       break;
     case "Dog": {
       // H is opposite the called side in a true wing alignment so wing-surface detection can identify it cleanly.
-      const hX = getAttached(other, wide);
+      const hX = getWing(other, wide);
       add("Y", getAttached(side, wide), LOS_Y);
       add("Z", getWide(side), OFF_Y);
       add("H", hX, WING_Y);
@@ -330,7 +330,7 @@ export function buildFoothillFormation(call: string, wide = false): FormationMet
     }
     case "B Trips":
       add("Y", getAttached(side, wide), LOS_Y);
-      add("H", getAttached(other, wide), WING_Y);
+      add("H", getWing(other, wide), WING_Y);
       add("Z", getSlot(other, wide), OFF_Y);
       add("X", getWide(other), LOS_Y);
       break;
@@ -553,7 +553,7 @@ export function getOffenseBuildLandmarks(formation?: FormationMeta): Landmark[] 
   if (formation?.name.toLowerCase().includes("bunch")) {
     (["left", "right"] as const).forEach((side) => {
       landmarks.push(
-        { id: `o-bunch-${side}-h`, x: getBunchWing(side, false), y: OFF_Y, layer: "offense" },
+        { id: `o-bunch-${side}-h`, x: getBunchWing(side, false), y: WING_Y, layer: "offense" },
         { id: `o-bunch-${side}-y`, x: getBunchMiddle(side, false), y: LOS_Y, layer: "offense" },
         { id: `o-bunch-${side}-z`, x: getBunchOutside(side, false), y: OFF_Y, layer: "offense" },
         { id: `o-bunch-${side}-x-point`, x: getBunchMiddle(side, false), y: LOS_Y, layer: "offense" },
