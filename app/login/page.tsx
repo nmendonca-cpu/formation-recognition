@@ -16,6 +16,11 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
 
+  const enterDemoAccount = () => {
+    window.localStorage.setItem(DEMO_SESSION_STORAGE_KEY, "true");
+    router.push("/");
+  };
+
   const handleLogin = async () => {
     setLoading(true);
     setMessage("");
@@ -23,9 +28,8 @@ export default function LoginPage() {
     const cleanEmail = email.trim().toLowerCase();
 
     if (cleanEmail === "demo" && password === "demo") {
-      window.localStorage.setItem(DEMO_SESSION_STORAGE_KEY, "true");
       setLoading(false);
-      router.push("/");
+      enterDemoAccount();
       return;
     }
 
@@ -82,6 +86,15 @@ export default function LoginPage() {
             className="w-full rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
           >
             {loading ? "Logging in..." : "Log In"}
+          </button>
+
+          <button
+            type="button"
+            onClick={enterDemoAccount}
+            disabled={loading}
+            className="w-full rounded-xl border border-slate-900 bg-white px-4 py-3 text-sm font-semibold text-slate-900 hover:bg-slate-100 disabled:opacity-60"
+          >
+            Guest Account
           </button>
 
           {message ? <p className="text-sm text-slate-600">{message}</p> : null}

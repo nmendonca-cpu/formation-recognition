@@ -6,7 +6,7 @@ This file is the handoff map for the Formation Recognition app. Keep it concise 
 
 ## App Summary
 
-Formation Recognition is a Next.js football coaching/training app for high school players. It teaches offensive formation recognition, defensive alignment, film read keys, pass concepts, and blitz chalkboard rules.
+Formation Recognition is a Next.js football coaching/training app for high school players. It teaches offensive formation recognition, defensive alignment, film read keys, pass concepts, run-game blocking, blitz chalkboard rules, stunt recognition, and admin-built run-fit boards.
 
 The app uses React/Next.js with Supabase auth, storage, and database persistence. Users can create accounts, log in/out, track scores, track total time on app, and view leaderboards. Admin users get extra editing/upload tools.
 
@@ -23,7 +23,9 @@ Main modes:
 - `Film Mode`: uploaded read-key clips. Study mode shows full clips; quiz mode shows trimmed clips and asks run/pass/scheme/direction/details.
 - `Pass Concept Mode`: visually teaches route concepts and quizzes route assignments or concept names.
 - `Blitz Mode`: chalkboard mode for premade blitz pathways and coverage responsibilities.
-- `Run Fit Mode`: currently being reworked around manual drawing tools and premade fit pathways.
+- `Stunt Mode`: DL stunt study/quiz mode built around saved vector boards and stunt-answer quiz types.
+- `Run Game Mode`: offensive run-scheme study/quiz mode for Outside Zone, Power, and Counter variants.
+- `Run Fit Mode`: admin-focused manual drawing workspace for saved run-fit boards.
 
 ## File Map
 
@@ -36,6 +38,8 @@ Main modes:
 - `components/formation/FormationBoard.tsx`: Formation Trainer UI for study/quiz/offensive formation recognition and editing.
 - `components/passConcept/PassConceptBoard.tsx`: Pass Concept Mode UI for study/quiz route boards and concept answers.
 - `components/runFit/RunFitBoard.tsx`: Run Fit Mode UI for manual drawing tools, premade fit pathways, and admin fit-board controls.
+- `components/runGame/RunGameBoard.tsx`: Run Game Mode UI for formation/front/scheme selectors, study/quiz blocking boards, and admin pill adjustments.
+- `components/stunt/StuntBoard.tsx`: Stunt Mode UI for saved stunt boards, study/quiz toggles, admin drawing tools, and stunt quiz answer forms.
 - `components/ui/*`: Shared UI primitives like `Button`, `Card`, `Input`, `Select`.
 - `lib/alignment/alignmentLogic.ts`: Defensive landmark generation, `4-3`/`4-4` alignment rules, and alignment validation helpers.
 - `lib/blitz/blitzLogic.ts`: Blitz call families, auto-checks, coverage assignments, DL slants, and pathway calculations.
@@ -44,6 +48,10 @@ Main modes:
 - `lib/formation/formationLogic.ts`: Formation rules, personnel groupings, alignment buckets, bunch/stack/empty logic, and layout generation.
 - `lib/passConcept/passConceptLogic.ts`: Route definitions, concept data, route drawing helpers, and pass-concept quiz logic.
 - `lib/runFit/runFitLogic.ts`: Run Fit drawing/pathway types, premade pathway helpers, and manual board utility logic.
+- `lib/runGame/runGameLogic.ts`: Run Game formation/front data, blocking assignment rules, scheme variants, pill overrides, and quiz answer helpers.
+- `lib/runGame/runGameRenderer.ts`: Run Game board rendering helpers for offense/defense placement, blocking paths, T-end caps, and labels.
+- `lib/stunt/stuntLogic.ts`: Stunt data, saved-board modeling, quiz-answer types, and stunt classification helpers.
+- `lib/stunt/stuntRenderer.ts`: Stunt board rendering helpers for OL/DL placement, TE/load-front options, field arrow, and vector paths.
 - `lib/supabase/client.ts`: Browser Supabase client.
 - `lib/supabase/server.ts`: Server Supabase client helper for auth-aware server routes/pages.
 - `lib/utils.ts`: Shared utility helpers such as class name merging.
@@ -72,6 +80,8 @@ Known admin emails include:
 - Off-ball receivers should be visibly off the ball.
 - TE/wing players are either tight to the EMOLOS or flexed into the slot.
 - Empty formations generally keep the original formation structure and move the RB into the slot opposite the called/pass-strength side unless a formation-specific exception exists.
+- Formation quiz answers must use the same selectable landmarks that users can choose.
+- Wing answers in formations such as Dog, B Trips, Bunch, and Bunch Closed should use the off-ball wing landmark next to the tackle, not the attached TE landmark or a separate “almost wing” depth.
 
 ### Bunch Rules
 
@@ -174,6 +184,48 @@ Known admin emails include:
   - Saved custom pathway stamping has been removed from the UI.
   - Manual drawing tools are the preferred way to create exact fit boards.
 
+## Stunt Mode Rules
+
+- Stunt Mode is a defensive chalk-board mode built from saved vector boards, not fully auto-generated stunt paths.
+- Board shows OL and DL only by default, with optional TE and load-front options.
+- Right DE is `SDE`; left DE is `WDE`.
+- Nose defaults to `2i`; tackle defaults to `3T`.
+- If no TE is shown, SDE should align as a `5T`; with TE present, SDE aligns by TE-side stunt/front rules.
+- Load Strong places N, 3T, and SDE on the strong side; Load Weak mirrors this with N, 3T, and WDE on the weak side.
+- Stunt vectors should overlay the OL and have priority visually.
+- Stunt vector labels/pills should be centered.
+- Study mode can expose admin drawing/edit tools behind a hide/show admin toggle.
+- Quiz mode randomizes saved boards and has multiple quiz styles:
+  - Build a stunt: answer direction/side or 1st/2nd stunter prompts depending on stunt type.
+  - Name the stunt: show the board and ask for stunt name.
+  - Games stunt: choose weak-side and strong-side stunt from dropdowns.
+- Quiz board should include TE so TE/no-TE does not give away answer category before checking.
+
+## Run Game Mode Rules
+
+- Run Game Mode is an offensive chalk-board study/quiz mode.
+- Board is from offensive perspective with offense at bottom and defense above.
+- All current boards use our defensive language (`SDE`, `WDE`, `N`, `T`, `Mike`, `Will`, `BS`, and `Ni` when in the box).
+- Formations include Doubles, Dog, Trips, and Trey.
+- The run-game board is effectively 4-4 based, but Nickel is omitted when he would be displaced by a slot receiver.
+- TE is generally off the ball in Run Game Mode because that matches the offense’s normal usage.
+- Run Game has front options:
+  - `Even (Over)`: 1T opposite run strength and 3T to run strength.
+  - `Even (Under)`: 1T to run strength and 3T opposite run strength.
+- Run Game-specific edge alignment rules:
+  - SDE/WDE align as `7T` versus TE or wing surfaces.
+  - SDE/WDE align as `9T` versus TE + wing surfaces.
+  - These run-game-specific rules should not change Alignment Mode or Blitz Mode.
+- Blocking path caps should use playbook-style T ends and stop at the circumference of player circles, not through the middle.
+- Blocking paths should visually overlay player models.
+- Combo blocks should usually show one shared combo label and one dashed climb line to the LB.
+- Admin can move/add/delete pill labels for clarity without changing the underlying assignment logic.
+- Outside Zone variants should work strong/weak and have all blockers step playside.
+- Outside Zone combos/climbs should work to the next LB toward the playside direction.
+- Power and Counter variants are split strong/weak where valid by formation.
+- Counter labels use `Pull 1` and `Pull 2`.
+- In Counter, TE has pulling priority over H if both are on the same side.
+
 ## Film Mode Rules
 
 - Film clips are uploaded to Supabase storage and metadata is stored in Supabase.
@@ -211,12 +263,11 @@ Known admin emails include:
 
 ## Recent Changes Log
 
-- Moved Run Fit premade pathway controls directly under the board and removed saved custom pathway UI.
-- Updated Run Fit manual drawing tools and moved line/tag editing into a horizontal toolbar near the board.
-- Updated Newton auto-check so only a detached #3 triggers Fields behavior.
-- Added Brady/Fitz B-gap pressure rules with COP rush behavior for the blitz-side DE.
-- Added/updated Allen, NOLA, Oakland, and Buffalo blitz family rules.
-- Added distinct Cover 2 flat landmarks separate from Cover 3 `C/F` landmarks.
+- Added Stunt Mode with saved vector boards, admin drawing/edit tools, TE/load-front options, and stunt quiz scoring.
+- Added Run Game Mode with formation/front/scheme selectors, Outside Zone/Power/Counter variants, quiz scoring, and admin pill adjustments.
+- Updated Run Game Mode edge alignment and blocking rules across Dog, Trips, Trey, and Doubles.
+- Added/updated Bunch landmarks for Formation Trainer quiz and fixed wing answers to use the same selectable off-ball wing landmark in Dog, B Trips, Bunch, and Bunch Closed.
+- Confirmed `lib/supabase/client.ts` correctly imports `createBrowserClient`; any `reateBrowserClient` diagnostic is stale editor cache if TypeScript passes.
 
 ## Prompting Guidance For Future AI Sessions
 
@@ -233,4 +284,4 @@ After edits, always run:
 npx tsc --noEmit
 ```
 
-Avoid broad rewrites unless necessary. The app currently has a lot of feature logic in `app/page.tsx`, so targeted patches are safer.
+Avoid broad rewrites unless necessary. Most feature logic has been extracted into `lib/*` and `components/*`, so targeted patches in the relevant mode files are safer than editing `app/page.tsx`.
